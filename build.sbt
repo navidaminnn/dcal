@@ -4,5 +4,7 @@ ThisBuild / scalaVersion := "3.2.2"
 
 lazy val root = (project in file("."))
   .settings(
-    name := "dcal"
+    name := "dcal",
+    organization := "com.github.distcompiler",
+    libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "2.2.0",
   )
