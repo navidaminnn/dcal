@@ -1,6 +1,7 @@
 package com.github.distcompiler.dcal
 
 object AST {
+
   enum Definition {
     case TODO
   }
