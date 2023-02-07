@@ -160,7 +160,7 @@ class TestDCalTokenizer extends AnyFunSuite {
       Token(
         startPosition = pos(1, 11),
         endPosition = pos(1, 11),
-        data = TokenData.ClosParenthesis
+        data = TokenData.CloseParenthesis
       ),
       Token(
         startPosition = pos(1, 13),

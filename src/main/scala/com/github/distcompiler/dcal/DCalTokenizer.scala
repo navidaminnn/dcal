@@ -1,6 +1,7 @@
 package com.github.distcompiler.dcal
 
-import com.github.distcompiler.dcal.TokenData._
+import com.github.distcompiler.dcal.DCalTokenizer.tokenize.rep
+import com.github.distcompiler.dcal.TokenData.{CloseCurlyBracket, OpenCurlyBracket}
 
 import scala.collection.View
 import scala.util.parsing.combinator.Parsers
@@ -101,83 +102,31 @@ object DCalTokenizer {
     private val name: Parser[Token] =
     withPosition {
       val character: Parser[Char] = elem("underscore", ch => ch == '_') | alphabetic | numeric
-      rep1(character).map(characters => TokenData.Name(characters.mkString))
+      (rep(character) ~ alphabetic ~ rep(character))
+        .map{ case c1 ~ c2 ~ c3 => TokenData.Name(s"${c1.mkString}${c2}${c3.mkString}") }
     }
 
-    private val openCurlyBracket: Parser[Token] =
-      withPosition{
-        elem('{').map( _ => OpenCurlyBracket )
-      }
-
-    private val closedCurlyBracket: Parser[Token] =
-      withPosition{
-        elem('}').map( _ => CloseCurlyBracket )
-      }
-
-    private val let: Parser[Token] =
-      withPosition({
-        str("let").map(_ => TokenData.Let )
-      })
-
-    private val `var`: Parser[Token] =
-      withPosition({
-        str("var").map(_ => TokenData.Var)
-      })
-
-    private val equals: Parser[Token] =
-      withPosition{
-        elem('=').map( _ => TokenData.Equals)
-      }
-
-    private val walrus: Parser[Token] =
-      withPosition({
-        str(":=").map(_ => TokenData.Walrus)
-      })
-
-    private val doublePipe: Parser[Token] =
-      withPosition {
-        str("||").map(_ => TokenData.DoublePipe)
-      }
-
-    private val slashIn: Parser[Token] =
-      withPosition {
-        str("\\in").map(_ => TokenData.SlashIn)
-      }
-
-    private val await: Parser[Token] =
-      withPosition {
-        str("await").map(_ => TokenData.Await)
-      }
-
-    private val `def`: Parser[Token] =
-      withPosition {
-        str("def").map(_ => TokenData.Def)
-      }
-
-    private val `import`: Parser[Token] =
-      withPosition {
-        str("import").map(_ => TokenData.Import)
-      }
-
-    private val module: Parser[Token] =
-      withPosition {
-        str("module").map(_ => TokenData.Module)
-      }
-
-    private val openParenthesis: Parser[Token] =
-      withPosition {
-        elem('(').map(_ => TokenData.OpenParenthesis)
-      }
-
-    private val closeParenthesis: Parser[Token] =
-      withPosition {
-        elem(')').map(_ => TokenData.ClosParenthesis)
-      }
-
-    private val comma: Parser[Token] =
-      withPosition {
-        elem(',').map(_ => TokenData.Comma)
-      }
+    private val fixedTokens: Parser[Token] =
+      List(
+        "{" -> TokenData.OpenCurlyBracket,
+        "}" -> TokenData.CloseCurlyBracket,
+        "let" -> TokenData.Let,
+        "var" -> TokenData.Var,
+        "=" -> TokenData.Equals,
+        ":=" -> TokenData.Walrus,
+        "||" -> TokenData.DoublePipe,
+        "\\in" -> TokenData.SlashIn,
+        "await" -> TokenData.Await,
+        "def" -> TokenData.Def,
+        "import" -> TokenData.Import,
+        "module" -> TokenData.Module,
+        "(" -> TokenData.OpenParenthesis,
+        ")" -> TokenData.CloseParenthesis,
+        "," -> TokenData.Comma
+      )
+        .sortWith(_._1 > _._1)
+        .map{ case (keyword, tokenData) => withPosition{ str(keyword).map(_ => tokenData ) } }
+        .reduce(_ | _)
 
     private val whitespace: Parser[Unit] =
       (
@@ -185,32 +134,10 @@ object DCalTokenizer {
         )
         .map(_ => ())
 
-    private val singleToken: Parser[Option[Token]] = {
-      val ps = Map(
-        intLiteral -> 1,
-        stringLiteral -> """""""".length,
-        name -> 1,
-        openCurlyBracket -> 1,
-        closedCurlyBracket -> 1,
-        let -> "let".length,
-        `var` -> "var".length,
-        equals -> 1,
-        walrus -> 1,
-        doublePipe -> "||".length,
-        slashIn -> "\\in".length,
-        await -> "await".length,
-        `def` -> "def".length,
-        `import` -> "import".length,
-        module -> "module".length,
-        openParenthesis -> 1,
-        closeParenthesis -> 1,
-        comma -> 1
-      ).toList.sortWith(_._2 > _._2).map( { case (p, _) => p } )
-      ps.fold(intLiteral) { (p, _p) =>
-        p | _p
-      }.map(Some(_)) |
+    private val singleToken: Parser[Option[Token]] = (
+      intLiteral | stringLiteral | fixedTokens | name
+    ).map(Some(_)) |
         whitespace.map(_ => None)
-    }
 
     def apply(chars: IterableOnce[Char],
               startLine: Int = 1, startColumn: Int = 1,

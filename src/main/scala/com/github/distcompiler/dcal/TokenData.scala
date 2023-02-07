@@ -18,6 +18,6 @@ enum TokenData {
     case OpenCurlyBracket
     case CloseCurlyBracket
     case OpenParenthesis
-    case ClosParenthesis
+    case CloseParenthesis
     case Comma
 }
