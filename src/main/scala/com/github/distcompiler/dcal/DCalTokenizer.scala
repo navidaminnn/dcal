@@ -1,9 +1,9 @@
 package com.github.distcompiler.dcal
 
-import com.github.distcompiler.dcal.TokenData.{CloseCurlyBracket, OpenCurlyBracket}
+import com.github.distcompiler.dcal.TokenData._
 
 import scala.collection.View
-import scala.util.parsing.combinator.{Parsers, RegexParsers}
+import scala.util.parsing.combinator.Parsers
 import scala.util.parsing.input
 import scala.util.parsing.input.{NoPosition, Reader}
 
@@ -46,7 +46,7 @@ object DCalTokenizer {
       Position(fileName = fileName, line = line, column = column)
   }
 
-  object tokenize extends RegexParsers {
+  object tokenize extends Parsers {
     override type Elem = Char
 
     def str(str: String): Parser[String] =
@@ -215,7 +215,7 @@ object DCalTokenizer {
     def apply(chars: IterableOnce[Char],
               startLine: Int = 1, startColumn: Int = 1,
               fileName: String): Iterator[Token] =
-      Iterator.unfold(new CharsReader( // S = CharsReader
+      Iterator.unfold(new CharsReader(
         fileName = fileName,
         elems = chars.iterator.to(LazyList),
         line = startLine,
