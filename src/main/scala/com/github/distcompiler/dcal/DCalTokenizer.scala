@@ -101,8 +101,9 @@ object DCalTokenizer {
 
     private val name: Parser[Token] =
     withPosition {
-      val character: Parser[Char] = elem("underscore", ch => ch == '_') | alphabetic | numeric
-      (rep(character) ~ alphabetic ~ rep(character))
+      val underscore: Parser[Char] = elem("underscore", ch => ch == '_')
+      val character: Parser[Char] = underscore | alphabetic | numeric
+      (rep(underscore | numeric) ~ alphabetic ~ rep(character))
         .map{ case c1 ~ c2 ~ c3 => TokenData.Name(s"${c1.mkString}${c2}${c3.mkString}") }
     }
 
