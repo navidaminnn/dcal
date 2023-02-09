@@ -1,5 +1,8 @@
 package com.github.distcompiler.dcal
 
+import com.github.distcompiler.dcal.DCalTokenizer.tokenize.rep
+import com.github.distcompiler.dcal.TokenData.{CloseCurlyBracket, OpenCurlyBracket}
+
 import scala.collection.View
 import scala.util.parsing.combinator.Parsers
 import scala.util.parsing.input
@@ -10,15 +13,17 @@ object DCalTokenizer {
     protected override def lineContents: String = ??? // should be unreachable
   }
 
+  /**
+   * A token decorated with position info
+   *
+   * @param startPosition token starting line and column
+   * @param endPosition   token ending line and column (inclusive)
+   * @param data          token data, one of TokenData enum
+   */
   final case class Token(startPosition: Position, endPosition: Position, data: TokenData)
 
-  enum TokenData {
-    case IntLiteral(value: BigInt)
-    case StringLiteral(value: String)
-    case Name(name: String)
-  }
-
-  class CharsReader(fileName: String, elems: LazyList[Char], line: Int, column: Int, val lastPos: Position) extends Reader[Char] {
+  class CharsReader(fileName: String, elems: LazyList[Char], line: Int, column: Int, val lastPos: Position)
+    extends Reader[Char] {
     override def first: Char = elems.head
 
     override def rest: Reader[Char] =
@@ -45,12 +50,9 @@ object DCalTokenizer {
   object tokenize extends Parsers {
     override type Elem = Char
 
-    def char(ch: Char): Parser[Char] =
-      elem(ch.toString, _ == ch)
-
     def str(str: String): Parser[String] =
       str.view
-        .map(char)
+        .map(elem)
         .reduceOption(_ ~> _)
         .map(_.map(_ => str))
         .getOrElse(success(str))
@@ -71,28 +73,76 @@ object DCalTokenizer {
         }
       }
 
-    val intLiteral: Parser[Token] =
+    private val numeric: Parser[Char] = elem("numeric", ch =>
+      ch <= '9' && ch >= '0')
+
+    private val alphabetic: Parser[Char] = elem("alphabetic", ch =>
+      (ch <= 'z' && ch >= 'a') || (ch <= 'Z' && ch >= 'A'))
+
+    private val intLiteral: Parser[Token] =
       withPosition {
-        val digit: Parser[Char] = elem("digit", ch => ch <= '9' && ch >= '0')
-        rep1(digit).map { digits =>
+        rep1(numeric).map { digits =>
           TokenData.IntLiteral(BigInt.apply(digits.mkString))
         }
       }
 
-    val whitespace: Parser[Unit] =
-      (
-        char(' ') | // TODO: support more whitespace than I need for my tests... comments too?
-          char('\n')
+    private val stringLiteral: Parser[Token] =
+    withPosition {
+      val character: Parser[Char] = elem("character", ch => ch != '"' && ch != '\\') |
+        elem('\\') ~> acceptMatch("escape sequence", {
+          case '\\' => '\\'
+          case '"' => '\"'
+          case 'n' => '\n'
+          case 't' => '\t'
+        })
+      (elem('"') ~> rep(character) <~ elem('"'))
+        .map(characters => TokenData.StringLiteral(characters.mkString))
+    }
+
+    private val name: Parser[Token] =
+    withPosition {
+      val underscore: Parser[Char] = elem('_')
+      val character: Parser[Char] = underscore | alphabetic | numeric
+      (rep(underscore | numeric) ~ alphabetic ~ rep(character))
+        .map{ case c1 ~ c2 ~ c3 => TokenData.Name(s"${c1.mkString}${c2}${c3.mkString}") }
+    }
+
+    private val fixedTokens: Parser[Token] =
+      List(
+        "{" -> TokenData.OpenCurlyBracket,
+        "}" -> TokenData.CloseCurlyBracket,
+        "let" -> TokenData.Let,
+        "var" -> TokenData.Var,
+        "=" -> TokenData.Equals,
+        ":=" -> TokenData.Walrus,
+        "||" -> TokenData.DoublePipe,
+        "\\in" -> TokenData.SlashIn,
+        "await" -> TokenData.Await,
+        "def" -> TokenData.Def,
+        "import" -> TokenData.Import,
+        "module" -> TokenData.Module,
+        "(" -> TokenData.OpenParenthesis,
+        ")" -> TokenData.CloseParenthesis,
+        "," -> TokenData.Comma
       )
+        .sortWith(_._1 > _._1)
+        .map{ case (keyword, tokenData) => withPosition{ str(keyword).map(_ => tokenData ) } }
+        .reduce(_ | _)
+
+    private val whitespace: Parser[Unit] =
+      (
+        elem(' ') | elem('\n') | elem('\t') | elem('\r') | elem('\f')
+        )
         .map(_ => ())
 
-    val singleToken: Parser[Option[Token]] =
-      (
-        intLiteral // TODO: rest of the tokens go here with |
-        ).map(Some(_)) |
+    private val singleToken: Parser[Option[Token]] = (
+      intLiteral | stringLiteral | fixedTokens | name
+    ).map(Some(_)) |
         whitespace.map(_ => None)
 
-    def apply(chars: IterableOnce[Char], startLine: Int = 1, startColumn: Int = 1, fileName: String): Iterator[Token] =
+    def apply(chars: IterableOnce[Char],
+              startLine: Int = 1, startColumn: Int = 1,
+              fileName: String): Iterator[Token] =
       Iterator.unfold(new CharsReader(
         fileName = fileName,
         elems = chars.iterator.to(LazyList),
@@ -100,7 +150,7 @@ object DCalTokenizer {
         column = startColumn,
         lastPos = Position(fileName = fileName, line = startLine, column = startColumn),
       )) { reader =>
-        if(reader.atEnd) {
+        if (reader.atEnd) {
           None
         } else {
           singleToken.apply(reader) match {
