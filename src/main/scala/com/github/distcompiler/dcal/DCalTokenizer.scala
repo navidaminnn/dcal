@@ -140,9 +140,32 @@ object DCalTokenizer {
       ).map(Some(_)) |
       whitespace.map(_ => None)
 
+    // Produces an iterator that tokenizes chars
+    // @param   chars: IterableOnce[Char]
+    // @return  an IterableOnce[Token]
+
     def apply(chars: IterableOnce[Char],
               startLine: Int = 1, startColumn: Int = 1,
               fileName: String): Iterator[Token] =
+      // Iterator.unfold[S, E](init: CharsReader,
+      //                       f: CharsReader => Option[(CharsReader, Token)]): Iterator[Token]
+      // produces an Iterator that manages a CharsReader in its internal state and
+      // applies f on this CharsReader to produce tokens until f returns None
+
+      // Iterator.unfold return an Iterator[Option[Token]]
+      // An iterator is not a collection, but rather a means of accessing
+      // the elements of a collection one by one
+      // An iterator is desirable over a collection here because all tokens
+      // will be iterated through by a parser
+      // Q: Does tokenize(chars) apply f on the input collection? Or does it just produce
+      //    an Iterator that will do so?
+      // Q: Does parse(tokenize(chars)) iterates chars once and tokenizes then parses
+      //    each char in one pass? Or, does parse(tokenize(chars)) iterates once to tokenize,
+      //    then once more to parse?
+      // Q: Why flatten on Iterator[Option[Token]]?
+      // A: Applying flatten on Iterator[Option[Token]] flattens out the content of type Token
+      //    of Some[Token] instances
+
       Iterator.unfold(new CharsReader(
         fileName = fileName,
         elems = chars.iterator.to(LazyList),
@@ -153,7 +176,11 @@ object DCalTokenizer {
         if (reader.atEnd) {
           None
         } else {
-          singleToken.apply(reader) match {
+          // def singleToken: Parser[Token]
+          // abstract class Parser[Token] extends Input => ParseResult[Token]
+          //    On Success, Parser[Token] produces Some(Token) and the rest of the input
+          //    On Failure, Parser[Token] produces None
+          singleToken(reader) match {
             case Success(tokenOpt, next) =>
               Some((tokenOpt, next.asInstanceOf[CharsReader]))
             case Failure(msg, _) => ??? // throw exception probably

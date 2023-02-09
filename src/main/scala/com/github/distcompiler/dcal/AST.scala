@@ -1,11 +1,6 @@
 package com.github.distcompiler.dcal
 
 object AST {
-
-  enum Definition {
-    case TODO
-  }
-
   /*
   module ::= `module` <name> <imports>? <definition>*
 
@@ -25,15 +20,42 @@ object AST {
   // e.g `x := y || y := x` swaps x and y
   assign_pair ::= <name> `:=` <expression>
 
-  expression_base ::=
-    | <int_literal>
-    | <string_literal>
-    | <name>
-  
-  expression_binop ::= <expression_base> (<binop> <expression_base>)?
-  
   expression ::= <expression_binop>
+
+  expression_binop ::= <expression_base> (<binop> <expression_base>)?
+
+  expression_base ::=
+      | <int_literal>
+      | <string_literal>
+      | <name>
+      | `(` <expression> `)`
+
+  binop ::= TODO
   */
 
-  final case class DCalModule(name: String, imports: List[String], definitions: List[Definition])
+  final case class Module(name: String, imports: List[String], definitions: List[Definition])
+  final case class Definition(name: String, args: List[String], block: Block)
+  final case class Block(statements: List[Statement])
+
+  enum Statement {
+    case Await(expression: Expression)
+    case AssignPairs(assignPairs: List[AssignPair])
+    case Let(name: String, expression: Expression)
+    case Var(name: String, opExpression: Option[(BinOp, Expression)])
+  }
+
+  final case class AssignPair(name: String, expression: Expression)
+
+  enum Expression {
+    case ExpressionBinOp(left: Expression, binOp: AST.BinOp, right: Expression)
+    case IntLiteral(value: BigInt)
+    case StringLiteral(value: String)
+    case Name(name: String)
+  }
+
+  enum BinOp {
+    case Equals
+    case SlashIn
+    case TODO
+  }
 }
