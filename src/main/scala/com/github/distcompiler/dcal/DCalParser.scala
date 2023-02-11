@@ -48,12 +48,6 @@ object DCalParser {
     }
 
     val module: Parser[AST.Module] = {
-      // Caution: module is a function of type Parser[AST.Module]
-      // so the expression assigned to module must produce a Parser[AST.Module]
-      // The module parser is produced by sequencing smaller parsers, NOT tokens
-      // Also, the operators ~ and ~> do not exist on Token, so Token.Module ~ TokenData.Name
-      // is invalid while elem(TokenData.Module) ~ elem(TokenData.Name) is, because elem(...)
-      // returns a Parser[this.elem]
       (elem(TokenData.Module) ~> name ~ opt(imports) ~ rep(definition)).map {
         case name ~ importsOpt ~ definitions =>
           AST.Module(
@@ -111,13 +105,14 @@ object DCalParser {
     }
 
     def assignPair: Parser[AST.AssignPair] = (name ~ elem(TokenData.Walrus) ~ expression).map {
-        case name ~ _ ~ expr => AST.AssignPair(name = name, expression = expr)
+      case name ~ _ ~ expr => AST.AssignPair(name = name, expression = expr)
     }
 
     def expression: Parser[AST.Expression] = {
-//      val expressionBinOp = (expression ~ binOp ~ expression).map {
-//        case left ~ binOp ~ right => AST.Expression.ExpressionBinOp(left = left, binOp = binOp, right = right)
-//      }
+      // TODO: Debug
+      //      val expressionBinOp = (expression ~ binOp ~ expression).map {
+      //        case left ~ binOp ~ right => AST.Expression.ExpressionBinOp(left = left, binOp = binOp, right = right)
+      //      }
 
       val intLiteral = acceptMatch(
         "intLiteral",
@@ -135,7 +130,7 @@ object DCalParser {
     }
 
     def binOp: Parser[AST.BinOp] =
-      acceptMatch("binOp", { case TokenData.BinOpPlaceholder => AST.BinOp.TODO } )
+      acceptMatch("binOp", { case TokenData.BinOpPlaceholder => AST.BinOp.Placeholder } )
   }
 
   def apply(contents: String, fileName: String): AST.Module =

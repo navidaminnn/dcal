@@ -57,6 +57,6 @@ object AST {
   enum BinOp {
     case Equals
     case SlashIn
-    case TODO
+    case Placeholder
   }
 }
