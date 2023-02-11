@@ -34,7 +34,7 @@ object AST {
   */
 
   final case class Module(name: String, imports: List[String], definitions: List[Definition])
-  final case class Definition(name: String, args: List[String], block: Block)
+  final case class Definition(name: String, params: List[String], body: Block)
   final case class Block(statements: List[Statement])
 
   enum Statement {
@@ -50,6 +50,7 @@ object AST {
     case ExpressionBinOp(left: Expression, binOp: AST.BinOp, right: Expression)
     case IntLiteral(value: BigInt)
     case StringLiteral(value: String)
+    // TODO: Could this case be just a String, instead of Name?
     case Name(name: String)
   }
 

@@ -3,6 +3,7 @@ package com.github.distcompiler.dcal
 import org.scalatest.funsuite.AnyFunSuite
 
 class TestDCalTokenizer extends AnyFunSuite {
+
   import DCalTokenizer.*
 
   def pos(line: Int, column: Int): Position =
@@ -124,7 +125,7 @@ class TestDCalTokenizer extends AnyFunSuite {
         data = TokenData.StringLiteral("new_y")
       )
     ),
-    "z1 || z2" -> List(
+    "z1 := z2 || z2 := z1" -> List(
       Token(
         startPosition = pos(1, 1),
         endPosition = pos(1, 2),
@@ -133,13 +134,33 @@ class TestDCalTokenizer extends AnyFunSuite {
       Token(
         startPosition = pos(1, 4),
         endPosition = pos(1, 5),
-        data = TokenData.DoublePipe
+        data = TokenData.Walrus
       ),
       Token(
         startPosition = pos(1, 7),
         endPosition = pos(1, 8),
         data = TokenData.Name("z2")
-      )
+      ),
+      Token(
+        startPosition = pos(1, 10),
+        endPosition = pos(1, 11),
+        data = TokenData.DoublePipe
+      ),
+      Token(
+        startPosition = pos(1, 13),
+        endPosition = pos(1, 14),
+        data = TokenData.Name("z2")
+      ),
+      Token(
+        startPosition = pos(1, 16),
+        endPosition = pos(1, 17),
+        data = TokenData.Walrus
+      ),
+      Token(
+        startPosition = pos(1, 19),
+        endPosition = pos(1, 20),
+        data = TokenData.Name("z1")
+      ),
     ),
     "def wait () {await lockRelease}" -> List(
       Token(
@@ -190,7 +211,7 @@ class TestDCalTokenizer extends AnyFunSuite {
         data = TokenData.Import
       ),
       Token(
-        startPosition = pos(1,8),
+        startPosition = pos(1, 8),
         endPosition = pos(1, 14),
         data = TokenData.Name("ModuleA")
       ),

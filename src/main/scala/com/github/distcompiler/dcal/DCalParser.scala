@@ -41,7 +41,7 @@ object DCalParser {
      * @tparam D              the type of delimiter elements
      * @return the parser that matches a delimited sequence of elements of type T
      */
-    def delimited[T, D](elemParser: Parser[T], delimiterParser: Parser[D] = TokenData.Comma): Parser[List[T]] = {
+    private def delimited[T, D](elemParser: Parser[T], delimiterParser: Parser[D] = TokenData.Comma): Parser[List[T]] = {
       (elemParser ~ rep(delimiterParser ~> elemParser)).map{
         case t ~ ts => t :: ts
       }
@@ -71,10 +71,10 @@ object DCalParser {
     }
 
     val definition: Parser[AST.Definition] = {
-      (elem(TokenData.Def) ~> name ~ elem(TokenData.OpenParenthesis) ~ delimited(name) ~ elem(TokenData.CloseParenthesis) ~ block).map {
-        case name ~ _ ~ args ~ _ ~ block =>
+      (elem(TokenData.Def) ~> name ~ elem(TokenData.OpenParenthesis) ~ opt(delimited(name)) ~ elem(TokenData.CloseParenthesis) ~ block).map {
+        case name ~ _ ~ params ~ _ ~ block =>
           AST.Definition(
-            name = name, args = args, block = block
+            name = name, params = params.getOrElse(Nil), body = block
           )
       }
     }
@@ -99,7 +99,7 @@ object DCalParser {
 
       val op = acceptMatch("var operator", {
         case TokenData.Equals => AST.BinOp.Equals
-        case TokenData.Walrus => AST.BinOp.SlashIn
+        case TokenData.SlashIn => AST.BinOp.SlashIn
       })
       val `var` =
         (elem(TokenData.Var) ~> name ~ opt(op ~ expression)).map {
@@ -115,9 +115,9 @@ object DCalParser {
     }
 
     def expression: Parser[AST.Expression] = {
-      val expressionBinOp = (expression ~ binOp ~ expression).map {
-        case left ~ binOp ~ right => AST.Expression.ExpressionBinOp(left = left, binOp = binOp, right = right)
-      }
+//      val expressionBinOp = (expression ~ binOp ~ expression).map {
+//        case left ~ binOp ~ right => AST.Expression.ExpressionBinOp(left = left, binOp = binOp, right = right)
+//      }
 
       val intLiteral = acceptMatch(
         "intLiteral",
@@ -131,7 +131,7 @@ object DCalParser {
 
       val nameExpr = name.map(str => AST.Expression.Name(str))
 
-      expressionBinOp | intLiteral | stringLiteral | nameExpr
+      intLiteral | stringLiteral | nameExpr // | expressionBinOp
     }
 
     def binOp: Parser[AST.BinOp] =
