@@ -50,8 +50,8 @@ object AST {
     case ExpressionBinOp(left: Expression, binOp: AST.BinOp, right: Expression)
     case IntLiteral(value: BigInt)
     case StringLiteral(value: String)
-    // TODO: Could this case be just a String, instead of Name?
     case Name(name: String)
+    case BracketedExpression(expression: Expression)
   }
 
   enum BinOp {

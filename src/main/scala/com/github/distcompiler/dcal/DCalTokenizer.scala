@@ -123,7 +123,8 @@ object DCalTokenizer {
         "module" -> TokenData.Module,
         "(" -> TokenData.OpenParenthesis,
         ")" -> TokenData.CloseParenthesis,
-        "," -> TokenData.Comma
+        "," -> TokenData.Comma,
+        "BinOpPlaceholder" -> TokenData.BinOpPlaceholder
       )
         .sortWith(_._1 > _._1)
         .map{ case (keyword, tokenData) => withPosition{ str(keyword).map(_ => tokenData ) } }

@@ -6,7 +6,6 @@ import scala.collection.immutable
 import scala.collection.immutable.List
 
 class TestDCalParser extends AnyFunSuite {
-
   import DCalParser.*
 
   def sequenceLines(lines: String*): String = lines.mkString("\n")
@@ -32,8 +31,10 @@ class TestDCalParser extends AnyFunSuite {
   val testVar = "var test2"
   val testVarEquals = """var test3 = "val3""""
   val testVarSlashIn = "var test4 \\in test5"
-  val testAssignPairs = "test6 := test7 || test7 := test6"
-  val testAwait = "await someLockRelease"
+  val testBracketedExpression = "(test6)"
+  val testAssignPairs = s"test6 := test7 || test7 := ${testBracketedExpression}"
+  val testExpression = "test6 BinOpPlaceholder 1000"
+  val testAwait = s"await ${testExpression}"
   val testDefParamsBody = s"def aFunc (anArg) {\n${
     sequenceLines(
       testLet, testVar, testVarEquals, testVarSlashIn, testAssignPairs, testAwait)
@@ -80,7 +81,10 @@ class TestDCalParser extends AnyFunSuite {
                 AST.AssignPair(name = "test7", expression = AST.Expression.Name("test6"))
               )
             ),
-            AST.Statement.Await(expression = AST.Expression.Name("someLockRelease"))
+            AST.Statement.Await(expression = AST.Expression.ExpressionBinOp(
+              left = AST.Expression.Name("test6"),
+              binOp = AST.BinOp.Placeholder,
+              right = AST.Expression.IntLiteral(1000)))
           ))
         )
       )
