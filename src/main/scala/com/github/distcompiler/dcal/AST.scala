@@ -47,7 +47,7 @@ object AST {
   final case class AssignPair(name: String, expression: Expression)
 
   enum Expression {
-    case ExpressionBinOp(left: Expression, binOp: AST.BinOp, right: Expression)
+    case ExpressionBinOp(lhs: Expression, binOp: AST.BinOp, rhs: Expression)
     case IntLiteral(value: BigInt)
     case StringLiteral(value: String)
     case Name(name: String)

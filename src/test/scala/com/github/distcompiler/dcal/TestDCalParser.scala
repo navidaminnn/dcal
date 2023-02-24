@@ -82,9 +82,9 @@ class TestDCalParser extends AnyFunSuite {
               )
             ),
             AST.Statement.Await(expression = AST.Expression.ExpressionBinOp(
-              left = AST.Expression.Name("test6"),
+              lhs = AST.Expression.Name("test6"),
               binOp = AST.BinOp.Placeholder,
-              right = AST.Expression.IntLiteral(1000)))
+              rhs = AST.Expression.IntLiteral(1000)))
           ))
         )
       )

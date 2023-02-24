@@ -110,18 +110,19 @@ object DCalParser {
       await | let | `var` | assignPairs
     }
 
+    // TODO: Operator precedence behaviour needs reworking
     lazy val expression: Parser[AST.Expression] = expressionBinOp
 
     lazy val expressionBinOp: Parser[AST.Expression] = {
       (expressionBase ~ opt(binOp ~ expressionBase)).map {
-        case (str @ AST.Expression.StringLiteral(_)) ~ None => str
-        case (int @ AST.Expression.IntLiteral(_)) ~ None => int
-        case (name @ AST.Expression.Name(_)) ~ None => name
-        case left ~ Some(binOp ~ right) => AST.Expression.ExpressionBinOp(
-          left = left,
-          binOp = binOp,
-          right = right
-        )
+        case lhs ~ rhsOpt =>
+          rhsOpt
+            .map {
+              case binOp ~ rhs => AST.Expression.ExpressionBinOp(
+                lhs = lhs, binOp = binOp, rhs = rhs
+              )
+            }
+            .getOrElse(lhs)
       }
     }
 
