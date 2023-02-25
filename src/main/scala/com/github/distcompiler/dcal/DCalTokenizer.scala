@@ -123,7 +123,8 @@ object DCalTokenizer {
         "module" -> TokenData.Module,
         "(" -> TokenData.OpenParenthesis,
         ")" -> TokenData.CloseParenthesis,
-        "," -> TokenData.Comma
+        "," -> TokenData.Comma,
+        "BinOpPlaceholder" -> TokenData.BinOpPlaceholder
       )
         .sortWith(_._1 > _._1)
         .map{ case (keyword, tokenData) => withPosition{ str(keyword).map(_ => tokenData ) } }
@@ -153,7 +154,7 @@ object DCalTokenizer {
         if (reader.atEnd) {
           None
         } else {
-          singleToken.apply(reader) match {
+          singleToken(reader) match {
             case Success(tokenOpt, next) =>
               Some((tokenOpt, next.asInstanceOf[CharsReader]))
             case Failure(msg, _) => ??? // throw exception probably
