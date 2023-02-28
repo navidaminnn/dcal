@@ -1,6 +1,6 @@
 package com.github.distcompiler.dcal
 
-object AST {
+object DCalAST {
   /*
   module ::= `module` <name> <imports>? <definition>*
 
@@ -16,6 +16,7 @@ object AST {
     | <assign_pair> (`||` <assign_pair>)*
     | `let` <name> `=` <expression>
     | `var` <name> ((`=` | `\in`) <expression>)?
+    | `if` <expression> `then` <block> (else <expression>)?
 
   // e.g `x := y || y := x` swaps x and y
   assign_pair ::= <name> `:=` <expression>
@@ -25,12 +26,17 @@ object AST {
   expression_binop ::= <expression_base> (<binop> <expression_base>)?
 
   expression_base ::=
+      | <boolean>
       | <int_literal>
       | <string_literal>
       | <name>
       | `(` <expression> `)`
 
-  binop ::= TODO
+  boolean ::=
+      | TRUE
+      | FALSE
+
+  binop ::= `+` | `-` | `=` | `#` | `<` | `>` | `<=` | `>=` | `\/` | `/\`
   */
 
   final case class Module(name: String, imports: List[String], definitions: List[Definition])
@@ -42,21 +48,32 @@ object AST {
     case AssignPairs(assignPairs: List[AssignPair])
     case Let(name: String, expression: Expression)
     case Var(name: String, opExpression: Option[(BinOp, Expression)])
+    case If(predicate: Expression, thenBlock: Block, elseBlock: Option[Block])
   }
 
   final case class AssignPair(name: String, expression: Expression)
 
   enum Expression {
-    case ExpressionBinOp(lhs: Expression, binOp: AST.BinOp, rhs: Expression)
+    case ExpressionBinOp(lhs: Expression, binOp: DCalAST.BinOp, rhs: Expression)
     case IntLiteral(value: BigInt)
     case StringLiteral(value: String)
     case Name(name: String)
     case BracketedExpression(expression: Expression)
+    case True
+    case False
   }
 
   enum BinOp {
-    case Equals
+    case EqualTo
     case SlashIn
-    case Placeholder
+    case Plus
+    case Minus
+    case NotEqualTo
+    case LesserThan
+    case GreaterThan
+    case LesserThanOrEqualTo
+    case GreaterThanOrEqualTo
+    case And
+    case Or
   }
 }
