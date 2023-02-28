@@ -124,6 +124,48 @@ class TestDCalTokenizer extends AnyFunSuite {
         data = DCalTokenData.Name("lst")
       )
     ),
+    "if x <= y then z := FALSE" -> List(
+      Token(
+        startPosition = pos(1, 1),
+        endPosition = pos(1, 2),
+        data = DCalTokenData.If
+      ),
+      Token(
+        startPosition = pos(1, 4),
+        endPosition = pos(1, 4),
+        data = DCalTokenData.Name("x")
+      ),
+      Token(
+        startPosition = pos(1, 6),
+        endPosition = pos(1, 7),
+        data = DCalTokenData.LesserThanOrEqualTo
+      ),
+      Token(
+        startPosition = pos(1, 9),
+        endPosition = pos(1, 9),
+        data = DCalTokenData.Name("y")
+      ),
+      Token(
+        startPosition = pos(1, 11),
+        endPosition = pos(1, 14),
+        data = DCalTokenData.Then
+      ),
+      Token(
+        startPosition = pos(1, 16),
+        endPosition = pos(1, 16),
+        data = DCalTokenData.Name("z")
+      ),
+      Token(
+        startPosition = pos(1, 18),
+        endPosition = pos(1, 19),
+        data = DCalTokenData.Walrus
+      ),
+      Token(
+        startPosition = pos(1, 21),
+        endPosition = pos(1, 25),
+        data = DCalTokenData.False
+      )
+    ),
     """y := "new_y"""" -> List(
       Token(
         startPosition = pos(1, 1),

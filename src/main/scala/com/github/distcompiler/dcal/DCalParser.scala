@@ -1,6 +1,6 @@
 package com.github.distcompiler.dcal
 
-import com.github.distcompiler.dcal.AST.*
+import com.github.distcompiler.dcal.DCalAST.*
 import com.github.distcompiler.dcal.DCalTokenizer.*
 
 import scala.util.parsing.combinator.Parsers
@@ -8,19 +8,19 @@ import scala.util.parsing.input.{NoPosition, Position, Reader}
 
 object DCalParser {
   object parse extends Parsers {
-    override type Elem = TokenData
+    override type Elem = DCalTokenData
 
-    class TokensReader(elems: LazyList[Token]) extends Reader[TokenData] {
-      override def first: TokenData = elems.head.data
+    class TokensReader(elems: LazyList[Token]) extends Reader[DCalTokenData] {
+      override def first: DCalTokenData = elems.head.data
 
       override def atEnd: Boolean = elems.isEmpty
 
       override def pos: Position = NoPosition
 
-      override def rest: Reader[TokenData] = new TokensReader(elems.tail)
+      override def rest: Reader[DCalTokenData] = new TokensReader(elems.tail)
     }
 
-    def apply(tokens: Iterator[Token]): AST.Module = {
+    def apply(tokens: Iterator[Token]): DCalAST.Module = {
       val reader = new TokensReader(tokens.to(LazyList))
       module(reader) match {
         case Success(mdl, _) => mdl
@@ -30,7 +30,7 @@ object DCalParser {
     }
 
     lazy val name: Parser[String] = {
-      acceptMatch("name", { case TokenData.Name(name) => name })
+      acceptMatch("name", { case DCalTokenData.Name(name) => name })
     }
 
     /**
@@ -41,16 +41,16 @@ object DCalParser {
      * @tparam D              the type of delimiter elements
      * @return the parser that matches a delimited sequence of elements of type T
      */
-    private def delimited[T, D](elemParser: =>Parser[T], delimiterParser: Parser[D] = TokenData.Comma): Parser[List[T]] = {
+    private def delimited[T, D](elemParser: =>Parser[T], delimiterParser: Parser[D] = DCalTokenData.Comma): Parser[List[T]] = {
       (elemParser ~ rep(delimiterParser ~> elemParser)).map{
         case t ~ ts => t :: ts
       }
     }
 
-    lazy val module: Parser[AST.Module] = {
-      (elem(TokenData.Module) ~> name ~ opt(imports) ~ rep(definition)).map {
+    lazy val module: Parser[DCalAST.Module] = {
+      (elem(DCalTokenData.Module) ~> name ~ opt(imports) ~ rep(definition)).map {
         case name ~ importsOpt ~ definitions =>
-          AST.Module(
+          DCalAST.Module(
             name = name,
             imports = importsOpt.getOrElse(Nil),
             definitions = definitions,
@@ -59,66 +59,72 @@ object DCalParser {
     }
 
     lazy val imports: Parser[List[String]] = {
-      (elem(TokenData.Import) ~> delimited(name)).map {
+      (elem(DCalTokenData.Import) ~> delimited(name)).map {
         case imports => imports
       }
     }
 
-    lazy val definition: Parser[AST.Definition] = {
-      (elem(TokenData.Def) ~> name ~ elem(TokenData.OpenParenthesis) ~ opt(delimited(name)) ~ elem(TokenData.CloseParenthesis) ~ block).map {
+    lazy val definition: Parser[DCalAST.Definition] = {
+      (elem(DCalTokenData.Def) ~> name ~ elem(DCalTokenData.OpenParenthesis) ~ opt(delimited(name)) ~ elem(DCalTokenData.CloseParenthesis) ~ block).map {
         case name ~ _ ~ params ~ _ ~ block =>
-          AST.Definition(
+          DCalAST.Definition(
             name = name, params = params.getOrElse(Nil), body = block
           )
       }
     }
 
-    lazy val block: Parser[AST.Block] = {
-      (elem(TokenData.OpenCurlyBracket) ~> rep(statement) <~ elem(TokenData.CloseCurlyBracket))
+    lazy val block: Parser[DCalAST.Block] = {
+      (elem(DCalTokenData.OpenCurlyBracket) ~> rep(statement) <~ elem(DCalTokenData.CloseCurlyBracket))
         .map { statements =>
-          AST.Block(statements)
+          DCalAST.Block(statements)
         }
     }
 
-    lazy val assignPair: Parser[AST.AssignPair] = (name ~ elem(TokenData.Walrus) ~ expression).map {
-      case name ~ _ ~ expr => AST.AssignPair(name = name, expression = expr)
+    lazy val assignPair: Parser[DCalAST.AssignPair] = (name ~ elem(DCalTokenData.Walrus) ~ expression).map {
+      case name ~ _ ~ expr => DCalAST.AssignPair(name = name, expression = expr)
     }
 
-    lazy val statement: Parser[AST.Statement] = {
-      val await = (elem(TokenData.Await) ~> expression).map(expr => AST.Statement.Await(expr))
+    lazy val statement: Parser[DCalAST.Statement] = {
+      val await = (elem(DCalTokenData.Await) ~> expression).map(expr => DCalAST.Statement.Await(expr))
+
+      val `if` = (elem(DCalTokenData.If) ~> expression ~ elem(DCalTokenData.Then) ~ block ~ opt(elem(DCalTokenData.Else) ~> block)).map {
+        case predicate ~ _ ~ thenBlock ~ elseBlockOpt => DCalAST.Statement.If(
+          predicate = predicate, thenBlock = thenBlock, elseBlock = elseBlockOpt
+        )
+      }
 
       val assignPairs =
-        delimited(elemParser = assignPair, delimiterParser = elem(TokenData.DoublePipe)).map{
-          pairs => AST.Statement.AssignPairs(pairs)
+        delimited(elemParser = assignPair, delimiterParser = elem(DCalTokenData.DoublePipe)).map{
+          pairs => DCalAST.Statement.AssignPairs(pairs)
         }
 
-      val let = (elem(TokenData.Let) ~> name ~ elem(TokenData.Equals) ~ expression).map {
-        case name ~ _ ~ expr => AST.Statement.Let(name = name, expression = expr)
+      val let = (elem(DCalTokenData.Let) ~> name ~ elem(DCalTokenData.EqualTo) ~ expression).map {
+        case name ~ _ ~ expr => DCalAST.Statement.Let(name = name, expression = expr)
       }
 
       val op = acceptMatch("var operator", {
-        case TokenData.Equals => AST.BinOp.Equals
-        case TokenData.SlashIn => AST.BinOp.SlashIn
+        case DCalTokenData.EqualTo => DCalAST.BinOp.EqualTo
+        case DCalTokenData.SlashIn => DCalAST.BinOp.SlashIn
       })
 
       val `var` =
-        (elem(TokenData.Var) ~> name ~ opt(op ~ expression)).map {
-          case name ~ Some(opOpt ~ exprOpt) => AST.Statement.Var(name = name, opExpression = Some((opOpt, exprOpt)))
-          case name ~ None => AST.Statement.Var(name = name, opExpression = None)
+        (elem(DCalTokenData.Var) ~> name ~ opt(op ~ expression)).map {
+          case name ~ Some(opOpt ~ exprOpt) => DCalAST.Statement.Var(name = name, opExpression = Some((opOpt, exprOpt)))
+          case name ~ None => DCalAST.Statement.Var(name = name, opExpression = None)
         }
 
-      await | let | `var` | assignPairs
+      await | `if` | let | `var` | assignPairs
     }
 
     // TODO: Operator precedence behaviour needs reworking
-    lazy val expression: Parser[AST.Expression] = expressionBinOp
+    lazy val expression: Parser[DCalAST.Expression] = expressionBinOp
 
-    lazy val expressionBinOp: Parser[AST.Expression] = {
+    lazy val expressionBinOp: Parser[DCalAST.Expression] = {
       (expressionBase ~ opt(binOp ~ expressionBase)).map {
         case lhs ~ rhsOpt =>
           rhsOpt
             .map {
-              case binOp ~ rhs => AST.Expression.ExpressionBinOp(
+              case binOp ~ rhs => DCalAST.Expression.ExpressionBinOp(
                 lhs = lhs, binOp = binOp, rhs = rhs
               )
             }
@@ -126,30 +132,40 @@ object DCalParser {
       }
     }
 
-    lazy val expressionBase: Parser[AST.Expression] = {
-      val intLiteral = acceptMatch(
-        "intLiteral",
-        { case TokenData.IntLiteral(v) => AST.Expression.IntLiteral(v) }
+    lazy val expressionBase: Parser[DCalAST.Expression] = {
+      val literal = acceptMatch("literal", {
+        case DCalTokenData.IntLiteral(v) => DCalAST.Expression.IntLiteral(v)
+        case DCalTokenData.StringLiteral(v) => DCalAST.Expression.StringLiteral(v)
+      })
+
+      val nameExpr = name.map(str => DCalAST.Expression.Name(str))
+
+      val bracketedExpr = (elem(DCalTokenData.OpenParenthesis) ~> expression <~ elem(DCalTokenData.CloseParenthesis)).map{ expr => expr }
+
+      val boolean = acceptMatch("boolean", {
+          case DCalTokenData.True => DCalAST.Expression.True
+          case DCalTokenData.False => DCalAST.Expression.False
+        }
       )
-
-      val stringLiteral = acceptMatch(
-        "stringLiteral",
-        { case TokenData.StringLiteral(v) => AST.Expression.StringLiteral(v) }
-      )
-
-      val nameExpr = name.map(str => AST.Expression.Name(str))
-
-      val bracketedExpr = (elem(TokenData.OpenParenthesis) ~> expression <~ elem(TokenData.CloseParenthesis)).map{ expr => expr }
-
-      bracketedExpr | intLiteral | stringLiteral | nameExpr
+      bracketedExpr | boolean | literal | nameExpr
     }
 
-    lazy val binOp: Parser[AST.BinOp] =
-      acceptMatch("binOp", { case TokenData.BinOpPlaceholder => AST.BinOp.Placeholder } )
-
+    lazy val binOp: Parser[DCalAST.BinOp] =
+      acceptMatch("binOp", {
+        case DCalTokenData.Plus => DCalAST.BinOp.Plus
+        case DCalTokenData.Minus => DCalAST.BinOp.Minus
+        case DCalTokenData.EqualTo => DCalAST.BinOp.EqualTo
+        case DCalTokenData.NotEqualTo => DCalAST.BinOp.NotEqualTo
+        case DCalTokenData.LesserThan => DCalAST.BinOp.LesserThan
+        case DCalTokenData.LesserThanOrEqualTo => DCalAST.BinOp.LesserThanOrEqualTo
+        case DCalTokenData.GreaterThan => DCalAST.BinOp.GreaterThan
+        case DCalTokenData.GreaterThanOrEqualTo => DCalAST.BinOp.GreaterThanOrEqualTo
+        case DCalTokenData.Or => DCalAST.BinOp.Or
+        case DCalTokenData.And => DCalAST.BinOp.And
+      })
   }
 
-  def apply(contents: String, fileName: String): AST.Module =
+  def apply(contents: String, fileName: String): DCalAST.Module =
     val tokens = tokenize(chars = contents, fileName = fileName)
     parse(tokens)
 }

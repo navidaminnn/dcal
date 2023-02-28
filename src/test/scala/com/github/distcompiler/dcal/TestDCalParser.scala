@@ -1,98 +1,146 @@
 package com.github.distcompiler.dcal
 
+import com.github.distcompiler.dcal.TestUtils
 import org.scalatest.funsuite.AnyFunSuite
 
 import scala.collection.immutable
 import scala.collection.immutable.List
 
 class TestDCalParser extends AnyFunSuite {
-  import DCalParser.*
 
-  def sequenceLines(lines: String*): String = lines.mkString("\n")
+  import DCalParser.*
 
   val testModule = "module TestModule1"
   val testImports = "import TestModule2"
 
-  val testDefNoParamsNoBody1 = "def aFunc1 () {}"
-  val expectedDefNoParamsNoBody1 = AST.Definition(
+  val testDefNoParamsNoBody = "def aFunc1 () {}"
+  val expectedDefNoParamsNoBody = DCalAST.Definition(
     name = "aFunc1",
     params = Nil,
-    body = AST.Block(statements = Nil)
+    body = DCalAST.Block(statements = Nil)
   )
 
-  val testDefNoParamsNoBody2 = "def aFunc2 (p1, p2, p3) {}"
-  val expectedDefNoParamsNoBody2 = AST.Definition(
+  val testDefParamsNoBody = "def aFunc2 (p1, p2, p3) {}"
+  val expectedDefParamsNoBody = DCalAST.Definition(
     name = "aFunc2",
     params = List("p1", "p2", "p3"),
-    body = AST.Block(statements = Nil)
+    body = DCalAST.Block(statements = Nil)
   )
 
-  val testLet = "let test1 = 1499"
+  val testLet = "let test1 = TRUE"
   val testVar = "var test2"
   val testVarEquals = """var test3 = "val3""""
   val testVarSlashIn = "var test4 \\in test5"
+  val testIf = "if x <= y then { x := x + 1 } else { y := y - 1 }"
   val testBracketedExpression = "(test6)"
-  val testAssignPairs = s"test6 := test7 || test7 := ${testBracketedExpression}"
-  val testExpression = "test6 BinOpPlaceholder 1000"
-  val testAwait = s"await ${testExpression}"
+  val testAssignPairs = s"test6 := test7 || test7 := $testBracketedExpression"
+  val testExpression = "test6 + 1000"
+  val testAwait = s"await $testExpression"
   val testDefParamsBody = s"def aFunc (anArg) {\n${
-    sequenceLines(
-      testLet, testVar, testVarEquals, testVarSlashIn, testAssignPairs, testAwait)
+    TestUtils.sequenceLines(
+      testLet, testVar, testVarEquals, testVarSlashIn, testAssignPairs, testAwait, testIf
+    )
   }\n}"
 
   List(
-    testModule -> AST.Module(
+    testModule -> DCalAST.Module(
       name = "TestModule1",
       imports = Nil,
       definitions = Nil
     ),
-    sequenceLines(testModule, testImports) -> AST.Module(
+    TestUtils.sequenceLines(testModule, testImports) -> DCalAST.Module(
       name = "TestModule1",
       imports = List("TestModule2"),
       definitions = Nil
     ),
-    sequenceLines(testModule, testDefNoParamsNoBody1) -> AST.Module(
+    TestUtils.sequenceLines(testModule, testDefNoParamsNoBody) -> DCalAST.Module(
       name = "TestModule1",
       imports = Nil,
       definitions = List(
-        expectedDefNoParamsNoBody1
+        expectedDefNoParamsNoBody
       )
     ),
-    sequenceLines(testModule, testDefParamsBody) -> AST.Module(
+    TestUtils.sequenceLines(testModule, testDefParamsBody) -> DCalAST.Module(
       name = "TestModule1",
       imports = Nil,
       definitions = List(
-        AST.Definition(
+        DCalAST.Definition(
           name = "aFunc",
           params = List("anArg"),
-          body = AST.Block(statements = List(
-            AST.Statement.Let(name = "test1", expression = AST.Expression.IntLiteral(1499)),
-            AST.Statement.Var(name = "test2", opExpression = None),
-            AST.Statement.Var(
-              name = "test3",
-              opExpression = Some((AST.BinOp.Equals, AST.Expression.StringLiteral("val3")))
-            ),
-            AST.Statement.Var(
-              name = "test4",
-              opExpression = Some((AST.BinOp.SlashIn, AST.Expression.Name("test5")))),
-            AST.Statement.AssignPairs(
-              assignPairs = List(
-                AST.AssignPair(name = "test6", expression = AST.Expression.Name("test7")),
-                AST.AssignPair(name = "test7", expression = AST.Expression.Name("test6"))
+          body = DCalAST.Block(
+            statements = List(
+              DCalAST.Statement.Let(name = "test1", expression = DCalAST.Expression.True),
+              DCalAST.Statement.Var(name = "test2", opExpression = None),
+              DCalAST.Statement.Var(
+                name = "test3",
+                opExpression = Some((DCalAST.BinOp.EqualTo, DCalAST.Expression.StringLiteral("val3")))
+              ),
+              DCalAST.Statement.Var(
+                name = "test4",
+                opExpression = Some((DCalAST.BinOp.SlashIn, DCalAST.Expression.Name("test5")))),
+              DCalAST.Statement.AssignPairs(
+                assignPairs = List(
+                  DCalAST.AssignPair(name = "test6", expression = DCalAST.Expression.Name("test7")),
+                  DCalAST.AssignPair(name = "test7", expression = DCalAST.Expression.Name("test6"))
+                )
+              ),
+              DCalAST.Statement.Await(
+                expression = DCalAST.Expression.ExpressionBinOp(
+                  lhs = DCalAST.Expression.Name("test6"),
+                  binOp = DCalAST.BinOp.Plus,
+                  rhs = DCalAST.Expression.IntLiteral(1000)
+                )
+              ),
+              DCalAST.Statement.If(
+                predicate = DCalAST.Expression.ExpressionBinOp(
+                  lhs = DCalAST.Expression.Name("x"),
+                  binOp = DCalAST.BinOp.LesserThanOrEqualTo,
+                  rhs = DCalAST.Expression.Name("y")
+                ),
+                thenBlock = DCalAST.Block(
+                  statements = List(
+                    DCalAST.Statement.AssignPairs(
+                      assignPairs = List(
+                        DCalAST.AssignPair(
+                          name = "x",
+                          expression = DCalAST.Expression.ExpressionBinOp(
+                            lhs = DCalAST.Expression.Name("x"),
+                            binOp = DCalAST.BinOp.Plus,
+                            rhs = DCalAST.Expression.IntLiteral(1)
+                          )
+                        )
+                      )
+                    )
+                  )
+                ),
+                elseBlock = Some(
+                  DCalAST.Block(
+                    statements = List(
+                      DCalAST.Statement.AssignPairs(
+                        assignPairs = List(
+                          DCalAST.AssignPair(
+                            name = "y",
+                            expression = DCalAST.Expression.ExpressionBinOp(
+                              lhs = DCalAST.Expression.Name("y"),
+                              binOp = DCalAST.BinOp.Minus,
+                              rhs = DCalAST.Expression.IntLiteral(1)
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
               )
-            ),
-            AST.Statement.Await(expression = AST.Expression.ExpressionBinOp(
-              lhs = AST.Expression.Name("test6"),
-              binOp = AST.BinOp.Placeholder,
-              rhs = AST.Expression.IntLiteral(1000)))
-          ))
+            )
+          )
         )
       )
     ),
-    sequenceLines(testModule, testDefNoParamsNoBody1, testDefNoParamsNoBody2) -> AST.Module(
+    TestUtils.sequenceLines(testModule, testDefNoParamsNoBody, testDefParamsNoBody) -> DCalAST.Module(
       name = "TestModule1",
       imports = Nil,
-      definitions = List(expectedDefNoParamsNoBody1, expectedDefNoParamsNoBody2)
+      definitions = List(expectedDefNoParamsNoBody, expectedDefParamsNoBody)
     )
   ).foreach {
     case (input, expectedResult) =>
