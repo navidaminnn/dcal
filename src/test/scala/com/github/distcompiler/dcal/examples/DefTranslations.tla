@@ -22,7 +22,7 @@ sum(_state1, p1, p2) ==
         IN
             _state2
 
-\* DCal: def change() { y := y - v i := i + 1 }
+\* DCal: def change(v) { y := y - v i := i + 1 }
 change(_state1, v) ==
     LET
         _state2 == { [s EXCEPT !.y = s.y - v ]: s \in _state1 }
