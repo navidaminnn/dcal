@@ -13,14 +13,14 @@ class TestDCalParser extends AnyFunSuite {
   val testModule = "module TestModule1"
   val testImports = "import TestModule2"
 
-  val testDefNoParamsNoBody = "def aFunc1 () {}"
+  val testDefNoParamsNoBody = "def aFunc1() {}"
   val expectedDefNoParamsNoBody = DCalAST.Definition(
     name = "aFunc1",
     params = Nil,
     body = DCalAST.Block(statements = Nil)
   )
 
-  val testDefParamsNoBody = "def aFunc2 (p1, p2, p3) {}"
+  val testDefParamsNoBody = "def aFunc2(p1, p2, p3) {}"
   val expectedDefParamsNoBody = DCalAST.Definition(
     name = "aFunc2",
     params = List("p1", "p2", "p3"),
@@ -36,7 +36,7 @@ class TestDCalParser extends AnyFunSuite {
   val testAssignPairs = s"test6 := test7 || test7 := $testBracketedExpression"
   val testExpression = "test6 > 1000"
   val testAwait = s"await $testExpression"
-  val testDefParamsBody = s"def aFunc (anArg) {\n${
+  val testDefParamsBody = s"def aFunc(anArg) {\n${
     TestUtils.sequenceLines(
       testLet, testVar, testVarEquals, testVarSlashIn, testAssignPairs, testAwait, testIf
     )

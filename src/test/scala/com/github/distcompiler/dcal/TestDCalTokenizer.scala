@@ -220,7 +220,7 @@ class TestDCalTokenizer extends AnyFunSuite {
         data = DCalTokenData.Name("z1")
       ),
     ),
-    "def wait () {await lockRelease}" -> List(
+    "def wait() {await lockRelease}" -> List(
       Token(
         startPosition = pos(1, 1),
         endPosition = pos(1, 3),
@@ -232,33 +232,33 @@ class TestDCalTokenizer extends AnyFunSuite {
         data = DCalTokenData.Name("wait")
       ),
       Token(
-        startPosition = pos(1, 10),
-        endPosition = pos(1, 10),
+        startPosition = pos(1, 9),
+        endPosition = pos(1, 9),
         data = DCalTokenData.OpenParenthesis
       ),
       Token(
-        startPosition = pos(1, 11),
-        endPosition = pos(1, 11),
+        startPosition = pos(1, 10),
+        endPosition = pos(1, 10),
         data = DCalTokenData.CloseParenthesis
       ),
       Token(
-        startPosition = pos(1, 13),
-        endPosition = pos(1, 13),
+        startPosition = pos(1, 12),
+        endPosition = pos(1, 12),
         data = DCalTokenData.OpenCurlyBracket
       ),
       Token(
-        startPosition = pos(1, 14),
-        endPosition = pos(1, 18),
+        startPosition = pos(1, 13),
+        endPosition = pos(1, 17),
         data = DCalTokenData.Await
       ),
       Token(
-        startPosition = pos(1, 20),
-        endPosition = pos(1, 30),
+        startPosition = pos(1, 19),
+        endPosition = pos(1, 29),
         data = DCalTokenData.Name("lockRelease")
       ),
       Token(
-        startPosition = pos(1, 31),
-        endPosition = pos(1, 31),
+        startPosition = pos(1, 30),
+        endPosition = pos(1, 30),
         data = DCalTokenData.CloseCurlyBracket
       )
     ),
