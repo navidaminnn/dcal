@@ -109,8 +109,8 @@ object DCalParser {
 
       val `var` =
         (elem(DCalTokenData.Var) ~> name ~ opt(op ~ expression)).map {
-          case name ~ Some(opOpt ~ exprOpt) => DCalAST.Statement.Var(name = name, opExpression = Some((opOpt, exprOpt)))
-          case name ~ None => DCalAST.Statement.Var(name = name, opExpression = None)
+          case name ~ Some(opOpt ~ exprOpt) => DCalAST.Statement.Var(name = name, expressionOpt = Some((opOpt, exprOpt)))
+          case name ~ None => DCalAST.Statement.Var(name = name, expressionOpt = None)
         }
 
       await | `if` | let | `var` | assignPairs
