@@ -1,16 +1,18 @@
----- MODULE Defs ----
-\* "def mt () {}"
+-------------------------- MODULE DefTranslations --------------------------
+EXTENDS Integers, FiniteSets
+
+\* DCal: def mt () {}
 mt(_state1) ==
     _state1
 
-\* def resetString () { str = "new string" }
+\* DCal: def resetString () { str = "new string" }
 resetString(_state1) ==
     LET
         _state2 == { [s EXCEPT !.str = "new string"]: s \in _state1 }
     IN
         _state2
 
-\* def sum (p1, p2) { let local = p1 + p2 x := local }
+\* DCal: def sum (p1, p2) { let local = p1 + p2 x := local }
 sum(_state1, p1, p2) ==
     LET
         local == p1 + p2
@@ -20,7 +22,7 @@ sum(_state1, p1, p2) ==
         IN
             _state2
 
-\* def change() { y := y - v i := i + 1 }
+\* DCal: def change() { y := y - v i := i + 1 }
 change(_state1, v) ==
     LET
         _state2 == { [s EXCEPT !.y = s.y - v ]: s \in _state1 }
@@ -29,3 +31,6 @@ change(_state1, v) ==
             _state3 == { [s EXCEPT !.i = s.i + 1]: s \in _state2 }
         IN
             _state3
+
+\* states == {[x |-> 0, y |-> 0, str |-> "", i |-> 1]}
+=============================================================================
