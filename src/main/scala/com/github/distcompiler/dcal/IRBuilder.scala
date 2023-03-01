@@ -140,7 +140,7 @@ object IRBuilder {
       name = dcalDef.name,
       params = dcalDef.params,
       // TODO: Recursively call generateStatement
-      body = dcalDef.body.statements.map(generateStatement)
+      body = flatten(dcalDef.body.statements.map(generateStatement))
     )
   }
 

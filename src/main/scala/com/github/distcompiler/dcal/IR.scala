@@ -23,7 +23,7 @@ object IR {
     case Uninterpreted(text: String)
   }
 
-  final case class Definition(name: String, params: List[String], body: List[List[Node]])
+  final case class Definition(name: String, params: List[String], body: List[Node])
 
   final case class Module(name: String, definitions: List[Definition])
 
