@@ -34,7 +34,7 @@ class TestDCalParser extends AnyFunSuite {
   val testIf = "if x <= y then { x := x + 1 } else { y := y - 1 }"
   val testBracketedExpression = "(test6)"
   val testAssignPairs = s"test6 := test7 || test7 := $testBracketedExpression"
-  val testExpression = "test6 + 1000"
+  val testExpression = "test6 > 1000"
   val testAwait = s"await $testExpression"
   val testDefParamsBody = s"def aFunc (anArg) {\n${
     TestUtils.sequenceLines(
@@ -87,7 +87,7 @@ class TestDCalParser extends AnyFunSuite {
               DCalAST.Statement.Await(
                 expression = DCalAST.Expression.ExpressionBinOp(
                   lhs = DCalAST.Expression.Name("test6"),
-                  binOp = DCalAST.BinOp.Plus,
+                  binOp = DCalAST.BinOp.GreaterThan,
                   rhs = DCalAST.Expression.IntLiteral(1000)
                 )
               ),

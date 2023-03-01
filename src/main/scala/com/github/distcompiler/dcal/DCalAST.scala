@@ -47,7 +47,7 @@ object DCalAST {
     case Await(expression: Expression)
     case AssignPairs(assignPairs: List[AssignPair])
     case Let(name: String, expression: Expression)
-    case Var(name: String, opExpression: Option[(BinOp, Expression)])
+    case Var(name: String, expressionOpt: Option[(BinOp, Expression)])
     case If(predicate: Expression, thenBlock: Block, elseBlock: Option[Block])
   }
 
