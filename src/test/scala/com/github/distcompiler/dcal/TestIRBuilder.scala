@@ -3,7 +3,6 @@ package com.github.distcompiler.dcal
 import org.scalatest.funsuite.AnyFunSuite
 
 class TestIRBuilder extends AnyFunSuite {
-  // TODO: Ask if there is any case where a def body translates to more than a TLA+ let expression -> last TLA+ body
   val moduleName = "TestModule"
   val testModule = s"module $moduleName"
 
@@ -30,15 +29,16 @@ class TestIRBuilder extends AnyFunSuite {
       IR.Node.Let(
         name = "_state2",
         binding = List(
-          IR.Node.Uninterpreted("{ ["),
-          IR.Node.Name("s"),
-          IR.Node.Uninterpreted("EXCEPT"),
-          IR.Node.Name("!.str"),
-          IR.Node.Uninterpreted("""= "new string"]:"""),
-          IR.Node.Name("s"),
-          IR.Node.Uninterpreted("\\in"),
-          IR.Node.Name("_state1"),
-          IR.Node.Uninterpreted("}")
+          // { [s EXCEPT !.str = "new string"]: s \in _state1 }
+          IR.Node.MapOnSet(
+            set = List( IR.Node.Name("_state1") ),
+            setMember = "s",
+            proc = List(
+              IR.Node.Uninterpreted("["),
+              IR.Node.Name("s"),
+              IR.Node.Uninterpreted(""" EXCEPT !.str = "new string"]""")
+            )
+          )
         ),
         body = List(
           IR.Node.Name("_state2")
@@ -51,44 +51,59 @@ class TestIRBuilder extends AnyFunSuite {
   // Expected TLA+:
   //  sum(_state1, p1, p2) ==
   //    LET
-  //      local == p1 + p2
+  //      _state2 == UNION {
+  //          LET
+  //            local == p1 + p2
+  //          IN
+  //            { [ss EXCEPT !.x = local] : ss \in { s } }
+  //          : s \in _state1
+  //      }
   //    IN
-  //      LET
-  //        _state2 == { [s EXCEPT !.x = local]: s \ in _state1 }
-  //      IN
-  //        _state2
+  //      _state2
   val expectedDefWithLet = IR.Definition(
     name = "sum",
     params = List("_state1", "p1", "p2"),
     body = List(
       IR.Node.Let(
-        name = "local",
+        name = "_state2",
         binding = List(
-          IR.Node.Name("p1"),
-          IR.Node.Uninterpreted("+"),
-          IR.Node.Name("p2")
+          IR.Node.Uninterpreted("UNION { "),
+          IR.Node.MapOnSet(
+            set = List( IR.Node.Name("_state1") ),
+            setMember = "s",
+            proc = List(
+              IR.Node.Let(
+                name = "local",
+                binding = List(
+                  IR.Node.Name("p1"),
+                  IR.Node.Uninterpreted(" + "),
+                  IR.Node.Name("p2")
+                ),
+                // { [ss EXCEPT !.x = local] : ss \in { s } }
+                body = List(
+                  IR.Node.MapOnSet(
+                    set = List(
+                      IR.Node.Uninterpreted("{ "),
+                      IR.Node.Name("s"),
+                      IR.Node.Uninterpreted(" }")
+                    ),
+                    setMember = "ss",
+                    proc = List(
+                      IR.Node.Uninterpreted("["),
+                      IR.Node.Name("ss"),
+                      IR.Node.Uninterpreted(" EXCEPT !.x = "),
+                      IR.Node.Name("local"),
+                      IR.Node.Uninterpreted("]")
+                    )
+                  )
+                )
+              )
+            )
+          ),
+          IR.Node.Uninterpreted("}")
         ),
         body = List(
-          IR.Node.Let(
-            name = "_state2",
-            // { [s EXCEPT !.x = local]: s \ in _state1 }
-            binding = List(
-              IR.Node.Uninterpreted("{ ["),
-              IR.Node.Name("s"),
-              IR.Node.Uninterpreted("EXCEPT"),
-              IR.Node.Name("!.x"),
-              IR.Node.Uninterpreted("="),
-              IR.Node.Name("local"),
-              IR.Node.Uninterpreted("]:"),
-              IR.Node.Name("s"),
-              IR.Node.Uninterpreted("\\in"),
-              IR.Node.Name("_sate1"),
-              IR.Node.Uninterpreted("}")
-            ),
-            body = List(
-              IR.Node.Name("_state2")
-            )
-          )
+          IR.Node.Name("_state2")
         )
       )
     )
@@ -112,36 +127,32 @@ class TestIRBuilder extends AnyFunSuite {
         name = "_state2",
         // { [s EXCEPT !.y = s.y - v]: s \ in _state1 }
         binding = List(
-          IR.Node.Uninterpreted("{ ["),
-          IR.Node.Name("s"),
-          IR.Node.Uninterpreted("EXCEPT"),
-          IR.Node.Name("!.y"),
-          IR.Node.Uninterpreted("="),
-          IR.Node.Name("s.y"),
-          IR.Node.Uninterpreted("-"),
-          IR.Node.Name("v"),
-          IR.Node.Uninterpreted("]:"),
-          IR.Node.Name("s"),
-          IR.Node.Uninterpreted("\\in"),
-          IR.Node.Name("_state1"),
-          IR.Node.Uninterpreted("}")
+          IR.Node.MapOnSet(
+            set = List( IR.Node.Name("_state1") ),
+            setMember = "s",
+            proc = List(
+              IR.Node.Uninterpreted("["),
+              IR.Node.Name("s"),
+              IR.Node.Uninterpreted(" EXCEPT !.y = s.y - "),
+              IR.Node.Name("v"),
+              IR.Node.Uninterpreted("]")
+            )
+          )
         ),
         body = List(
           IR.Node.Let(
             name = "_state3",
             // { [s EXCEPT !.i = s.i + 1]: s \in _state2 }
             binding = List(
-              IR.Node.Uninterpreted("{ ["),
-              IR.Node.Name("s"),
-              IR.Node.Uninterpreted("EXCEPT"),
-              IR.Node.Name("!.i"),
-              IR.Node.Uninterpreted("="),
-              IR.Node.Name("s.i"),
-              IR.Node.Uninterpreted("+ 1]:"),
-              IR.Node.Name("s"),
-              IR.Node.Uninterpreted("\\in"),
-              IR.Node.Name("_state2"),
-              IR.Node.Uninterpreted("}")
+              IR.Node.MapOnSet(
+                set = List( IR.Node.Name("_state2") ),
+                setMember = "s",
+                proc = List(
+                  IR.Node.Uninterpreted("["),
+                  IR.Node.Name("s"),
+                  IR.Node.Uninterpreted(" EXCEPT !.i = s.i + 1]")
+                )
+              )
             ),
             body = List(
               IR.Node.Name("_state3")
