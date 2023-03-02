@@ -39,11 +39,4 @@ object IR {
   final case class Definition(name: String, params: List[String], body: List[Node])
 
   final case class Module(name: String, definitions: List[Definition])
-
-  // if x < 2 {
-  //   ...
-  // } else {
-  //   ...
-  // }
-  // (LET s6 == ?) UNION { IF s.x < 2 THEN ... ELSE ... : s \in s5 }
 }

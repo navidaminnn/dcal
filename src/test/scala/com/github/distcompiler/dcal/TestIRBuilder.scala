@@ -164,9 +164,6 @@ class TestIRBuilder extends AnyFunSuite {
   )
 
   List(
-    testModule -> IR.Module(
-      name = moduleName, definitions = Nil
-    ),
     TestUtils.sequenceLines(testModule, testDefNoParamsNoBody) -> IR.Module(
       name = moduleName,
       definitions = List(
@@ -199,6 +196,21 @@ class TestIRBuilder extends AnyFunSuite {
         expectedDefNoParamsNoBody
       )
     )
+  ).foreach {
+    case (input, expectedOutput) =>
+      ignore(s"generateIR($input)") {
+        val actualOutput = IRBuilder(
+          contents = input,
+          fileName = "<testfile>",
+        )
+        assert(actualOutput == expectedOutput)
+      }
+  }
+
+  List(
+    testModule -> IR.Module(
+      name = moduleName, definitions = Nil
+    ),
   ).foreach {
     case (input, expectedOutput) =>
       test(s"generateIR($input)") {
