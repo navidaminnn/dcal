@@ -1,7 +1,7 @@
 package com.github.distcompiler.dcal
 
 import com.github.distcompiler.dcal.DCalTokenizer.tokenize.rep
-import com.github.distcompiler.dcal.TokenData.{CloseCurlyBracket, OpenCurlyBracket}
+import com.github.distcompiler.dcal.DCalTokenData.{CloseCurlyBracket, OpenCurlyBracket}
 
 import scala.collection.View
 import scala.util.parsing.combinator.Parsers
@@ -20,7 +20,7 @@ object DCalTokenizer {
    * @param endPosition   token ending line and column (inclusive)
    * @param data          token data, one of TokenData enum
    */
-  final case class Token(startPosition: Position, endPosition: Position, data: TokenData)
+  final case class Token(startPosition: Position, endPosition: Position, data: DCalTokenData)
 
   class CharsReader(fileName: String, elems: LazyList[Char], line: Int, column: Int, val lastPos: Position)
     extends Reader[Char] {
@@ -57,7 +57,7 @@ object DCalTokenizer {
         .map(_.map(_ => str))
         .getOrElse(success(str))
 
-    def withPosition(dataParser: Parser[TokenData]): Parser[Token] =
+    def withPosition(dataParser: Parser[DCalTokenData]): Parser[Token] =
       Parser { input =>
         // Our special reader implementation has all the info needed to calculate a position in any situation
         // (even an empty file)
@@ -82,7 +82,7 @@ object DCalTokenizer {
     private val intLiteral: Parser[Token] =
       withPosition {
         rep1(numeric).map { digits =>
-          TokenData.IntLiteral(BigInt.apply(digits.mkString))
+          DCalTokenData.IntLiteral(BigInt.apply(digits.mkString))
         }
       }
 
@@ -96,7 +96,7 @@ object DCalTokenizer {
             case 't' => '\t'
           })
         (elem('"') ~> rep(character) <~ elem('"'))
-          .map(characters => TokenData.StringLiteral(characters.mkString))
+          .map(characters => DCalTokenData.StringLiteral(characters.mkString))
       }
 
     private val name: Parser[Token] =
@@ -104,27 +104,40 @@ object DCalTokenizer {
         val underscore: Parser[Char] = elem('_')
         val character: Parser[Char] = underscore | alphabetic | numeric
         (rep(underscore | numeric) ~ alphabetic ~ rep(character))
-          .map{ case c1 ~ c2 ~ c3 => TokenData.Name(s"${c1.mkString}${c2}${c3.mkString}") }
+          .map{ case c1 ~ c2 ~ c3 => DCalTokenData.Name(s"${c1.mkString}${c2}${c3.mkString}") }
       }
 
     private val fixedTokens: Parser[Token] =
       List(
-        "{" -> TokenData.OpenCurlyBracket,
-        "}" -> TokenData.CloseCurlyBracket,
-        "let" -> TokenData.Let,
-        "var" -> TokenData.Var,
-        "=" -> TokenData.Equals,
-        ":=" -> TokenData.Walrus,
-        "||" -> TokenData.DoublePipe,
-        "\\in" -> TokenData.SlashIn,
-        "await" -> TokenData.Await,
-        "def" -> TokenData.Def,
-        "import" -> TokenData.Import,
-        "module" -> TokenData.Module,
-        "(" -> TokenData.OpenParenthesis,
-        ")" -> TokenData.CloseParenthesis,
-        "," -> TokenData.Comma,
-        "BinOpPlaceholder" -> TokenData.BinOpPlaceholder
+        "{" -> DCalTokenData.OpenCurlyBracket,
+        "}" -> DCalTokenData.CloseCurlyBracket,
+        "let" -> DCalTokenData.Let,
+        "var" -> DCalTokenData.Var,
+        "=" -> DCalTokenData.EqualTo,
+        ":=" -> DCalTokenData.Walrus,
+        "||" -> DCalTokenData.DoublePipe,
+        "\\in" -> DCalTokenData.SlashIn,
+        "await" -> DCalTokenData.Await,
+        "def" -> DCalTokenData.Def,
+        "import" -> DCalTokenData.Import,
+        "module" -> DCalTokenData.Module,
+        "(" -> DCalTokenData.OpenParenthesis,
+        ")" -> DCalTokenData.CloseParenthesis,
+        "," -> DCalTokenData.Comma,
+        "+" -> DCalTokenData.Plus,
+        "-" -> DCalTokenData.Minus,
+        "#" -> DCalTokenData.NotEqualTo,
+        "<" -> DCalTokenData.LesserThan,
+        ">" -> DCalTokenData.GreaterThan,
+        "<=" -> DCalTokenData.LesserThanOrEqualTo,
+        ">=" -> DCalTokenData.GreaterThanOrEqualTo,
+        "\\/" -> DCalTokenData.Or,
+        "/\\" -> DCalTokenData.And,
+        "TRUE" -> DCalTokenData.True,
+        "FALSE" -> DCalTokenData.False,
+        "if" -> DCalTokenData.If,
+        "then" -> DCalTokenData.Then,
+        "else" -> DCalTokenData.Else
       )
         .sortWith(_._1 > _._1)
         .map{ case (keyword, tokenData) => withPosition{ str(keyword).map(_ => tokenData ) } }
@@ -164,4 +177,7 @@ object DCalTokenizer {
       }
         .flatten
   }
+
+  def apply(contents: String, fileName: String): Iterator[Token] =
+    tokenize(chars = contents, fileName = fileName)
 }

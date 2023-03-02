@@ -1,15 +1,28 @@
 package com.github.distcompiler.dcal
 
-enum TokenData {
+enum DCalTokenData {
     case IntLiteral(value: BigInt)
     case StringLiteral(value: String)
+    case True
+    case False
     case Name(name: String)
     case Let
     case Var
-    case Equals
+    case If
+    case Then
+    case Else
+    case EqualTo
     case Walrus
     case DoublePipe
-    case BinOpPlaceholder
+    case Plus
+    case Minus
+    case NotEqualTo
+    case LesserThan
+    case GreaterThan
+    case LesserThanOrEqualTo
+    case GreaterThanOrEqualTo
+    case And
+    case Or
     case SlashIn
     case Await
     case Def
