@@ -37,12 +37,12 @@ object DCalParser {
      *
      * @param elemParser      a parser that matches an element of type T
      * @param delimiterParser a parser that matches an element of type D
-     * @tparam T              the type of elements if successfully parsed
-     * @tparam D              the type of delimiter elements
+     * @tparam T the type of elements if successfully parsed
+     * @tparam D the type of delimiter elements
      * @return the parser that matches a delimited sequence of elements of type T
      */
-    private def delimited[T, D](elemParser: =>Parser[T], delimiterParser: Parser[D] = DCalTokenData.Comma): Parser[List[T]] = {
-      (elemParser ~ rep(delimiterParser ~> elemParser)).map{
+    private def delimited[T, D](elemParser: => Parser[T], delimiterParser: Parser[D] = DCalTokenData.Comma): Parser[List[T]] = {
+      (elemParser ~ rep(delimiterParser ~> elemParser)).map {
         case t ~ ts => t :: ts
       }
     }
@@ -94,7 +94,7 @@ object DCalParser {
       }
 
       val assignPairs =
-        delimited(elemParser = assignPair, delimiterParser = elem(DCalTokenData.DoublePipe)).map{
+        delimited(elemParser = assignPair, delimiterParser = elem(DCalTokenData.DoublePipe)).map {
           pairs => DCalAST.Statement.AssignPairs(pairs)
         }
 
@@ -140,14 +140,19 @@ object DCalParser {
 
       val nameExpr = name.map(str => DCalAST.Expression.Name(str))
 
-      val bracketedExpr = (elem(DCalTokenData.OpenParenthesis) ~> expression <~ elem(DCalTokenData.CloseParenthesis)).map{ expr => expr }
+      val bracketedExpr = (elem(DCalTokenData.OpenParenthesis) ~> expression <~ elem(DCalTokenData.CloseParenthesis)).map { expr => expr }
 
       val boolean = acceptMatch("boolean", {
-          case DCalTokenData.True => DCalAST.Expression.True
-          case DCalTokenData.False => DCalAST.Expression.False
-        }
-      )
-      bracketedExpr | boolean | literal | nameExpr
+        case DCalTokenData.True => DCalAST.Expression.True
+        case DCalTokenData.False => DCalAST.Expression.False
+      })
+
+      val set = (elem(DCalTokenData.OpenCurlyBracket) ~> elem(DCalTokenData.OpenCurlyBracket) ~> opt(delimited(expression)) <~
+        elem(DCalTokenData.CloseCurlyBracket) <~ elem(DCalTokenData.CloseCurlyBracket)).map { setMembers =>
+        DCalAST.Expression.Set(members = setMembers.getOrElse(Nil))
+      }
+
+      bracketedExpr | set | boolean | literal | nameExpr
     }
 
     lazy val binOp: Parser[DCalAST.BinOp] =

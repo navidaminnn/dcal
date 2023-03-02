@@ -30,7 +30,7 @@ class TestDCalParser extends AnyFunSuite {
   val testLet = "let test1 = TRUE"
   val testVar = "var test2"
   val testVarEquals = """var test3 = "val3""""
-  val testVarSlashIn = "var test4 \\in test5"
+  val testVarSlashIn = "var test4 \\in {{ 1, 2, 3, 4, 5 }}"
   val testIf = "if x <= y then { x := x + 1 } else { y := y - 1 }"
   val testBracketedExpression = "(test6)"
   val testAssignPairs = s"test6 := test7 || test7 := $testBracketedExpression"
@@ -77,7 +77,20 @@ class TestDCalParser extends AnyFunSuite {
               ),
               DCalAST.Statement.Var(
                 name = "test4",
-                expressionOpt = Some((DCalAST.BinOp.SlashIn, DCalAST.Expression.Name("test5")))),
+                expressionOpt = Some(
+                  (
+                    DCalAST.BinOp.SlashIn,
+                    DCalAST.Expression.Set(
+                      members = List(
+                        DCalAST.Expression.IntLiteral(1),
+                        DCalAST.Expression.IntLiteral(2),
+                        DCalAST.Expression.IntLiteral(3),
+                        DCalAST.Expression.IntLiteral(4),
+                        DCalAST.Expression.IntLiteral(5),
+                      )
+                    )
+                  )
+                )),
               DCalAST.Statement.AssignPairs(
                 assignPairs = List(
                   DCalAST.AssignPair(name = "test6", expression = DCalAST.Expression.Name("test7")),
