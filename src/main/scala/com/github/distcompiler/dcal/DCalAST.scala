@@ -12,7 +12,7 @@ object DCalAST {
   block ::= `{` <statement>* `}
 
   statement ::=
-    | `await` <expression>
+    | `await` <predicate>
     | <assign_pair> (`||` <assign_pair>)*
     | `let` <name> (`=` | `\in`) (<expression> | <call>)
     | `var` <name> ((`=` | `\in`) <expression>)?
@@ -35,7 +35,6 @@ object DCalAST {
   expression_unop ::= <unop> <expression_base>
 
   expression_base ::=
-      | <boolean>
       | <int_literal>
       | <string_literal>
       | <name>
@@ -44,9 +43,6 @@ object DCalAST {
 
   set ::= `{` <expression>* `}`
 
-  boolean ::=
-      | TRUE
-      | FALSE
 
   binop ::= `+` | `-`
 
@@ -110,6 +106,7 @@ object DCalAST {
   enum LogicOp {
     case And
     case Or
+    case Not
   }
 
   enum UnOp {

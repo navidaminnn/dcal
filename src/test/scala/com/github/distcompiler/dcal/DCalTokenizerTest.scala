@@ -2,7 +2,8 @@ package com.github.distcompiler.dcal
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class TestDCalTokenizer extends AnyFunSuite {
+class DCalTokenizerTest extends AnyFunSuite {
+
   import DCalTokenizer.*
 
   def pos(line: Int, column: Int): Position =
