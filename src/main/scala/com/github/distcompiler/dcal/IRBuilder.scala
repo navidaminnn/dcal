@@ -101,7 +101,21 @@ object IRBuilder {
       case Expression.BracketedExpression(expr) =>
         List(IR.Node.Uninterpreted("(")) ++ generateExpression(expr) ++ List(IR.Node.Uninterpreted(")"))
 
-      case Expression.Set(members) => List(IR.Node.Set(members = members.map(generateExpression)))
+      case ExpressionLogicOp(_, _, _) => ???
+
+      case Set(members) =>
+        @tailrec
+        def delimit(lst: List[DCalAST.Expression], acc: ListBuffer[IR.Node]): ListBuffer[IR.Node] = {
+          lst match {
+            case Nil => acc
+            case h :: t => t match {
+              case Nil => delimit(t, acc :++ generateExpression(h)(using ctx))
+              case _ => delimit(t, acc :++ (generateExpression(h)(using ctx) :+ IR.Node.Uninterpreted(", ")))
+            }
+          }
+        }
+
+        (delimit(members, ListBuffer[IR.Node](IR.Node.Uninterpreted("{ "))) += IR.Node.Uninterpreted(" }")).toList
     }
   }
 
@@ -203,7 +217,7 @@ object IRBuilder {
         binding = List(IR.Node.Uninterpreted("{ "), IR.Node.Name(ctx.mapFilterOnSetInfo._1), IR.Node.Uninterpreted(" }")),
         body = generateStatements(dcalIfThenElse.thenBlock.statements)(using ctx.withStateName(thenState))
       )
-      pb.append(IR.Node.Uninterpreted("THEN "))
+      pb.append(IR.Node.Uninterpreted("\nTHEN "))
       pb.append(thenBlock)
 
       val elseState = freshState
@@ -212,7 +226,7 @@ object IRBuilder {
         binding = List(IR.Node.Uninterpreted("{ "), IR.Node.Name(ctx.mapFilterOnSetInfo._1), IR.Node.Uninterpreted(" }")),
         body = generateStatements(dcalIfThenElse.elseBlock.statements)(using ctx.withStateName(elseState))
       )
-      pb.append(IR.Node.Uninterpreted("ELSE "))
+      pb.append(IR.Node.Uninterpreted("\nELSE "))
       pb.append(elseBlock)
 
       pb.toList
@@ -281,6 +295,8 @@ object IRBuilder {
                 IR.Node.Name(outerSetMember),
                 IR.Node.Uninterpreted(" }")
               ),
+              // Problem here: ...: z2 \in l5.set -> ctx.mapOnSetInfo = (z2, l5.set)
+              // z1 is a state variable, so z1 becomes z2.z1
               body = generateStatements(rest)(using ctx.withStateName(newState))
             )
           )
@@ -299,7 +315,6 @@ object IRBuilder {
               setMember = innerSetMember,
               proc = generateInnerProc(using ctx
                 .withNameInfo(innerSetMember, NameInfo.Local)
-                .withMapFilterOnSetInfo(innerSetMember, set)
               )
             )
           )
