@@ -75,6 +75,18 @@ class DCalCompilerTest extends AnyFunSuite {
           |[x |-> 31, y |-> 0, str |-> "", i |-> 0, set |-> {10, 11, 12}] }""".stripMargin
     ),
     TLCTest(
+      testDescription = "IfThenElse",
+      module =
+        """module MyTest
+          |def testIfThenElse() { if x <= y then { x := x + 1; } else { y := y - 1; } }""".stripMargin,
+      defName = "testIfThenElse",
+      initialStates = initialStates,
+      expectedStates =
+        """{ [x |-> 2, y |-> 3, str |-> "", i |-> 10, set |-> {1, 5, 10}],
+          |[x |-> 19, y |-> 1, str |-> "", i |-> 100, set |-> {0, 3, 6}],
+          |[x |-> 30, y |-> 0, str |-> "", i |-> 0, set |-> {10, 11, 12}] }""".stripMargin
+    ),
+    TLCTest(
       testDescription = "let = ...",
       module =
         """module MyTest
@@ -88,16 +100,15 @@ class DCalCompilerTest extends AnyFunSuite {
           |[x |-> 10, y |-> 1, str |-> "", i |-> 0, set |-> {10, 11, 12}] }""".stripMargin
     ),
     TLCTest(
-      testDescription = "IfThenElse",
+      testDescription = "let = ... preceded and followed by other statements",
       module =
         """module MyTest
-          |def testIfThenElse() { if x <= y then { x := x + 1; } else { y := y - 1; } }""".stripMargin,
-      defName = "testIfThenElse",
+          |def testComplexLetIn(v) { y := y + v; let local = y + y; await x > local; }""".stripMargin,
+      defName = "testComplexLetIn",
+      testParams = List("8"),
       initialStates = initialStates,
       expectedStates =
-        """{ [x |-> 2, y |-> 3, str |-> "", i |-> 10, set |-> {1, 5, 10}],
-          |[x |-> 19, y |-> 1, str |-> "", i |-> 100, set |-> {0, 3, 6}],
-          |[x |-> 30, y |-> 0, str |-> "", i |-> 0, set |-> {10, 11, 12}] }""".stripMargin
+        """{ [x |-> 30, y |-> 9, str |-> "", i |-> 0, set |-> {10, 11, 12}] }""".stripMargin
     ),
     TLCTest(
       testDescription = "let \\in ...",
@@ -154,11 +165,29 @@ class DCalCompilerTest extends AnyFunSuite {
           |[x |-> 30, y |-> 1, str |-> "", i |-> 0, set |-> {10, 11, 12}, z |-> 5] }""".stripMargin
     ),
     TLCTest(
+      testDescription = "var \\in nested in IfThenElse blocks",
+      module =
+        """module MyTest
+          |def testNestedVarIn() { if x > y then { var z \in set; z := z + 1; y := y + z; }
+          |else { var z \in {4, 5}; y := y + z; } }""".stripMargin,
+      defName = "testNestedVarIn",
+      initialStates = initialStates,
+      expectedStates =
+        """{ [x |-> 1, y |-> 7, str |-> "", i |-> 10, set |-> {1, 5, 10}, z |-> 4],
+          |[x |-> 1, y |-> 8, str |-> "", i |-> 10, set |-> {1, 5, 10}, z |-> 5],
+          |[x |-> 19, y |-> 3, str |-> "", i |-> 100, set |-> {0, 3, 6}, z |-> 1],
+          |[x |-> 19, y |-> 6, str |-> "", i |-> 100, set |-> {0, 3, 6}, z |-> 4],
+          |[x |-> 19, y |-> 9, str |-> "", i |-> 100, set |-> {0, 3, 6}, z |-> 7],
+          |[x |-> 30, y |-> 12, str |-> "", i |-> 0, set |-> {10, 11, 12}, z |-> 11],
+          |[x |-> 30, y |-> 13, str |-> "", i |-> 0, set |-> {10, 11, 12}, z |-> 12],
+          |[x |-> 30, y |-> 14, str |-> "", i |-> 0, set |-> {10, 11, 12}, z |-> 13] }""".stripMargin
+    ),
+    TLCTest(
       testDescription = "IfThenElse preceded and followed by other statements",
       module =
         """module MyTest
-          |def testLetIfThenElseAwait(v) { let z \in set; if z < x then { x := x + v; } else { x := x - v; } await x >=
-          | 119; }""".stripMargin,
+          |def testLetIfThenElseAwait(v) { let z \in set;
+          |if z < x then { x := x + v; } else { x := x - v; } await x >= 119; }""".stripMargin,
       defName = "testLetIfThenElseAwait",
       testParams = List("100"),
       initialStates = initialStates,
@@ -167,7 +196,7 @@ class DCalCompilerTest extends AnyFunSuite {
           |[x |-> 130, y |-> 1, str |-> "", i |-> 0, set |-> {10, 11, 12}] }""".stripMargin
     ),
     TLCTest(
-      testDescription = "complex then block & empty else block",
+      testDescription = "IfThenElse with complex then block & empty else block",
       module =
         """module MyTest
           |def testVarIfThenElse(zs) { var z1 \in zs; if z1 < x then { let z2 \in set; let z3 = z1 + z2; x := z3 + x; }
@@ -190,7 +219,7 @@ class DCalCompilerTest extends AnyFunSuite {
     ),
   ).foreach {
     case TLCTest(testDescription, module, defName, params, initialStates, expectedStates) =>
-      ignore(testDescription) {
+      test(testDescription) {
         val compiledModule = IRBuilder(contents = module, fileName = "<filename>")
         val stringifiedModule = IRUtils.stringifyModule(compiledModule).mkString
         executeTLA(
@@ -208,7 +237,7 @@ class DCalCompilerTest extends AnyFunSuite {
     // Place failing tests here
   ).foreach {
     case TLCTest(testDescription, module, defName, params, initialStates, expectedStates) =>
-      test(testDescription) {
+      ignore(testDescription) {
         val compiledModule = IRBuilder(contents = module, fileName = "<filename>")
         val stringifiedModule = IRUtils.stringifyModule(compiledModule).mkString
         executeTLA(

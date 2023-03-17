@@ -7,7 +7,6 @@ import scala.collection.immutable
 import scala.collection.immutable.List
 
 class DCalParserTest extends AnyFunSuite {
-
   import DCalParser.*
 
   def makeDef(params: List[String], stmts: List[String]): String =

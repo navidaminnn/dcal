@@ -2,8 +2,25 @@ package com.github.distcompiler.dcal
 
 import com.github.distcompiler.dcal.IR.Node
 
+import scala.annotation.tailrec
+import scala.collection.mutable.ListBuffer
+
 object Utils {
   object IRUtils {
+
+    def delimit[T](lst: List[List[T]], delimiter: T): List[T] = {
+      @tailrec
+      def _delimit(lst: List[List[T]], acc: ListBuffer[T]): ListBuffer[T] =
+        lst match {
+          case Nil => acc
+          case h :: t => t match
+            case Nil => _delimit(t, acc :++ h)
+            case _ => _delimit(t, acc :++ h += delimiter)
+        }
+
+      _delimit(lst, ListBuffer[T]()).toList
+    }
+
     def stringifyNode(node: IR.Node): Iterator[Char] =
       node match {
         case Node.Name(name) => name.iterator
@@ -53,10 +70,8 @@ object Utils {
 
     def stringifyModule(module: IR.Module): Iterator[Char] =
       s"---- MODULE ${module.name} ----".iterator ++
-        "\n".iterator ++
-        "EXTENDS Naturals\n" ++
+        "\nEXTENDS Naturals\n".iterator ++
         module.definitions.iterator.flatMap(stringifyDefinition) ++
-        "====".iterator ++
-        "\n".iterator
+        "====\n".iterator
   }
 }

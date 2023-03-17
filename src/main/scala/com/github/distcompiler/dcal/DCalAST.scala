@@ -106,7 +106,6 @@ object DCalAST {
   enum LogicOp {
     case And
     case Or
-    case Not
   }
 
   enum UnOp {

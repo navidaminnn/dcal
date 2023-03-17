@@ -94,7 +94,7 @@ class UtilsTest extends AnyFunSuite {
       }
   }
 
-  // From here onwards are unit tests which are indirectly covered by the tests above. TODO: Remove when done.
+  // From here onwards are unit tests which are indirectly covered by the tests above.
 
   List(
     testUninterpreted -> expectedUninterpreted,
