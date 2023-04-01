@@ -1,6 +1,9 @@
 package com.github.distcompiler.dcal
 
-class DCalErrors(val errors: List[DCalError]) extends Exception {
+case class DCalErrors(errors: List[DCalError]) extends Exception {
+  def this(error: DCalError) =
+    this(errors = List(error))
+
   override def getMessage: String = errors.map{ err =>
     err.description
   }.mkString("\n")
@@ -15,8 +18,9 @@ class DCalErrors(val errors: List[DCalError]) extends Exception {
 }
 
 object DCalErrors extends Exception {
+  def apply(error: DCalError) = new DCalErrors(error)
   def union(lstOpt: List[Option[DCalErrors]]): Option[DCalErrors] =
-    lstOpt.flatten.reduce(_ || _).toOption
+    lstOpt.flatten.reduceOption(_ || _)
 
   def union(thisOpt: Option[DCalErrors], thatOpt: Option[DCalErrors]): Option[DCalErrors] =
     union(List(thisOpt, thatOpt))

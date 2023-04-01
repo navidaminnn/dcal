@@ -12,8 +12,8 @@ final case class ModuleNotFound(dcalModule: DCalAST.Module) extends DCalError {
 final case class DefinitionNotFound(dcalDef: DCalAST.Definition) extends DCalError {
   val description = s"Referenced definition ${dcalDef.name} not found: <line number>"
 }
-final case class NameExpressionNotFound(dcalNameExpr: DCalAST.Expression.Name) extends DCalError {
-  val description = s"Referenced name expression ${dcalNameExpr.name} not found: <line number>"
+final case class NameNotFound(name: String) extends DCalError {
+  val description = s"Referenced name $name not found: <line number>"
 }
 final case class MemberNotFound(name: String, memberName: String) extends DCalError {
   val description = s"$memberName not a member of $name: <line number>"
@@ -21,4 +21,8 @@ final case class MemberNotFound(name: String, memberName: String) extends DCalEr
 
 final case class RedefinedName(name: String) extends DCalError {
   val description = s"$name already defined in this scope: <line number>"
+}
+
+final case class ReassignmentToImmutable(name: String) extends DCalError {
+  val description = s"immutable $name reassigned: <line number>"
 }
