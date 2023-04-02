@@ -70,7 +70,7 @@ class TestDCalTokenizer extends AnyFunSuite {
         data = DCalTokenData.True
       )
     ),
-    "let x = 19 + y" -> List(
+    "let x = 19 + y;" -> List(
       Token(
         startPosition = pos(1, 1),
         endPosition = pos(1, 3),
@@ -100,9 +100,14 @@ class TestDCalTokenizer extends AnyFunSuite {
         startPosition = pos(1, 14),
         endPosition = pos(1, 14),
         data = DCalTokenData.Name("y")
+      ),
+      Token(
+        startPosition = pos(1, 15),
+        endPosition = pos(1, 15),
+        data = DCalTokenData.Semicolon
       )
     ),
-    "var i \\in lst" -> List(
+    "var i \\in lst;" -> List(
       Token(
         startPosition = pos(1, 1),
         endPosition = pos(1, 3),
@@ -122,6 +127,11 @@ class TestDCalTokenizer extends AnyFunSuite {
         startPosition = pos(1, 11),
         endPosition = pos(1, 13),
         data = DCalTokenData.Name("lst")
+      ),
+      Token(
+        startPosition = pos(1, 14),
+        endPosition = pos(1, 14),
+        data = DCalTokenData.Semicolon
       )
     ),
     "if x <= y then z := FALSE" -> List(

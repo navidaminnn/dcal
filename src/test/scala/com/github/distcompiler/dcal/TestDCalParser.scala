@@ -27,15 +27,15 @@ class TestDCalParser extends AnyFunSuite {
     body = DCalAST.Block(statements = Nil)
   )
 
-  val testLet = "let test1 = TRUE"
-  val testVar = "var test2"
-  val testVarEquals = """var test3 = "val3""""
-  val testVarSlashIn = "var test4 \\in {{ 1, 2, 3, 4, 5 }}"
-  val testIf = "if x <= y then { x := x + 1 } else { y := y - 1 }"
+  val testLet = "let test1 = TRUE;"
+  val testVar = "var test2;"
+  val testVarEquals = """var test3 = "val3";"""
+  val testVarSlashIn = "var test4 \\in { 1, 2, 3, 4, 5 };"
+  val testIf = "if x <= y then { x := x + 1; } else { y := y - 1; }"
   val testBracketedExpression = "(test6)"
-  val testAssignPairs = s"test6 := test7 || test7 := $testBracketedExpression"
+  val testAssignPairs = s"test6 := test7 || test7 := $testBracketedExpression;"
   val testExpression = "test6 > 1000"
-  val testAwait = s"await $testExpression"
+  val testAwait = s"await $testExpression;  "
   val testDefParamsBody = s"def aFunc(anArg) {\n${
     TestUtils.sequenceLines(
       testLet, testVar, testVarEquals, testVarSlashIn, testAssignPairs, testAwait, testIf
@@ -69,17 +69,21 @@ class TestDCalParser extends AnyFunSuite {
           params = List("anArg"),
           body = DCalAST.Block(
             statements = List(
-              DCalAST.Statement.Let(name = "test1", expression = DCalAST.Expression.True),
+              DCalAST.Statement.Let(
+                name = "test1",
+                assignmentOp = DCalAST.AssignmentOp.EqualTo,
+                expression = DCalAST.Expression.True
+              ),
               DCalAST.Statement.Var(name = "test2", expressionOpt = None),
               DCalAST.Statement.Var(
                 name = "test3",
-                expressionOpt = Some((DCalAST.BinOp.EqualTo, DCalAST.Expression.StringLiteral("val3")))
+                expressionOpt = Some((DCalAST.AssignmentOp.EqualTo, DCalAST.Expression.StringLiteral("val3")))
               ),
               DCalAST.Statement.Var(
                 name = "test4",
                 expressionOpt = Some(
                   (
-                    DCalAST.BinOp.SlashIn,
+                    DCalAST.AssignmentOp.SlashIn,
                     DCalAST.Expression.Set(
                       members = List(
                         DCalAST.Expression.IntLiteral(1),
@@ -98,16 +102,16 @@ class TestDCalParser extends AnyFunSuite {
                 )
               ),
               DCalAST.Statement.Await(
-                expression = DCalAST.Expression.ExpressionBinOp(
+                expression = DCalAST.Expression.ExpressionRelOp(
                   lhs = DCalAST.Expression.Name("test6"),
-                  binOp = DCalAST.BinOp.GreaterThan,
+                  relOp = DCalAST.RelOp.GreaterThan,
                   rhs = DCalAST.Expression.IntLiteral(1000)
                 )
               ),
-              DCalAST.Statement.If(
-                predicate = DCalAST.Expression.ExpressionBinOp(
+              DCalAST.Statement.IfThenElse(
+                predicate = DCalAST.Expression.ExpressionRelOp(
                   lhs = DCalAST.Expression.Name("x"),
-                  binOp = DCalAST.BinOp.LesserThanOrEqualTo,
+                  relOp = DCalAST.RelOp.LesserThanOrEqualTo,
                   rhs = DCalAST.Expression.Name("y")
                 ),
                 thenBlock = DCalAST.Block(
@@ -126,18 +130,16 @@ class TestDCalParser extends AnyFunSuite {
                     )
                   )
                 ),
-                elseBlock = Some(
-                  DCalAST.Block(
-                    statements = List(
-                      DCalAST.Statement.AssignPairs(
-                        assignPairs = List(
-                          DCalAST.AssignPair(
-                            name = "y",
-                            expression = DCalAST.Expression.ExpressionBinOp(
-                              lhs = DCalAST.Expression.Name("y"),
-                              binOp = DCalAST.BinOp.Minus,
-                              rhs = DCalAST.Expression.IntLiteral(1)
-                            )
+                elseBlock = DCalAST.Block(
+                  statements = List(
+                    DCalAST.Statement.AssignPairs(
+                      assignPairs = List(
+                        DCalAST.AssignPair(
+                          name = "y",
+                          expression = DCalAST.Expression.ExpressionBinOp(
+                            lhs = DCalAST.Expression.Name("y"),
+                            binOp = DCalAST.BinOp.Minus,
+                            rhs = DCalAST.Expression.IntLiteral(1)
                           )
                         )
                       )
