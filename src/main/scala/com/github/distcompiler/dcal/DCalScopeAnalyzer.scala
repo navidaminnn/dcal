@@ -6,9 +6,7 @@ import com.github.distcompiler.dcal.DCalAST.{Expression, Statement}
  * Performs scope analysis on a DCalAST.Module against the following rules:
  * - Names must be in scope before they are referenced. A name is in scope if it is either a state variable, a
  *   declared local (using DCal var/let), a def name, or a module name.
- * - Additionally, all mutable locals must be initialized before they are referenced.
- * - A name must not be declared more than once in a scope. This also means that all state variable fields must be
- *   unique.
+ * - A name must not be declared more than once in a scope, even if the redeclaration is done for a different name type.
  *
  * There are other rules, for example typechecking rules, are reserved for another pass to handle. Namely:
  * - The bindings of all let and var statements must semi-type-check. This means that in a let/var statement, if the
@@ -17,7 +15,6 @@ import com.github.distcompiler.dcal.DCalAST.{Expression, Statement}
  */
 object DCalScopeAnalyzer {
   enum NameInfo {
-    case MutableLocal // TODO: Removes later, because only var is a mutable local, but var compiles to be state.
     case Local
     case State
     case Definition
@@ -27,18 +24,13 @@ object DCalScopeAnalyzer {
 
   inline def ctx(using ctx: Context): Context = ctx
 
-  // TODO: Because Map is used, the same name cannot be used to refer to different NameInfos. Should this restriction
-  //  be removed?
-  final case class Context(outerCtx: Context, nameInfoOf: Map[String, NameInfo] = Map.empty) {
+  final case class Context(nameInfoOf: Map[String, NameInfo] = Map.empty) {
     def withNameInfo(name: String, nameInfo: NameInfo): Context =
       copy(nameInfoOf = nameInfoOf.updated(name, nameInfo))
 
     def withNameInfo[T](name: String, nameInfo: NameInfo)(fn: Context ?=> T): T =
       given Context = withNameInfo(name = name, nameInfo = nameInfo)
       fn
-
-    def withOuterCtx(newCtx: Context): Context =
-      copy(outerCtx = this)
   }
 
   private def analyzeExpression(dcalExpr: DCalAST.Expression)(using Context): Option[DCalErrors] = {
@@ -92,9 +84,24 @@ object DCalScopeAnalyzer {
         DCalErrors.union(List(analyzeExpression(predicate), analyzeBlock(thenBlock), analyzeBlock(elseBlock)))
   }
 
-  private def analyzeBlock(dcalBlock: DCalAST.Block)(using Context): Option[DCalErrors] =
-    // TODO: Change this to a recursive function so that Context created by var or let gets passed through
-    DCalErrors.union(dcalBlock.statements.map(analyzeStatement))
+  private def analyzeBlock(dcalBlock: DCalAST.Block)(using Context): Option[DCalErrors] = {
+    def analyzeStatements(stmts: List[DCalAST.Statement], errsOpt: Option[DCalErrors])(using Context): Option[DCalErrors] = {
+      stmts match
+        case Nil => errsOpt
+        // Analyzes head, creates a new ctx if necessary, recurses on tail
+        case s::ss =>
+          val sErrs = analyzeStatement(s)
+          s match
+            case Statement.Let(name, _, _) => ctx.withNameInfo(name, NameInfo.Local){
+              analyzeStatements(ss, DCalErrors.union(errsOpt, sErrs))
+            }
+            case Statement.Var(name, _) => ctx.withNameInfo(name, NameInfo.State){
+              analyzeStatements(ss, DCalErrors.union(errsOpt, sErrs))
+            }
+            case _ => analyzeStatements(ss, DCalErrors.union(errsOpt, sErrs))
+    }
+    analyzeStatements(dcalBlock.statements, None: Option[DCalErrors])
+  }
 
   private def analyzeDefinition(dcalDef: DCalAST.Definition)(using Context): Option[DCalErrors] = {
     // Adds params to ctx before analyzing def body
@@ -104,12 +111,14 @@ object DCalScopeAnalyzer {
     analyzeBlock(dcalDef.body)(using ctxWithParams)
   }
 
-  // TODO: search file systems, check if files exists and imported module names do not clash
+  // TODO: Searches file systems, check if files exists and imported module names do not clash.
   private def analyzeImport(dcalImport: List[String])(using Context): Option[DCalErrors] = None
 
   private def analyzeModule(dcalModule: DCalAST.Module)(using Context): Option[DCalErrors] = {
     // Adds module name to context before analyzing imports, so that analyzeImport can check for module name clashes
     val ctxWithModule = ctx.withNameInfo(dcalModule.name, NameInfo.Module)
+
+    // TODO: Adds import names to context before analyzing body, so that body can refer to import names.
     val importErrsOpt = analyzeImport(dcalModule.imports)(using ctxWithModule)
 
     // Adds def names to context before analyzing body, because one def can refer to another
@@ -120,7 +129,7 @@ object DCalScopeAnalyzer {
             acc._1.withNameInfo(aDef.name, NameInfo.Definition),
             acc._2
           )
-          case Some(NameInfo.Definition) => (
+          case Some(_) => (
             acc._1,
             DCalErrors.union(acc._2, Some(DCalErrors(RedeclaredName(aDef.name))))
           )
@@ -133,7 +142,6 @@ object DCalScopeAnalyzer {
 
   def apply(dcalModule: DCalAST.Module): Option[DCalErrors] =
     analyzeModule(dcalModule)(using Context(
-      outerCtx = null,
       nameInfoOf = Map[String, NameInfo](
         "str" -> NameInfo.State,
         "x" -> NameInfo.State,

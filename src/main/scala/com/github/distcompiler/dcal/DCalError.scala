@@ -4,9 +4,6 @@ abstract class DCalError {
   def description: String
 }
 
-// Use final case class here because
-// 1- final: prevents extends, 2- case: enables pattern matching, 3- class: creates instances
-
 /**
  * Thrown when the DCal file of an imported module is not found in the file system.
  */
