@@ -1,7 +1,6 @@
 package com.github.distcompiler.dcal
 
 import com.github.distcompiler.dcal.DCalAST.{Expression, Statement}
-import com.github.distcompiler.dcal.IRBuilder.{Context, NameInfo, ctx}
 
 /**
  * Performs scope analysis on a DCalAST.Module against the following rules:
@@ -44,38 +43,57 @@ object DCalScopeAnalyzer {
 
   private def analyzeExpression(dcalExpr: DCalAST.Expression)(using Context): Option[DCalErrors] = {
     dcalExpr match
-      case Expression.True => None
-      case Expression.False => None
-      case Expression.IntLiteral(_) => None
-      case Expression.StringLiteral(_) => None
-      case Expression.Name(name) => ???
+      case Expression.True | Expression.False | Expression.IntLiteral(_) | Expression.StringLiteral(_) => None
+      case Expression.Name(name) => ctx.nameInfoOf.get(name) match {
+        case Some(_) => None
+        case None => Some(DCalErrors(NameNotFound(name)))
+      }
       case Expression.Set(members) => DCalErrors.union(members.map(analyzeExpression))
-      case Expression.ExpressionBinOp(lhs, binOp, rhs) => ???
-      case Expression.ExpressionRelOp(lhs, relOp, rhs) => ???
-      case Expression.ExpressionLogicOp(lhs, logicOp, rhs) => ???
-      case Expression.BracketedExpression(expression) => ???
+      case Expression.ExpressionBinOp(lhs, _, rhs) => DCalErrors.union(analyzeExpression(lhs), analyzeExpression(rhs))
+      case Expression.ExpressionRelOp(lhs, _, rhs) => DCalErrors.union(analyzeExpression(lhs), analyzeExpression(rhs))
+      case Expression.ExpressionLogicOp(lhs, _, rhs) => DCalErrors.union(analyzeExpression(lhs), analyzeExpression(rhs))
+      case Expression.BracketedExpression(expression) => analyzeExpression(expression)
   }
 
+  // For statements that declare and/or define a name, if that name already exists
   private def analyzeStatement(dcalStmt: DCalAST.Statement)(using Context): Option[DCalErrors] = {
     dcalStmt match
       case Statement.Await(expression) => analyzeExpression(expression)
+
       // Loops over list of AssignPair
       // For each, checks that name is (a mutable local or) a state variable and calls analyzeExpression on expression
       case Statement.AssignPairs(assignPairs) => DCalErrors.union(assignPairs.map{ assignPair =>
-        val nameErrorsOpt = ctx.nameInfoOf.get(assignPair.name) match
+        val nameErrsOpt = ctx.nameInfoOf.get(assignPair.name) match
           case Some(NameInfo.State) => None
           case Some(_) => Some(DCalErrors(ReassignmentToImmutable(assignPair.name)))
           case None => Some(DCalErrors(NameNotFound(assignPair.name)))
-
-        val expressionErrorsOpt = analyzeExpression(assignPair.expression)
-        DCalErrors.union(nameErrorsOpt, expressionErrorsOpt)
+        val expressionErrsOpt = analyzeExpression(assignPair.expression)
+        DCalErrors.union(nameErrsOpt, expressionErrsOpt)
       })
-      case Statement.Let(name, assignmentOp, expression) => ???
-      case Statement.Var(name, expressionOpt) => ???
-      case Statement.IfThenElse(predicate, thenBlock, elseBlock) => ???
+
+      case Statement.Let(name, _, expression) =>
+        // Check that name has not been declared
+        val nameErrsOpt = ctx.nameInfoOf.get(name) match
+          case Some(_) => Some(DCalErrors(RedeclaredName(name)))
+          case None => None
+        val exprErrsOpt = analyzeExpression(expression)
+        DCalErrors.union(nameErrsOpt, exprErrsOpt)
+
+      case Statement.Var(name, expressionOpt) =>
+        val nameErrsOpt = ctx.nameInfoOf.get(name) match
+          case Some(_) => Some(DCalErrors(RedeclaredName(name)))
+          case None => None
+        val exprErrsOpt = expressionOpt.map {
+          case (_, binding) => analyzeExpression(binding)
+        }.getOrElse(None)
+        DCalErrors.union(nameErrsOpt, exprErrsOpt)
+
+      case Statement.IfThenElse(predicate, thenBlock, elseBlock) =>
+        DCalErrors.union(List(analyzeExpression(predicate), analyzeBlock(thenBlock), analyzeBlock(elseBlock)))
   }
 
   private def analyzeBlock(dcalBlock: DCalAST.Block)(using Context): Option[DCalErrors] =
+    // TODO: Change this to a recursive function so that Context created by var or let gets passed through
     DCalErrors.union(dcalBlock.statements.map(analyzeStatement))
 
   private def analyzeDefinition(dcalDef: DCalAST.Definition)(using Context): Option[DCalErrors] = {
@@ -92,10 +110,10 @@ object DCalScopeAnalyzer {
   private def analyzeModule(dcalModule: DCalAST.Module)(using Context): Option[DCalErrors] = {
     // Adds module name to context before analyzing imports, so that analyzeImport can check for module name clashes
     val ctxWithModule = ctx.withNameInfo(dcalModule.name, NameInfo.Module)
-    val importErrorsOpt = analyzeImport(dcalModule.imports)(using ctxWithModule)
+    val importErrsOpt = analyzeImport(dcalModule.imports)(using ctxWithModule)
 
     // Adds def names to context before analyzing body, because one def can refer to another
-    val (ctxWithDefs, defNameErrorsOpt) =
+    val (ctxWithDefs, defNameErrsOpt) =
       dcalModule.definitions.foldLeft((ctxWithModule, None: Option[DCalErrors]))( (acc, aDef) =>
         acc._1.nameInfoOf.get(aDef.name) match
           case None => (
@@ -104,13 +122,13 @@ object DCalScopeAnalyzer {
           )
           case Some(NameInfo.Definition) => (
             acc._1,
-            DCalErrors.union(acc._2, Some(DCalErrors(RedefinedName(aDef.name))))
+            DCalErrors.union(acc._2, Some(DCalErrors(RedeclaredName(aDef.name))))
           )
       )
-    val bodyErrorsOpt = dcalModule.definitions.map { aDef => analyzeDefinition(aDef)(using ctxWithDefs) }
+    val bodyErrsOpt = dcalModule.definitions.map { aDef => analyzeDefinition(aDef)(using ctxWithDefs) }
 
     // Returns the union of all errors from imports and body
-    DCalErrors.union(importErrorsOpt::defNameErrorsOpt::bodyErrorsOpt)
+    DCalErrors.union(importErrsOpt::defNameErrsOpt::bodyErrsOpt)
   }
 
   def apply(dcalModule: DCalAST.Module): Option[DCalErrors] =
