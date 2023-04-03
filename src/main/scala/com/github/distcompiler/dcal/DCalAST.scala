@@ -17,7 +17,7 @@ object DCalAST {
     | `let` <name> (`=` | `\in`) <expression>
     | `var` <name> ((`=` | `\in`) <expression>)?
     | `if` <predicate> `then` <block> `else` <block>
-    | <name>(`.`<name>)? `(` (<expression> (`,` <expression>))? `)` // TODO: Add tests for procedure calls
+    | <name>(`.`<name>)? `(` (<expression> (`,` <expression>))? `)`
 
   // e.g `x := y || y := x` swaps x and y
   assign_pair ::= <name> `:=` <expression>
@@ -63,6 +63,7 @@ object DCalAST {
     case Let(name: String, assignmentOp: AssignmentOp, expression: Expression)
     case Var(name: String, expressionOpt: Option[(AssignmentOp, Expression)])
     case IfThenElse(predicate: Expression, thenBlock: Block, elseBlock: Block)
+    case Call(moduleNameOpt: Option[String], definitionName: String, args: List[Expression])
   }
 
   final case class AssignPair(name: String, expression: Expression)

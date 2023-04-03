@@ -32,13 +32,15 @@ class TestDCalParser extends AnyFunSuite {
   val testVarEquals = """var test3 = "val3";"""
   val testVarSlashIn = "var test4 \\in { 1, 2, 3, 4, 5 };"
   val testIf = "if x <= y then { x := x + 1; } else { y := y - 1; }"
+  val testCall = """aFunc2(1, 2 + 3, "val");"""
+  val testImportedDefCall = "TestModule2.aFunc3();"
   val testBracketedExpression = "(test6)"
   val testAssignPairs = s"test6 := test7 || test7 := $testBracketedExpression;"
   val testExpression = "test6 > 1000"
   val testAwait = s"await $testExpression;  "
   val testDefParamsBody = s"def aFunc(anArg) {\n${
     TestUtils.sequenceLines(
-      testLet, testVar, testVarEquals, testVarSlashIn, testAssignPairs, testAwait, testIf
+      testLet, testVar, testVarEquals, testVarSlashIn, testAssignPairs, testAwait, testIf, testCall, testImportedDefCall
     )
   }\n}"
 
@@ -146,6 +148,24 @@ class TestDCalParser extends AnyFunSuite {
                     )
                   )
                 )
+              ),
+              DCalAST.Statement.Call(
+                moduleNameOpt = None,
+                definitionName = "aFunc2",
+                args = List(
+                  DCalAST.Expression.IntLiteral(1),
+                  DCalAST.Expression.ExpressionBinOp(
+                    lhs = DCalAST.Expression.IntLiteral(2),
+                    binOp = DCalAST.BinOp.Plus,
+                    rhs = DCalAST.Expression.IntLiteral(3)
+                  ),
+                  DCalAST.Expression.StringLiteral("val")
+                )
+              ),
+              DCalAST.Statement.Call(
+                moduleNameOpt = Some("TestModule2"),
+                definitionName = "aFunc3",
+                args = Nil
               )
             )
           )

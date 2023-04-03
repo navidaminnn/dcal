@@ -303,6 +303,53 @@ class TestDCalTokenizer extends AnyFunSuite {
         endPosition = pos(1, 32),
         data = DCalTokenData.Name("ModuleC")
       )
+    ),
+    "Numbers.add(x, y);" -> List(
+      Token(
+        startPosition = pos(1, 1),
+        endPosition = pos(1, 7),
+        data = DCalTokenData.Name("Numbers")
+      ),
+      Token(
+        startPosition = pos(1, 8),
+        endPosition = pos(1, 8),
+        data = DCalTokenData.Dot
+      ),
+      Token(
+        startPosition = pos(1, 9),
+        endPosition = pos(1, 11),
+        data = DCalTokenData.Name("add")
+      ),
+      Token(
+        startPosition = pos(1, 12),
+        endPosition = pos(1, 12),
+        data = DCalTokenData.OpenParenthesis
+      ),
+      Token(
+        startPosition = pos(1, 13),
+        endPosition = pos(1, 13),
+        data = DCalTokenData.Name("x")
+      ),
+      Token(
+        startPosition = pos(1, 14),
+        endPosition = pos(1, 14),
+        data = DCalTokenData.Comma
+      ),
+      Token(
+        startPosition = pos(1, 16),
+        endPosition = pos(1, 16),
+        data = DCalTokenData.Name("y")
+      ),
+      Token(
+        startPosition = pos(1, 17),
+        endPosition = pos(1, 17),
+        data = DCalTokenData.CloseParenthesis
+      ),
+      Token(
+        startPosition = pos(1, 18),
+        endPosition = pos(1, 18),
+        data = DCalTokenData.Semicolon
+      )
     )
   ).foreach {
     case (input, expectedResult) =>

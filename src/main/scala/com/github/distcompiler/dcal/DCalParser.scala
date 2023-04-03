@@ -114,7 +114,21 @@ object DCalParser {
           )
         }
 
-      ((await | let | `var` | assignPairs) <~ elem(DCalTokenData.Semicolon)) | ifThenElse
+      val importedName = name ~ elem(DCalTokenData.Dot) ~ name
+      val args = elem(DCalTokenData.OpenParenthesis) ~> opt(delimited(expression)) <~ elem(DCalTokenData.CloseParenthesis)
+      val call = (name ~ args).map {
+        case defName ~ args => DCalAST.Statement.Call(
+          moduleNameOpt = None,
+          definitionName = defName,
+          args = args.getOrElse(Nil)
+        )
+      } | (importedName ~ args).map {
+        case moduleName ~ _ ~ defName ~ args => DCalAST.Statement.Call(
+          moduleNameOpt = Some(moduleName), definitionName = defName, args = args.getOrElse(Nil)
+        )
+      }
+
+      ((await | let | `var` | assignPairs | call) <~ elem(DCalTokenData.Semicolon)) | ifThenElse
     }
 
     // TODO: Operator precedence behaviour needs reworking
