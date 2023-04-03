@@ -187,4 +187,47 @@ class TestDCalParser extends AnyFunSuite {
         assert(actualResult == expectedResult)
       }
   }
+
+  List(
+    "BasicModule" -> DCalAST.Module(
+      name = "TestModule1",
+      imports = List("TestModule2"),
+      definitions = List(
+        DCalAST.Definition(
+          name = "aFunc1", params = Nil, body = DCalAST.Block(statements = Nil)
+        ),
+        DCalAST.Definition(
+          name = "aFunc2", params = List("p1", "p2", "p3"), body = DCalAST.Block(statements = Nil)
+        ),
+        DCalAST.Definition(
+          name = "aFunc3",
+          params = Nil,
+          body = DCalAST.Block(
+            statements = List(
+              DCalAST.Statement.AssignPairs(
+                assignPairs = List(
+                  DCalAST.AssignPair(
+                    name = "x",
+                    expression = DCalAST.Expression.ExpressionBinOp(
+                      lhs = DCalAST.Expression.Name("x"),
+                      binOp = DCalAST.BinOp.Plus,
+                      rhs = DCalAST.Expression.IntLiteral(1)
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  ).foreach {
+    case (input, expectedResult) =>
+      test(s"parse file $input") {
+        val actualResult = DCalParser(
+          contents = TestUtils.readTestFile(input), fileName = input
+        )
+        assert(actualResult == expectedResult)
+      }
+  }
 }
