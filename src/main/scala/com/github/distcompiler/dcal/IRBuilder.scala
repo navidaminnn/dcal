@@ -1,7 +1,7 @@
 package com.github.distcompiler.dcal
 
 import com.github.distcompiler.dcal.DCalAST.Expression.{BracketedExpression, ExpressionBinOp, IntLiteral, Name, StringLiteral}
-import com.github.distcompiler.dcal.DCalAST.Statement.{AssignPairs, Await, IfThenElse, Let, Var}
+import com.github.distcompiler.dcal.DCalAST.Statement.{AssignPairs, Await, Call, IfThenElse, Let, Var}
 import com.github.distcompiler.dcal.DCalParser.*
 
 /**
@@ -38,6 +38,7 @@ object IRBuilder {
       case Let(name, assignmentOp, expression) => ???
       case Var(name, expressionOpt) => ???
       case IfThenElse(predicate, thenBlock, elseBlock) => ???
+      case Call(moduleNameOpt, definitionName, args) => ???
   }
 
   def generateDefinition(dcalDef: DCalAST.Definition): IR.Definition = {

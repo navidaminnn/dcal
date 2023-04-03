@@ -139,6 +139,7 @@ object DCalTokenizer {
         "then" -> DCalTokenData.Then,
         "else" -> DCalTokenData.Else,
         ";" -> DCalTokenData.Semicolon,
+        "." -> DCalTokenData.Dot
       )
         .sortWith(_._1 > _._1)
         .map{ case (keyword, tokenData) => withPosition{ str(keyword).map(_ => tokenData ) } }
