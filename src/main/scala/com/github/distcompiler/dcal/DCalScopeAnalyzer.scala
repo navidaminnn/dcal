@@ -111,19 +111,35 @@ object DCalScopeAnalyzer {
     analyzeBlock(dcalDef.body)(using ctxWithParams)
   }
 
-  // TODO: Searches file systems, check if files exists and imported module names do not clash.
-  private def analyzeImport(dcalImport: List[String])(using Context): Option[DCalErrors] = None
+  // TODO: Searches the file system, check if the imported file exists.
+  private def analyzeImport(dcalImport: String): Option[DCalErrors] = None
 
   private def analyzeModule(dcalModule: DCalAST.Module)(using Context): Option[DCalErrors] = {
+    // Checks imports exist in the file system
+    val importErrsOpt = dcalModule.imports.map(analyzeImport)
+
     // Adds module name to context before analyzing imports, so that analyzeImport can check for module name clashes
     val ctxWithModule = ctx.withNameInfo(dcalModule.name, NameInfo.Module)
 
-    // TODO: Adds import names to context before analyzing body, so that body can refer to import names.
-    val importErrsOpt = analyzeImport(dcalModule.imports)(using ctxWithModule)
+    // Checks import names do not clash with module name and one another
+    // Adds import names to context before analyzing body
+    val (ctxWithImports, importNameErrsOpt) =
+      dcalModule.imports.foldLeft((ctxWithModule, None: Option[DCalErrors]))((acc, anImportName) =>
+        acc._1.nameInfoOf.get(anImportName) match
+          case None => (
+            acc._1.withNameInfo(anImportName, NameInfo.ImportedModule),
+            acc._2
+          )
+          case Some(_) => (
+            acc._1,
+            DCalErrors.union(acc._2, Some(DCalErrors(RedeclaredName(anImportName))))
+          )
+      )
 
+    // Checks def names do not clash
     // Adds def names to context before analyzing body, because one def can refer to another
     val (ctxWithDefs, defNameErrsOpt) =
-      dcalModule.definitions.foldLeft((ctxWithModule, None: Option[DCalErrors]))( (acc, aDef) =>
+      dcalModule.definitions.foldLeft((ctxWithImports, None: Option[DCalErrors]))( (acc, aDef) =>
         acc._1.nameInfoOf.get(aDef.name) match
           case None => (
             acc._1.withNameInfo(aDef.name, NameInfo.Definition),
@@ -137,7 +153,7 @@ object DCalScopeAnalyzer {
     val bodyErrsOpt = dcalModule.definitions.map { aDef => analyzeDefinition(aDef)(using ctxWithDefs) }
 
     // Returns the union of all errors from imports and body
-    DCalErrors.union(importErrsOpt::defNameErrsOpt::bodyErrsOpt)
+    DCalErrors.union(importErrsOpt:::importNameErrsOpt::defNameErrsOpt::bodyErrsOpt)
   }
 
   def apply(dcalModule: DCalAST.Module): Option[DCalErrors] =

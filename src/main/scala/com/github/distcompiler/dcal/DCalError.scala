@@ -33,8 +33,8 @@ final case class MemberNotFound(name: String, memberName: String) extends DCalEr
 }
 
 /**
- * Thrown when an existing name is redeclared. Any one of a definition, a let statement, or a var statement can cause
- * a name redeclaration error, regardless of what the initial declaration is.
+ * Thrown when an existing name is redeclared. Any one of an import, a definition, a let statement, or a var statement
+ * can cause a name redeclaration error, regardless of what the initial declaration is.
  */
 final case class RedeclaredName(name: String) extends DCalError {
   val description = s"$name already defined in this scope: <line number>"

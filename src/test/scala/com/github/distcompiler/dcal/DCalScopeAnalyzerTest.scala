@@ -80,6 +80,24 @@ class DCalScopeAnalyzerTest extends AnyFunSuite {
     s"""$testModule
        |def testIfThenElseNonTail() { if x <= y then { x := x + 1; } else { y := y - 1; } i := x + y; }
        |""".stripMargin -> None,
+    // Import happy path
+    s"""$testModule
+       |import TestModule2, TestModule3, TestModule4
+       |""".stripMargin -> None,
+    // Import name clash
+    s"""$testModule
+       |import TestModule2, TestModule2, TestModule3, TestModule4, TestModule3, $testModuleName
+       |""".stripMargin
+      ->
+      Some(
+        DCalErrors(
+          List(
+            RedeclaredName("TestModule2"),
+            RedeclaredName("TestModule3"),
+            RedeclaredName(testModuleName)
+          )
+        )
+      ),
     // Redeclaration of def
     s"""$testModule
        |def resetString() { str := "new string"; }
