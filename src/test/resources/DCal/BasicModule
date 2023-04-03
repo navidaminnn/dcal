@@ -1,0 +1,5 @@
+module TestModule1
+import TestModule2
+def aFunc1() {}
+def aFunc2(p1, p2, p3) {}
+def aFunc3() { x := x + 1; }
