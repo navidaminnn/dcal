@@ -33,12 +33,12 @@ object DCalScopeAnalyzer {
       fn
   }
 
-  private def analyzeExpression(dcalExpr: DCalAST.Expression)(using Context): Option[DCalErrors] = {
+  private def analyzeExpression(dcalExpr: DCalAST.Expression)(using Context): DCalErrors = {
     dcalExpr match
-      case Expression.True | Expression.False | Expression.IntLiteral(_) | Expression.StringLiteral(_) => None
+      case Expression.True | Expression.False | Expression.IntLiteral(_) | Expression.StringLiteral(_) => DCalErrors(errors = Nil)
       case Expression.Name(name) => ctx.nameInfoOf.get(name) match {
-        case Some(_) => None
-        case None => Some(DCalErrors(NameNotFound(name)))
+        case Some(_) => DCalErrors(errors = Nil)
+        case None => DCalErrors(NameNotFound(name))
       }
       case Expression.Set(members) => DCalErrors.union(members.map(analyzeExpression))
       case Expression.ExpressionBinOp(lhs, _, rhs) => DCalErrors.union(analyzeExpression(lhs), analyzeExpression(rhs))
@@ -48,62 +48,62 @@ object DCalScopeAnalyzer {
   }
 
   // For statements that declare and/or define a name, if that name already exists
-  private def analyzeStatement(dcalStmt: DCalAST.Statement)(using Context): Option[DCalErrors] = {
+  private def analyzeStatement(dcalStmt: DCalAST.Statement)(using Context): DCalErrors = {
     dcalStmt match
       case Statement.Await(expression) => analyzeExpression(expression)
 
       // Loops over list of AssignPair
       // For each, checks that name is (a mutable local or) a state variable and calls analyzeExpression on expression
       case Statement.AssignPairs(assignPairs) => DCalErrors.union(assignPairs.map{ assignPair =>
-        val nameErrsOpt = ctx.nameInfoOf.get(assignPair.name) match
-          case Some(NameInfo.State) => None
-          case Some(_) => Some(DCalErrors(ReassignmentToImmutable(assignPair.name)))
-          case None => Some(DCalErrors(NameNotFound(assignPair.name)))
-        val expressionErrsOpt = analyzeExpression(assignPair.expression)
-        DCalErrors.union(nameErrsOpt, expressionErrsOpt)
+        val nameErrs = ctx.nameInfoOf.get(assignPair.name) match
+          case Some(NameInfo.State) => DCalErrors(Nil)
+          case Some(_) => DCalErrors(ReassignmentToImmutable(assignPair.name))
+          case None => DCalErrors(NameNotFound(assignPair.name))
+        val expressionErrs = analyzeExpression(assignPair.expression)
+        DCalErrors.union(nameErrs, expressionErrs)
       })
 
       case Statement.Let(name, _, expression) =>
         // Check that name has not been declared
-        val nameErrsOpt = ctx.nameInfoOf.get(name) match
-          case Some(_) => Some(DCalErrors(RedeclaredName(name)))
-          case None => None
-        val exprErrsOpt = analyzeExpression(expression)
-        DCalErrors.union(nameErrsOpt, exprErrsOpt)
+        val nameErrs = ctx.nameInfoOf.get(name) match
+          case Some(_) => DCalErrors(RedeclaredName(name))
+          case None => DCalErrors(Nil)
+        val exprErrs = analyzeExpression(expression)
+        DCalErrors.union(nameErrs, exprErrs)
 
       case Statement.Var(name, expressionOpt) =>
-        val nameErrsOpt = ctx.nameInfoOf.get(name) match
-          case Some(_) => Some(DCalErrors(RedeclaredName(name)))
-          case None => None
-        val exprErrsOpt = expressionOpt.map {
+        val nameErrs = ctx.nameInfoOf.get(name) match
+          case Some(_) => DCalErrors(RedeclaredName(name))
+          case None => DCalErrors(Nil)
+        val exprErrs = expressionOpt.map {
           case (_, binding) => analyzeExpression(binding)
-        }.getOrElse(None)
-        DCalErrors.union(nameErrsOpt, exprErrsOpt)
+        }.getOrElse(DCalErrors(Nil))
+        DCalErrors.union(nameErrs, exprErrs)
 
       case Statement.IfThenElse(predicate, thenBlock, elseBlock) =>
         DCalErrors.union(List(analyzeExpression(predicate), analyzeBlock(thenBlock), analyzeBlock(elseBlock)))
   }
 
-  private def analyzeBlock(dcalBlock: DCalAST.Block)(using Context): Option[DCalErrors] = {
-    def analyzeStatements(stmts: List[DCalAST.Statement], errsOpt: Option[DCalErrors])(using Context): Option[DCalErrors] = {
+  private def analyzeBlock(dcalBlock: DCalAST.Block)(using Context): DCalErrors = {
+    def analyzeStatements(stmts: List[DCalAST.Statement], errs: DCalErrors)(using Context): DCalErrors = {
       stmts match
-        case Nil => errsOpt
+        case Nil => errs
         // Analyzes head, creates a new ctx if necessary, recurses on tail
         case s::ss =>
           val sErrs = analyzeStatement(s)
           s match
             case Statement.Let(name, _, _) => ctx.withNameInfo(name, NameInfo.Local){
-              analyzeStatements(ss, DCalErrors.union(errsOpt, sErrs))
+              analyzeStatements(ss, DCalErrors.union(errs, sErrs))
             }
             case Statement.Var(name, _) => ctx.withNameInfo(name, NameInfo.State){
-              analyzeStatements(ss, DCalErrors.union(errsOpt, sErrs))
+              analyzeStatements(ss, DCalErrors.union(errs, sErrs))
             }
-            case _ => analyzeStatements(ss, DCalErrors.union(errsOpt, sErrs))
+            case _ => analyzeStatements(ss, DCalErrors.union(errs, sErrs))
     }
-    analyzeStatements(dcalBlock.statements, None: Option[DCalErrors])
+    analyzeStatements(dcalBlock.statements, DCalErrors(Nil))
   }
 
-  private def analyzeDefinition(dcalDef: DCalAST.Definition)(using Context): Option[DCalErrors] = {
+  private def analyzeDefinition(dcalDef: DCalAST.Definition)(using Context): DCalErrors = {
     // Adds params to ctx before analyzing def body
     val ctxWithParams = dcalDef.params.foldLeft(ctx)( (_ctx, param) =>
       _ctx.withNameInfo(param, NameInfo.Local)
@@ -112,19 +112,20 @@ object DCalScopeAnalyzer {
   }
 
   // TODO: Searches the file system, check if the imported file exists.
-  private def analyzeImport(dcalImport: String): Option[DCalErrors] = None
+  private def analyzeImport(dcalImport: String): DCalErrors =
+    DCalErrors(Nil)
 
-  private def analyzeModule(dcalModule: DCalAST.Module)(using Context): Option[DCalErrors] = {
+  private def analyzeModule(dcalModule: DCalAST.Module)(using Context): DCalErrors = {
     // Checks imports exist in the file system
-    val importErrsOpt = dcalModule.imports.map(analyzeImport)
+    val importErrs = dcalModule.imports.map(analyzeImport)
 
     // Adds module name to context before analyzing imports, so that analyzeImport can check for module name clashes
     val ctxWithModule = ctx.withNameInfo(dcalModule.name, NameInfo.Module)
 
     // Checks import names do not clash with module name and one another
     // Adds import names to context before analyzing body
-    val (ctxWithImports, importNameErrsOpt) =
-      dcalModule.imports.foldLeft((ctxWithModule, None: Option[DCalErrors]))((acc, anImportName) =>
+    val (ctxWithImports, importNameErrs) =
+      dcalModule.imports.foldLeft((ctxWithModule, DCalErrors(Nil)))((acc, anImportName) =>
         acc._1.nameInfoOf.get(anImportName) match
           case None => (
             acc._1.withNameInfo(anImportName, NameInfo.ImportedModule),
@@ -132,14 +133,14 @@ object DCalScopeAnalyzer {
           )
           case Some(_) => (
             acc._1,
-            DCalErrors.union(acc._2, Some(DCalErrors(RedeclaredName(anImportName))))
+            DCalErrors.union(acc._2, DCalErrors(RedeclaredName(anImportName)))
           )
       )
 
     // Checks def names do not clash
     // Adds def names to context before analyzing body, because one def can refer to another
-    val (ctxWithDefs, defNameErrsOpt) =
-      dcalModule.definitions.foldLeft((ctxWithImports, None: Option[DCalErrors]))( (acc, aDef) =>
+    val (ctxWithDefs, defNameErrs) =
+      dcalModule.definitions.foldLeft((ctxWithImports, DCalErrors(Nil)))( (acc, aDef) =>
         acc._1.nameInfoOf.get(aDef.name) match
           case None => (
             acc._1.withNameInfo(aDef.name, NameInfo.Definition),
@@ -147,16 +148,17 @@ object DCalScopeAnalyzer {
           )
           case Some(_) => (
             acc._1,
-            DCalErrors.union(acc._2, Some(DCalErrors(RedeclaredName(aDef.name))))
+            DCalErrors.union(acc._2, DCalErrors(RedeclaredName(aDef.name)))
           )
       )
-    val bodyErrsOpt = dcalModule.definitions.map { aDef => analyzeDefinition(aDef)(using ctxWithDefs) }
+    val bodyErrs = dcalModule.definitions.map { aDef => analyzeDefinition(aDef)(using ctxWithDefs) }
 
     // Returns the union of all errors from imports and body
-    DCalErrors.union(importErrsOpt:::importNameErrsOpt::defNameErrsOpt::bodyErrsOpt)
+    DCalErrors.union(importErrs:::importNameErrs::defNameErrs::bodyErrs)
   }
 
-  def apply(dcalModule: DCalAST.Module): Option[DCalErrors] =
+  def apply(contents: String, fileName: String): DCalErrors =
+    val dcalModule = DCalParser(contents = contents, fileName = fileName)
     analyzeModule(dcalModule)(using Context(
       nameInfoOf = Map[String, NameInfo](
         "str" -> NameInfo.State,
