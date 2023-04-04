@@ -70,7 +70,7 @@ class TestDCalTokenizer extends AnyFunSuite {
         data = DCalTokenData.True
       )
     ),
-    "let x = 19 + y" -> List(
+    "let x = 19 + y;" -> List(
       Token(
         startPosition = pos(1, 1),
         endPosition = pos(1, 3),
@@ -100,9 +100,66 @@ class TestDCalTokenizer extends AnyFunSuite {
         startPosition = pos(1, 14),
         endPosition = pos(1, 14),
         data = DCalTokenData.Name("y")
+      ),
+      Token(
+        startPosition = pos(1, 15),
+        endPosition = pos(1, 15),
+        data = DCalTokenData.Semicolon
       )
     ),
-    "var i \\in lst" -> List(
+    "let x = subtract(i, j);" -> List(
+      Token(
+        startPosition = pos(1, 1),
+        endPosition = pos(1, 3),
+        data = DCalTokenData.Let
+      ),
+      Token(
+        startPosition = pos(1, 5),
+        endPosition = pos(1, 5),
+        data = DCalTokenData.Name("x")
+      ),
+      Token(
+        startPosition = pos(1, 7),
+        endPosition = pos(1, 7),
+        data = DCalTokenData.EqualTo
+      ),
+      Token(
+        startPosition = pos(1, 9),
+        endPosition = pos(1, 16),
+        data = DCalTokenData.Name("subtract")
+      ),
+      Token(
+        startPosition = pos(1, 17),
+        endPosition = pos(1, 17),
+        data = DCalTokenData.OpenParenthesis
+      ),
+      Token(
+        startPosition = pos(1, 18),
+        endPosition = pos(1, 18),
+        data = DCalTokenData.Name("i")
+      ),
+      Token(
+        startPosition = pos(1, 19),
+        endPosition = pos(1, 19),
+        data = DCalTokenData.Comma
+      ),
+      Token(
+        startPosition = pos(1, 21),
+        endPosition = pos(1, 21),
+        data = DCalTokenData.Name("j")
+      ),
+      Token(
+        startPosition = pos(1, 22),
+        endPosition = pos(1, 22),
+        data = DCalTokenData.CloseParenthesis
+      ),
+      Token(
+        startPosition = pos(1, 23),
+        endPosition = pos(1, 23),
+        data = DCalTokenData.Semicolon
+      )
+    ),
+    "var i \\in lst;" -> List(
       Token(
         startPosition = pos(1, 1),
         endPosition = pos(1, 3),
@@ -122,6 +179,11 @@ class TestDCalTokenizer extends AnyFunSuite {
         startPosition = pos(1, 11),
         endPosition = pos(1, 13),
         data = DCalTokenData.Name("lst")
+      ),
+      Token(
+        startPosition = pos(1, 14),
+        endPosition = pos(1, 14),
+        data = DCalTokenData.Semicolon
       )
     ),
     "if x <= y then z := FALSE" -> List(
@@ -292,6 +354,53 @@ class TestDCalTokenizer extends AnyFunSuite {
         startPosition = pos(1, 26),
         endPosition = pos(1, 32),
         data = DCalTokenData.Name("ModuleC")
+      )
+    ),
+    "Numbers.add(x, y);" -> List(
+      Token(
+        startPosition = pos(1, 1),
+        endPosition = pos(1, 7),
+        data = DCalTokenData.Name("Numbers")
+      ),
+      Token(
+        startPosition = pos(1, 8),
+        endPosition = pos(1, 8),
+        data = DCalTokenData.Dot
+      ),
+      Token(
+        startPosition = pos(1, 9),
+        endPosition = pos(1, 11),
+        data = DCalTokenData.Name("add")
+      ),
+      Token(
+        startPosition = pos(1, 12),
+        endPosition = pos(1, 12),
+        data = DCalTokenData.OpenParenthesis
+      ),
+      Token(
+        startPosition = pos(1, 13),
+        endPosition = pos(1, 13),
+        data = DCalTokenData.Name("x")
+      ),
+      Token(
+        startPosition = pos(1, 14),
+        endPosition = pos(1, 14),
+        data = DCalTokenData.Comma
+      ),
+      Token(
+        startPosition = pos(1, 16),
+        endPosition = pos(1, 16),
+        data = DCalTokenData.Name("y")
+      ),
+      Token(
+        startPosition = pos(1, 17),
+        endPosition = pos(1, 17),
+        data = DCalTokenData.CloseParenthesis
+      ),
+      Token(
+        startPosition = pos(1, 18),
+        endPosition = pos(1, 18),
+        data = DCalTokenData.Semicolon
       )
     )
   ).foreach {

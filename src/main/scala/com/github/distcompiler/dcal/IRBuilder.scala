@@ -1,7 +1,8 @@
 package com.github.distcompiler.dcal
 
-import com.github.distcompiler.dcal.DCalAST.Expression.{BracketedExpression, ExpressionBinOp, IntLiteral, Name, StringLiteral}
-import com.github.distcompiler.dcal.DCalAST.Statement.{AssignPairs, Await, Let, Var, If}
+import com.github.distcompiler.dcal.DCalAST.{Expression, Statement}
+import com.github.distcompiler.dcal.DCalAST.Expression.*
+import com.github.distcompiler.dcal.DCalAST.Statement.*
 import com.github.distcompiler.dcal.DCalParser.*
 
 /**
@@ -16,29 +17,30 @@ object IRBuilder {
   // TODO: fresh utility (get a unique name)
 
   def generateExpression(dcalExpr: DCalAST.Expression): List[IR.Node] = {
-    dcalExpr match {
-      case ExpressionBinOp(lhs, binOp, rhs) =>
+    dcalExpr match
+      case Expression.True => ???
+      case Expression.False => ???
+      case Expression.IntLiteral(value) => List(IR.Node.Uninterpreted(value.toString))
+      case Expression.StringLiteral(value) => List(IR.Node.Uninterpreted(value))
+      case Expression.Name(name) => List(IR.Node.Name(name = name))
+      case Expression.Set(members) => ???
+      case Expression.ExpressionBinOp(lhs, binOp, rhs) =>
         generateExpression(lhs) ++ List(IR.Node.Uninterpreted(binOp.toString)) ++ generateExpression(rhs)
-
-      case IntLiteral(value) => List(IR.Node.Uninterpreted(value.toString))
-
-      case StringLiteral(value) => List(IR.Node.Uninterpreted(value))
-
-      case Name(name) => List(IR.Node.Name(name = name))
-
-      case BracketedExpression(expr) =>
+      case Expression.ExpressionRelOp(lhs, relOp, rhs) => ???
+      case Expression.ExpressionLogicOp(lhs, logicOp, rhs) => ???
+      case Expression.ExpressionUnOp(unop, expr) => ???
+      case Expression.BracketedExpression(expr) =>
         List(IR.Node.Uninterpreted("(")) ++ generateExpression(expr) ++ List(IR.Node.Uninterpreted(")"))
-    }
   }
 
   def generateStatement(dcalStmt: DCalAST.Statement): List[IR.Node] = {
-    dcalStmt match {
-      case Await(expr) => List(IR.Node.Uninterpreted("await")) ++ generateExpression(expr)
-      case AssignPairs(assignPairs) => List(???)
-      case Let(name: String, expression: DCalAST.Expression) => ???
-      case Var(name: String, opExpression: Option[(DCalAST.BinOp, DCalAST.Expression)]) => ???
-      case If(predicate: DCalAST.Expression, thenBlock: DCalAST.Block, elseBlock: Option[DCalAST.Block]) => ???
-    }
+    dcalStmt match
+      case Statement.Await(expr) => List(IR.Node.Uninterpreted("await")) ++ generateExpression(expr)
+      case Statement.AssignPairs(assignPairs) => ???
+      case Statement.Let(name, assignmentOp, expression) => ???
+      case Statement.Var(name, expressionOpt) => ???
+      case Statement.IfThenElse(predicate, thenBlock, elseBlock) => ???
+      case Statement.Call(call) => ???
   }
 
   def generateDefinition(dcalDef: DCalAST.Definition): IR.Definition = {
