@@ -18,20 +18,25 @@ object DCalScopeAnalyzer {
     case Local
     case State
     case Definition
-    case Module // names/defs of the current module do not need to be prefixed
-    case ImportedModule // names/defs of imported modules need to be prefixed
+    case Module
   }
 
   inline def ctx(using ctx: Context): Context = ctx
 
-  final case class Context(nameInfoOf: Map[String, NameInfo] = Map.empty) {
+  final case class Context(nameInfoOf: Map[String, NameInfo] = Map.empty,
+                           defsOf: Map[String, List[String]] = Map.empty) {
     def withNameInfo(name: String, nameInfo: NameInfo): Context =
       copy(nameInfoOf = nameInfoOf.updated(name, nameInfo))
 
     def withNameInfo[T](name: String, nameInfo: NameInfo)(fn: Context ?=> T): T =
       given Context = withNameInfo(name = name, nameInfo = nameInfo)
       fn
+
+    def withImport(importName: String, defs: List[String]) =
+      copy(defsOf = defsOf.updated(importName, defs))
   }
+
+  private val specDir = os.pwd / "src" / "test" / "resources" / "DCal"
 
   private def analyzeExpression(dcalExpr: DCalAST.Expression)(using Context): DCalErrors = {
     dcalExpr match
@@ -111,31 +116,38 @@ object DCalScopeAnalyzer {
     analyzeBlock(dcalDef.body)(using ctxWithParams)
   }
 
-  // TODO: Searches the file system, check if the imported file exists.
-  private def analyzeImport(dcalImport: String): DCalErrors =
-    DCalErrors(Nil)
+  private def analyzeImports(dcalModuleName: String, dcalImportNames: List[String]): DCalErrors = {
+    // Checks import names do not clash with module name and one another
+    val redeclared = (dcalModuleName :: dcalImportNames).groupBy(identity).collect {
+      case (redeclaredImportName, _ :: _ :: _) => redeclaredImportName
+    }.toList
+
+    // Checks that file matching import name exists in the file system.
+    val notFound = dcalImportNames.collect {
+      case moduleName if !redeclared.contains(moduleName) && !os.exists(specDir / moduleName) => moduleName
+    }
+
+    val circularDependencies = Nil // TODO
+
+    DCalErrors.union(
+      List(
+        DCalErrors(redeclared.map(RedeclaredName)),
+        DCalErrors(notFound.map(ModuleNotFound))
+      )
+    )
+  }
 
   private def analyzeModule(dcalModule: DCalAST.Module)(using Context): DCalErrors = {
-    // Checks imports exist in the file system
-    val importErrs = dcalModule.imports.map(analyzeImport)
-
     // Adds module name to context before analyzing imports, so that analyzeImport can check for module name clashes
     val ctxWithModule = ctx.withNameInfo(dcalModule.name, NameInfo.Module)
 
-    // Checks import names do not clash with module name and one another
-    // Adds import names to context before analyzing body
-    val (ctxWithImports, importNameErrs) =
-      dcalModule.imports.foldLeft((ctxWithModule, DCalErrors(Nil)))((acc, anImportName) =>
-        acc._1.nameInfoOf.get(anImportName) match
-          case None => (
-            acc._1.withNameInfo(anImportName, NameInfo.ImportedModule),
-            acc._2
-          )
-          case Some(_) => (
-            acc._1,
-            DCalErrors.union(acc._2, DCalErrors(RedeclaredName(anImportName)))
-          )
-      )
+    val importErrs = analyzeImports(dcalModule.name, dcalModule.imports)
+    val ctxWithImports =
+        dcalModule.imports.foldLeft(ctxWithModule)((_ctx, importName) =>
+          _ctx.withNameInfo(importName, NameInfo.Module)
+        )
+
+    // TODO: Parse imported modules & add all their defs to context so that we can scope-check any <name>.<name>.
 
     // Checks def names do not clash
     // Adds def names to context before analyzing body, because one def can refer to another
@@ -154,7 +166,7 @@ object DCalScopeAnalyzer {
     val bodyErrs = dcalModule.definitions.map { aDef => analyzeDefinition(aDef)(using ctxWithDefs) }
 
     // Returns the union of all errors from imports and body
-    DCalErrors.union(importErrs:::importNameErrs::defNameErrs::bodyErrs)
+    DCalErrors.union(importErrs::defNameErrs::bodyErrs)
   }
 
   def apply(contents: String, fileName: String): DCalErrors =

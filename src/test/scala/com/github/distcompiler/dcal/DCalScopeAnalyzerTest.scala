@@ -4,7 +4,7 @@ import com.github.distcompiler.dcal.{DCalErrors, DCalParser, DCalScopeAnalyzer, 
 import org.scalatest.funsuite.AnyFunSuite
 
 class DCalScopeAnalyzerTest extends AnyFunSuite {
-  val testModuleName = "TestModule"
+  val testModuleName = "TestModule1"
   val testModule = s"module $testModuleName"
 
   List(

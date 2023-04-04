@@ -7,8 +7,8 @@ abstract class DCalError {
 /**
  * Thrown when the DCal file of an imported module is not found in the file system.
  */
-final case class ModuleNotFound(dcalModule: DCalAST.Module) extends DCalError {
-  val description = s"Referenced module ${dcalModule.name} not found: <line number>"
+final case class ModuleNotFound(dcalModuleName: String) extends DCalError {
+  val description = s"Referenced module $dcalModuleName not found: <line number>"
 }
 
 /**
@@ -46,4 +46,11 @@ final case class RedeclaredName(name: String) extends DCalError {
  */
 final case class ReassignmentToImmutable(name: String) extends DCalError {
   val description = s"Immutable $name reassigned: <line number>"
+}
+
+/**
+ * Thrown when two modules import each other, directly or indirectly.
+ */
+final case class CircularDependency(thisName: String, thatName: String) extends DCalError {
+  val description = s"Circular dependency detected between $thisName and $thatName"
 }
