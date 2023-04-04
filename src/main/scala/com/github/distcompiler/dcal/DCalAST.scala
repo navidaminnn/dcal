@@ -64,7 +64,7 @@ object DCalAST {
   enum Statement {
     case Await(expression: Expression)
     case AssignPairs(assignPairs: List[AssignPair])
-    case Let(name: String, assignmentOp: AssignmentOp, expression: Expression)
+    case Let(name: String, assignmentOp: AssignmentOp, binding: Either[aCall, Expression])
     case Var(name: String, expressionOpt: Option[(AssignmentOp, Expression)])
     case IfThenElse(predicate: Expression, thenBlock: Block, elseBlock: Block)
     case Call(call: aCall)
@@ -85,7 +85,6 @@ object DCalAST {
     case ExpressionRelOp(lhs: Expression, relOp: RelOp, rhs: Expression)
     case ExpressionLogicOp(lhs: Expression, logicOp: LogicOp, rhs: Expression)
     case ExpressionUnOp(unop: UnOp, expr: Expression)
-    case Call(call: aCall)
     case BracketedExpression(expression: Expression)
   }
 
