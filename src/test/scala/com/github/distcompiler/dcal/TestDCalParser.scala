@@ -206,7 +206,7 @@ class TestDCalParser extends AnyFunSuite {
   }
 
   List(
-    "BasicModule" -> DCalAST.Module(
+    "TestModule1" -> DCalAST.Module(
       name = "TestModule1",
       imports = List("TestModule2"),
       definitions = List(

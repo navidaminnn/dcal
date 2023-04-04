@@ -2,6 +2,8 @@ package com.github.distcompiler.dcal
 
 import com.github.distcompiler.dcal.DCalAST.{Expression, Statement}
 
+import scala.collection.mutable.ListBuffer
+
 /**
  * Performs scope analysis on a DCalAST.Module against the following rules:
  * - Names must be in scope before they are referenced. A name is in scope if it is either a state variable, a
@@ -127,12 +129,29 @@ object DCalScopeAnalyzer {
       case moduleName if !redeclared.contains(moduleName) && !os.exists(specDir / moduleName) => moduleName
     }
 
-    val circularDependencies = Nil // TODO
+    // Build dependency list
+    val redeclaredSet = redeclared.toSet
+    val notFoundSet = notFound.toSet
+    val toCheckForCycles = dcalImportNames.filter { importName =>
+      !redeclaredSet.contains(importName) && !notFoundSet.contains(importName)
+    }
+    val moduleSet = (dcalModuleName::toCheckForCycles).to(scala.collection.mutable.Set)
+    val circular = ListBuffer.empty[(String, String)]
+    toCheckForCycles.foreach { moduleName =>
+      val module = DCalParser(contents = os.read(specDir / moduleName), fileName = moduleName)
+      module.imports.foreach {
+        case circularImportName if moduleSet.contains(circularImportName) =>
+          circular += ((moduleName, circularImportName))
+        case importName =>
+          moduleSet += importName
+      }
+    }
 
     DCalErrors.union(
       List(
         DCalErrors(redeclared.map(RedeclaredName)),
-        DCalErrors(notFound.map(ModuleNotFound))
+        DCalErrors(notFound.map(ModuleNotFound)),
+        DCalErrors(circular.toList.map{ case (m, i) => CircularDependency(m, i) })
       )
     )
   }
@@ -143,11 +162,10 @@ object DCalScopeAnalyzer {
 
     val importErrs = analyzeImports(dcalModule.name, dcalModule.imports)
     val ctxWithImports =
-        dcalModule.imports.foldLeft(ctxWithModule)((_ctx, importName) =>
+        // TODO: Only folds over valid imports
+        dcalModule.imports.foldLeft(ctxWithModule)( (_ctx, importName) =>
           _ctx.withNameInfo(importName, NameInfo.Module)
         )
-
-    // TODO: Parse imported modules & add all their defs to context so that we can scope-check any <name>.<name>.
 
     // Checks def names do not clash
     // Adds def names to context before analyzing body, because one def can refer to another

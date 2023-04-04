@@ -96,6 +96,10 @@ class DCalScopeAnalyzerTest extends AnyFunSuite {
           RedeclaredName(testModuleName)
         )
       ),
+    // Circular import
+    s"""module TestModule5
+       |import TestModule6
+       |""".stripMargin -> DCalErrors(CircularDependency("TestModule6", "TestModule5")),
     // Redeclaration of def
     s"""$testModule
        |def resetString() { str := "new string"; }

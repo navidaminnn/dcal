@@ -51,6 +51,6 @@ final case class ReassignmentToImmutable(name: String) extends DCalError {
 /**
  * Thrown when two modules import each other, directly or indirectly.
  */
-final case class CircularDependency(thisName: String, thatName: String) extends DCalError {
-  val description = s"Circular dependency detected between $thisName and $thatName"
+final case class CircularDependency(moduleName: String, importName: String) extends DCalError {
+  val description = s"Circular dependency detected in $moduleName, involving the module $importName: <line number>"
 }
