@@ -12,25 +12,27 @@ object DCalAST {
   block ::= `{` <statement>* `}
 
   statement ::=
-    | `await` <predicate>
+    | `await` <expression>
     | <assign_pair> (`||` <assign_pair>)*
-    | `let` <name> (`=` | `\in`) <expression>
+    | `let` <name> (`=` | `\in`) (<expression> | <call>)
     | `var` <name> ((`=` | `\in`) <expression>)?
-    | `if` <predicate> `then` <block> `else` <block>
-    | <name>(`.`<name>)? `(` (<expression> (`,` <expression>))? `)`
+    | `if` <expression> `then` <block> `else` <block>
+    | <call>
 
   // e.g `x := y || y := x` swaps x and y
   assign_pair ::= <name> `:=` <expression>
 
-  expression ::= <expression_binop> | <predicate>
+  call ::= <name>(`.`<name>)? `(` (<expression> (`,` <expression>))? `)`
 
-  predicate ::= <expression_logicop> | <expression_relop>
+  expression ::= <expression_unop> | <expression_logicop> | <expression_relop> | <expression_binop>
 
-  expression_logicop ::= <expression_base> (<logicop> <expression_base>)?
+  expression_binop ::= <expression_base> (<binop> <expression_base>)?
+
+  expression_logicop ::= <expression_base> <logicop> <expression_base>
 
   expression_relop ::= <expression_base> <relop> <expression_base>
 
-  expression_binop ::= <expression_base> (<binop> <expression_base>)?
+  expression_unop ::= <unop> <expression_base>
 
   expression_base ::=
       | <boolean>
@@ -51,6 +53,8 @@ object DCalAST {
   relop ::= `=` | `#` | `<` | `>` | `<=` | `>=`
 
   logicop ::= `\/` | `/\`
+
+  unop ::= ~
   */
 
   final case class Module(name: String, imports: List[String], definitions: List[Definition])
@@ -63,10 +67,12 @@ object DCalAST {
     case Let(name: String, assignmentOp: AssignmentOp, expression: Expression)
     case Var(name: String, expressionOpt: Option[(AssignmentOp, Expression)])
     case IfThenElse(predicate: Expression, thenBlock: Block, elseBlock: Block)
-    case Call(moduleNameOpt: Option[String], definitionName: String, args: List[Expression])
+    case Call(call: aCall)
   }
 
   final case class AssignPair(name: String, expression: Expression)
+
+  final case class aCall(moduleNameOpt: Option[String], definitionName: String, args: List[Expression])
 
   enum Expression {
     case True
@@ -78,6 +84,8 @@ object DCalAST {
     case ExpressionBinOp(lhs: Expression, binOp: BinOp, rhs: Expression)
     case ExpressionRelOp(lhs: Expression, relOp: RelOp, rhs: Expression)
     case ExpressionLogicOp(lhs: Expression, logicOp: LogicOp, rhs: Expression)
+    case ExpressionUnOp(unop: UnOp, expr: Expression)
+    case Call(call: aCall)
     case BracketedExpression(expression: Expression)
   }
 
@@ -103,5 +111,9 @@ object DCalAST {
   enum LogicOp {
     case And
     case Or
+  }
+
+  enum UnOp {
+    case Not
   }
 }

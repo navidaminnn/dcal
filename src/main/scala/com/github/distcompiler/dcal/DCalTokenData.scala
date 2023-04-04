@@ -35,4 +35,5 @@ enum DCalTokenData {
     case Comma
     case Semicolon
     case Dot
+    case Tilda
 }

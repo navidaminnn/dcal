@@ -10,6 +10,9 @@ class TestDCalParser extends AnyFunSuite {
 
   import DCalParser.*
 
+  def makeDef(params: List[String], stmts: List[String]) =
+    s"def aFunc(${params.mkString(",")}) { \n${stmts.mkString("\n")} }"
+
   val testModule = "module TestModule1"
   val testImports = "import TestModule2"
 
@@ -27,7 +30,7 @@ class TestDCalParser extends AnyFunSuite {
     body = DCalAST.Block(statements = Nil)
   )
 
-  val testLet = "let test1 = TRUE;"
+  val testLetEqualToLiteral = "let test1 = TRUE;"
   val testVar = "var test2;"
   val testVarEquals = """var test3 = "val3";"""
   val testVarSlashIn = "var test4 \\in { 1, 2, 3, 4, 5 };"
@@ -37,12 +40,22 @@ class TestDCalParser extends AnyFunSuite {
   val testBracketedExpression = "(test6)"
   val testAssignPairs = s"test6 := test7 || test7 := $testBracketedExpression;"
   val testExpression = "test6 > 1000"
-  val testAwait = s"await $testExpression;  "
-  val testDefParamsBody = s"def aFunc(anArg) {\n${
-    TestUtils.sequenceLines(
-      testLet, testVar, testVarEquals, testVarSlashIn, testAssignPairs, testAwait, testIf, testCall, testImportedDefCall
+  val testAwait = s"await $testExpression;"
+  val testLetEqualToCall = "let test8 = aFunc();"
+  val testDefParamsBody = makeDef(
+    List("anArg"),
+    List(
+      testLetEqualToLiteral,
+      testVar,
+      testVarEquals,
+      testVarSlashIn,
+      testAssignPairs,
+      testAwait,
+      testIf,
+      testCall,
+      testImportedDefCall
     )
-  }\n}"
+  )
 
   List(
     testModule -> DCalAST.Module(
@@ -150,22 +163,26 @@ class TestDCalParser extends AnyFunSuite {
                 )
               ),
               DCalAST.Statement.Call(
-                moduleNameOpt = None,
-                definitionName = "aFunc2",
-                args = List(
-                  DCalAST.Expression.IntLiteral(1),
-                  DCalAST.Expression.ExpressionBinOp(
-                    lhs = DCalAST.Expression.IntLiteral(2),
-                    binOp = DCalAST.BinOp.Plus,
-                    rhs = DCalAST.Expression.IntLiteral(3)
-                  ),
-                  DCalAST.Expression.StringLiteral("val")
+                call = DCalAST.aCall(
+                  moduleNameOpt = None,
+                  definitionName = "aFunc2",
+                  args = List(
+                    DCalAST.Expression.IntLiteral(1),
+                    DCalAST.Expression.ExpressionBinOp(
+                      lhs = DCalAST.Expression.IntLiteral(2),
+                      binOp = DCalAST.BinOp.Plus,
+                      rhs = DCalAST.Expression.IntLiteral(3)
+                    ),
+                    DCalAST.Expression.StringLiteral("val")
+                  )
                 )
               ),
               DCalAST.Statement.Call(
-                moduleNameOpt = Some("TestModule2"),
-                definitionName = "aFunc3",
-                args = Nil
+                call = DCalAST.aCall(
+                  moduleNameOpt = Some("TestModule2"),
+                  definitionName = "aFunc3",
+                  args = Nil
+                )
               )
             )
           )
