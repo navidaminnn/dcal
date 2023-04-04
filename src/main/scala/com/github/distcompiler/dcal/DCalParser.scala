@@ -97,9 +97,12 @@ object DCalParser {
         case DCalTokenData.SlashIn => DCalAST.AssignmentOp.SlashIn
       })
 
-      val callExpr = call.map { case call => DCalAST.Expression.Call(call = call) }
-      val let = (elem(DCalTokenData.Let) ~> name ~ assignmentOp ~ (expression | callExpr)).map {
-        case name ~ op ~ expr => DCalAST.Statement.Let(name = name, assignmentOp = op, expression = expr)
+      val exprBoundLet = (elem(DCalTokenData.Let) ~> name ~ assignmentOp ~ expression).map {
+        case name ~ op ~ expr => DCalAST.Statement.Let(name = name, assignmentOp = op, binding = Right(expr))
+      }
+
+      val callBoundLet = (elem(DCalTokenData.Let) ~> name ~ assignmentOp ~ aCall).map {
+        case name ~ op ~ call => DCalAST.Statement.Let(name = name, assignmentOp = op, binding = Left(call))
       }
 
       val `var` =
@@ -115,12 +118,12 @@ object DCalParser {
           )
         }
 
-      val callStmt =
-        call.map {
+      val call =
+        aCall.map {
           case call => DCalAST.Statement.Call(call = call)
         }
 
-      ((await | let | `var` | assignPairs | callStmt) <~ elem(DCalTokenData.Semicolon)) | ifThenElse
+      ((await | callBoundLet | exprBoundLet | `var` | assignPairs | call) <~ elem(DCalTokenData.Semicolon)) | ifThenElse
     }
 
     // TODO: Operator precedence behaviour needs reworking
@@ -186,7 +189,7 @@ object DCalParser {
       expressionUnOp | expressionRelOp | expressionLogicOp | expressionBinOp
     }
 
-    lazy val call: Parser[DCalAST.aCall] = {
+    lazy val aCall: Parser[DCalAST.aCall] = {
       val importedName = name ~ elem(DCalTokenData.Dot) ~ name
       val args = elem(DCalTokenData.OpenParenthesis) ~> opt(delimited(expression)) <~ elem(DCalTokenData.CloseParenthesis)
 

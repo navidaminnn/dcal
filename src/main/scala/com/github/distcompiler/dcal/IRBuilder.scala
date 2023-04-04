@@ -29,7 +29,6 @@ object IRBuilder {
       case Expression.ExpressionRelOp(lhs, relOp, rhs) => ???
       case Expression.ExpressionLogicOp(lhs, logicOp, rhs) => ???
       case Expression.ExpressionUnOp(unop, expr) => ???
-      case Expression.Call(call) => ???
       case Expression.BracketedExpression(expr) =>
         List(IR.Node.Uninterpreted("(")) ++ generateExpression(expr) ++ List(IR.Node.Uninterpreted(")"))
   }

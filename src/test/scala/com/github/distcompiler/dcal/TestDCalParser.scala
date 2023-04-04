@@ -10,7 +10,7 @@ class TestDCalParser extends AnyFunSuite {
 
   import DCalParser.*
 
-  def makeDef(params: List[String], stmts: List[String]) =
+  def makeDef(params: List[String], stmts: List[String]): String =
     s"def aFunc(${params.mkString(",")}) { \n${stmts.mkString("\n")} }"
 
   val testModule = "module TestModule1"
@@ -41,11 +41,12 @@ class TestDCalParser extends AnyFunSuite {
   val testAssignPairs = s"test6 := test7 || test7 := $testBracketedExpression;"
   val testExpression = "test6 > 1000"
   val testAwait = s"await $testExpression;"
-  val testLetEqualToCall = "let test8 = aFunc();"
+  val testLetEqualToCall = "let test8 = aFunc4();"
   val testDefParamsBody = makeDef(
     List("anArg"),
     List(
       testLetEqualToLiteral,
+      testLetEqualToCall,
       testVar,
       testVarEquals,
       testVarSlashIn,
@@ -87,7 +88,12 @@ class TestDCalParser extends AnyFunSuite {
               DCalAST.Statement.Let(
                 name = "test1",
                 assignmentOp = DCalAST.AssignmentOp.EqualTo,
-                expression = DCalAST.Expression.True
+                binding = Right(DCalAST.Expression.True)
+              ),
+              DCalAST.Statement.Let(
+                name = "test8",
+                assignmentOp = DCalAST.AssignmentOp.EqualTo,
+                binding = Left(DCalAST.aCall(moduleNameOpt = None, definitionName = "aFunc4", args = Nil))
               ),
               DCalAST.Statement.Var(name = "test2", expressionOpt = None),
               DCalAST.Statement.Var(

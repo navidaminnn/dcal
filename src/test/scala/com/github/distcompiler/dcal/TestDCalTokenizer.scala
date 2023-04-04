@@ -107,6 +107,58 @@ class TestDCalTokenizer extends AnyFunSuite {
         data = DCalTokenData.Semicolon
       )
     ),
+    "let x = subtract(i, j);" -> List(
+      Token(
+        startPosition = pos(1, 1),
+        endPosition = pos(1, 3),
+        data = DCalTokenData.Let
+      ),
+      Token(
+        startPosition = pos(1, 5),
+        endPosition = pos(1, 5),
+        data = DCalTokenData.Name("x")
+      ),
+      Token(
+        startPosition = pos(1, 7),
+        endPosition = pos(1, 7),
+        data = DCalTokenData.EqualTo
+      ),
+      Token(
+        startPosition = pos(1, 9),
+        endPosition = pos(1, 16),
+        data = DCalTokenData.Name("subtract")
+      ),
+      Token(
+        startPosition = pos(1, 17),
+        endPosition = pos(1, 17),
+        data = DCalTokenData.OpenParenthesis
+      ),
+      Token(
+        startPosition = pos(1, 18),
+        endPosition = pos(1, 18),
+        data = DCalTokenData.Name("i")
+      ),
+      Token(
+        startPosition = pos(1, 19),
+        endPosition = pos(1, 19),
+        data = DCalTokenData.Comma
+      ),
+      Token(
+        startPosition = pos(1, 21),
+        endPosition = pos(1, 21),
+        data = DCalTokenData.Name("j")
+      ),
+      Token(
+        startPosition = pos(1, 22),
+        endPosition = pos(1, 22),
+        data = DCalTokenData.CloseParenthesis
+      ),
+      Token(
+        startPosition = pos(1, 23),
+        endPosition = pos(1, 23),
+        data = DCalTokenData.Semicolon
+      )
+    ),
     "var i \\in lst;" -> List(
       Token(
         startPosition = pos(1, 1),
