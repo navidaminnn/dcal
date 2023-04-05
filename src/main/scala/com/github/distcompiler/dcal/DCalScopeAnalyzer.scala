@@ -1,6 +1,6 @@
 package com.github.distcompiler.dcal
 
-import com.github.distcompiler.dcal.DCalAST.{Expression, Statement}
+import com.github.distcompiler.dcal.DCalAST.{Expression, Statement, aCall}
 
 import scala.collection.mutable.ListBuffer
 
@@ -26,7 +26,7 @@ object DCalScopeAnalyzer {
   inline def ctx(using ctx: Context): Context = ctx
 
   final case class Context(nameInfoOf: Map[String, NameInfo] = Map.empty,
-                           defsOf: Map[String, List[String]] = Map.empty) {
+                           defsOf: Map[String, Set[String]] = Map.empty) {
     def withNameInfo(name: String, nameInfo: NameInfo): Context =
       copy(nameInfoOf = nameInfoOf.updated(name, nameInfo))
 
@@ -34,11 +34,29 @@ object DCalScopeAnalyzer {
       given Context = withNameInfo(name = name, nameInfo = nameInfo)
       fn
 
-    def withImport(importName: String, defs: List[String]) =
-      copy(defsOf = defsOf.updated(importName, defs))
+    def withImport(importName: String, defNames: Set[String]): Context =
+      copy(defsOf = defsOf.updated(importName, defNames))
   }
 
   private val specDir = os.pwd / "src" / "test" / "resources" / "DCal"
+
+  private def analyzeCall(call: DCalAST.aCall)(using Context): DCalErrors =
+    val moduleDefNameErrs = call match {
+      case aCall(None, defName, _) =>
+        ctx.nameInfoOf.get(defName) match
+          case Some(NameInfo.Definition) => DCalErrors(Nil)
+          case _ => DCalErrors(DefinitionNotFound(defName))
+
+      case aCall(Some(moduleName), defName, _) =>
+        ctx.nameInfoOf.get(moduleName) match
+          case Some(NameInfo.Module) =>
+            if ctx.defsOf(moduleName).contains(defName) then DCalErrors(Nil) else DCalErrors(MemberNotFound(moduleName, defName))
+          case _ => DCalErrors(ModuleNotFound(moduleName))
+    }
+
+    val argErrs = call.args.map(analyzeExpression)
+
+    DCalErrors.union(moduleDefNameErrs::argErrs)
 
   private def analyzeExpression(dcalExpr: DCalAST.Expression)(using Context): DCalErrors = {
     dcalExpr match
@@ -48,6 +66,7 @@ object DCalScopeAnalyzer {
         case None => DCalErrors(NameNotFound(name))
       }
       case Expression.Set(members) => DCalErrors.union(members.map(analyzeExpression))
+      case Expression.ExpressionUnOp(_, _) => ???
       case Expression.ExpressionBinOp(lhs, _, rhs) => DCalErrors.union(analyzeExpression(lhs), analyzeExpression(rhs))
       case Expression.ExpressionRelOp(lhs, _, rhs) => DCalErrors.union(analyzeExpression(lhs), analyzeExpression(rhs))
       case Expression.ExpressionLogicOp(lhs, _, rhs) => DCalErrors.union(analyzeExpression(lhs), analyzeExpression(rhs))
@@ -70,13 +89,17 @@ object DCalScopeAnalyzer {
         DCalErrors.union(nameErrs, expressionErrs)
       })
 
-      case Statement.Let(name, _, expression) =>
+      case Statement.Let(name, _, binding) =>
         // Check that name has not been declared
         val nameErrs = ctx.nameInfoOf.get(name) match
           case Some(_) => DCalErrors(RedeclaredName(name))
           case None => DCalErrors(Nil)
-        val exprErrs = analyzeExpression(expression)
-        DCalErrors.union(nameErrs, exprErrs)
+
+        val bindingErrs = binding match
+          case Left(call) => analyzeCall(call)
+          case Right(expr) => analyzeExpression(expr)
+
+        DCalErrors.union(nameErrs, bindingErrs)
 
       case Statement.Var(name, expressionOpt) =>
         val nameErrs = ctx.nameInfoOf.get(name) match
@@ -89,6 +112,8 @@ object DCalScopeAnalyzer {
 
       case Statement.IfThenElse(predicate, thenBlock, elseBlock) =>
         DCalErrors.union(List(analyzeExpression(predicate), analyzeBlock(thenBlock), analyzeBlock(elseBlock)))
+
+      case Statement.Call(call) => analyzeCall(call)
   }
 
   private def analyzeBlock(dcalBlock: DCalAST.Block)(using Context): DCalErrors = {
@@ -129,29 +154,33 @@ object DCalScopeAnalyzer {
       case moduleName if !redeclared.contains(moduleName) && !os.exists(specDir / moduleName) => moduleName
     }
 
-    // Build dependency list
-    val redeclaredSet = redeclared.toSet
-    val notFoundSet = notFound.toSet
-    val toCheckForCycles = dcalImportNames.filter { importName =>
-      !redeclaredSet.contains(importName) && !notFoundSet.contains(importName)
-    }
-    val moduleSet = (dcalModuleName::toCheckForCycles).to(scala.collection.mutable.Set)
+    // Finds circular dependencies
+    val visited = scala.collection.mutable.Set(dcalModuleName)
     val circular = ListBuffer.empty[(String, String)]
-    toCheckForCycles.foreach { moduleName =>
-      val module = DCalParser(contents = os.read(specDir / moduleName), fileName = moduleName)
-      module.imports.foreach {
-        case circularImportName if moduleSet.contains(circularImportName) =>
-          circular += ((moduleName, circularImportName))
-        case importName =>
-          moduleSet += importName
+
+    def findCircularDependency(moduleName: String, importName: String): Unit = {
+      if visited.contains(importName) then {
+        circular += ((moduleName, importName))
+      } else {
+        visited += importName
+        val importedModule = DCalParser(contents = os.read(specDir / importName), fileName = importName)
+        importedModule.imports.foreach { importedImportName => findCircularDependency(importName, importedImportName) }
       }
     }
+
+    val redeclaredSet = redeclared.toSet
+    val notFoundSet = notFound.toSet
+    dcalImportNames.filter { importName =>
+      !redeclaredSet.contains(importName) && !notFoundSet.contains(importName)
+    }.foreach { importName => findCircularDependency(dcalModuleName, importName) }
 
     DCalErrors.union(
       List(
         DCalErrors(redeclared.map(RedeclaredName)),
         DCalErrors(notFound.map(ModuleNotFound)),
-        DCalErrors(circular.toList.map{ case (m, i) => CircularDependency(m, i) })
+        DCalErrors(
+          circular.toList.map{ case (m, i) => CircularDependency(m, i) }
+        )
       )
     )
   }
@@ -162,25 +191,26 @@ object DCalScopeAnalyzer {
 
     val importErrs = analyzeImports(dcalModule.name, dcalModule.imports)
     val ctxWithImports =
-        // TODO: Only folds over valid imports
-        dcalModule.imports.foldLeft(ctxWithModule)( (_ctx, importName) =>
-          _ctx.withNameInfo(importName, NameInfo.Module)
-        )
+      dcalModule.imports.foldLeft(ctxWithModule)( (_ctx, importName) =>
+        val importedModule = DCalParser(contents = os.read(specDir / importName), fileName = importName)
+        val defNames = importedModule.definitions.map(_.name).toSet
+        _ctx.withNameInfo(importName, NameInfo.Module).withImport(importName, defNames)
+      )
 
     // Checks def names do not clash
     // Adds def names to context before analyzing body, because one def can refer to another
     val (ctxWithDefs, defNameErrs) =
-      dcalModule.definitions.foldLeft((ctxWithImports, DCalErrors(Nil)))( (acc, aDef) =>
-        acc._1.nameInfoOf.get(aDef.name) match
-          case None => (
-            acc._1.withNameInfo(aDef.name, NameInfo.Definition),
-            acc._2
-          )
-          case Some(_) => (
-            acc._1,
-            DCalErrors.union(acc._2, DCalErrors(RedeclaredName(aDef.name)))
-          )
-      )
+    dcalModule.definitions.foldLeft((ctxWithImports, DCalErrors(Nil)))( (acc, aDef) =>
+      acc._1.nameInfoOf.get(aDef.name) match
+        case None => (
+          acc._1.withNameInfo(aDef.name, NameInfo.Definition),
+          acc._2
+        )
+        case Some(_) => (
+          acc._1,
+          DCalErrors.union(acc._2, DCalErrors(RedeclaredName(aDef.name)))
+        )
+    )
     val bodyErrs = dcalModule.definitions.map { aDef => analyzeDefinition(aDef)(using ctxWithDefs) }
 
     // Returns the union of all errors from imports and body

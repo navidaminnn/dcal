@@ -14,8 +14,8 @@ final case class ModuleNotFound(dcalModuleName: String) extends DCalError {
 /**
  * Thrown when a definition name in a procedure call is not found.
  */
-final case class DefinitionNotFound(dcalDef: DCalAST.Definition) extends DCalError {
-  val description = s"Referenced definition ${dcalDef.name} not found: <line number>"
+final case class DefinitionNotFound(dcalDefName: String) extends DCalError {
+  val description = s"Referenced definition $dcalDefName not found: <line number>"
 }
 
 /**

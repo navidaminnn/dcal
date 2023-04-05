@@ -52,9 +52,15 @@ class DCalScopeAnalyzerTest extends AnyFunSuite {
     s"""$testModule
        |def testWait() { await m <= n; }
        |""".stripMargin -> DCalErrors(List(NameNotFound("m"), NameNotFound("n"))),
-    // Let happy path
+    // Let expr happy path
     s"""$testModule
        |def sum(p1, p2) { let local = p1 + p2; x := local; }
+       |""".stripMargin -> DCalErrors(Nil),
+    // Let procedure call happy path
+    s"""$testModule
+       |import TestModule2
+       |def mt(i, j) {}
+       |def sum(p1, p2) { let local = mt(p1, p2); x := local; }
        |""".stripMargin -> DCalErrors(Nil),
     // Redeclaration by let
     s"""$testModule
@@ -80,6 +86,11 @@ class DCalScopeAnalyzerTest extends AnyFunSuite {
     s"""$testModule
        |def testIfThenElseNonTail() { if x <= y then { x := x + 1; } else { y := y - 1; } i := x + y; }
        |""".stripMargin -> DCalErrors(Nil),
+    // Params shadowing locals / state variables TODO: Add this as a compiler edge case test
+    s"""$testModule
+       |def mt(x, y) { i := x + y; }
+       |def sum(p1, p2) { let local = mt(p1, p2); x := local; }
+       |""".stripMargin -> DCalErrors(Nil),
     // Import happy path
     s"""$testModule
        |import TestModule2, TestModule3, TestModule4
@@ -100,6 +111,25 @@ class DCalScopeAnalyzerTest extends AnyFunSuite {
     s"""module TestModule5
        |import TestModule6
        |""".stripMargin -> DCalErrors(CircularDependency("TestModule6", "TestModule5")),
+    // Indirect circular import
+    s"""module TestModule7
+       |import TestModule8
+       |""".stripMargin -> DCalErrors(CircularDependency("TestModule9", "TestModule7")),
+    // Imported procedure call happy path
+    s"""$testModule
+       |import TestModule2
+       |def foo(p1, p2) { let local = TestModule2.subtract(p1, p2); x := local; }
+       |""".stripMargin -> DCalErrors(Nil),
+    // Same def name in different modules
+    s"""$testModule
+       |import TestModule2
+       |def subtract(p1, p2) { let local = TestModule2.subtract(p1, p2); x := local; }
+       |""".stripMargin -> DCalErrors(Nil),
+    // Imported procedure call not member of imported module
+    s"""$testModule
+       |import TestModule2
+       |def add(p1, p2) { let local = TestModule2.add(p1, p2); x := local; }
+       |""".stripMargin -> DCalErrors(MemberNotFound("TestModule2", "add")),
     // Redeclaration of def
     s"""$testModule
        |def resetString() { str := "new string"; }
