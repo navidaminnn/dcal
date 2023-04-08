@@ -72,7 +72,7 @@ object DCalAST {
 
   final case class AssignPair(name: String, expression: Expression)
 
-  final case class aCall(moduleNameOpt: Option[String], definitionName: String, args: List[Expression])
+  final case class aCall(moduleName: List[String], definitionName: String, args: List[Expression])
 
   enum Expression {
     case True

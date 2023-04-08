@@ -1,1 +1,2 @@
 module TestModule3
+def foo() {}

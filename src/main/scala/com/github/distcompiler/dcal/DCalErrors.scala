@@ -13,7 +13,9 @@ object DCalErrors extends Exception {
   def apply(error: DCalError) = new DCalErrors(List(error))
 
   def union(errsLst: List[DCalErrors]): DCalErrors =
-    errsLst.reduce(_ || _)
+    errsLst match
+      case Nil => DCalErrors(Nil)
+      case _ => errsLst.reduce(_ || _)
 
   def union(thisErrs: DCalErrors, thatErrs: DCalErrors): DCalErrors =
     union(List(thisErrs, thatErrs))

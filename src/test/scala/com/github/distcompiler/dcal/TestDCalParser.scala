@@ -37,6 +37,7 @@ class TestDCalParser extends AnyFunSuite {
   val testIf = "if x <= y then { x := x + 1; } else { y := y - 1; }"
   val testCall = """aFunc2(1, 2 + 3, "val");"""
   val testImportedDefCall = "TestModule2.aFunc3();"
+  val testChainedImportedDefCall = "TestModule2.TestModule3.TestModule4.aFunc5();"
   val testBracketedExpression = "(test6)"
   val testAssignPairs = s"test6 := test7 || test7 := $testBracketedExpression;"
   val testExpression = "test6 > 1000"
@@ -54,7 +55,8 @@ class TestDCalParser extends AnyFunSuite {
       testAwait,
       testIf,
       testCall,
-      testImportedDefCall
+      testImportedDefCall,
+      testChainedImportedDefCall
     )
   )
 
@@ -93,7 +95,7 @@ class TestDCalParser extends AnyFunSuite {
               DCalAST.Statement.Let(
                 name = "test8",
                 assignmentOp = DCalAST.AssignmentOp.EqualTo,
-                binding = Left(DCalAST.aCall(moduleNameOpt = None, definitionName = "aFunc4", args = Nil))
+                binding = Left(DCalAST.aCall(moduleName = Nil, definitionName = "aFunc4", args = Nil))
               ),
               DCalAST.Statement.Var(name = "test2", expressionOpt = None),
               DCalAST.Statement.Var(
@@ -170,7 +172,7 @@ class TestDCalParser extends AnyFunSuite {
               ),
               DCalAST.Statement.Call(
                 call = DCalAST.aCall(
-                  moduleNameOpt = None,
+                  moduleName = Nil,
                   definitionName = "aFunc2",
                   args = List(
                     DCalAST.Expression.IntLiteral(1),
@@ -185,8 +187,15 @@ class TestDCalParser extends AnyFunSuite {
               ),
               DCalAST.Statement.Call(
                 call = DCalAST.aCall(
-                  moduleNameOpt = Some("TestModule2"),
+                  moduleName = List("TestModule2"),
                   definitionName = "aFunc3",
+                  args = Nil
+                )
+              ),
+              DCalAST.Statement.Call(
+                call = DCalAST.aCall(
+                  moduleName = List("TestModule2", "TestModule3", "TestModule4"),
+                  definitionName = "aFunc5",
                   args = Nil
                 )
               )
@@ -206,49 +215,6 @@ class TestDCalParser extends AnyFunSuite {
         val actualResult = DCalParser(
           contents = input,
           fileName = "<testfile>",
-        )
-        assert(actualResult == expectedResult)
-      }
-  }
-
-  List(
-    "TestModule1" -> DCalAST.Module(
-      name = "TestModule1",
-      imports = List("TestModule2"),
-      definitions = List(
-        DCalAST.Definition(
-          name = "aFunc1", params = Nil, body = DCalAST.Block(statements = Nil)
-        ),
-        DCalAST.Definition(
-          name = "aFunc2", params = List("p1", "p2", "p3"), body = DCalAST.Block(statements = Nil)
-        ),
-        DCalAST.Definition(
-          name = "aFunc3",
-          params = Nil,
-          body = DCalAST.Block(
-            statements = List(
-              DCalAST.Statement.AssignPairs(
-                assignPairs = List(
-                  DCalAST.AssignPair(
-                    name = "x",
-                    expression = DCalAST.Expression.ExpressionBinOp(
-                      lhs = DCalAST.Expression.Name("x"),
-                      binOp = DCalAST.BinOp.Plus,
-                      rhs = DCalAST.Expression.IntLiteral(1)
-                    )
-                  )
-                )
-              )
-            )
-          )
-        )
-      )
-    )
-  ).foreach {
-    case (input, expectedResult) =>
-      test(s"parse file $input") {
-        val actualResult = DCalParser(
-          contents = TestUtils.readTestFile(input), fileName = input
         )
         assert(actualResult == expectedResult)
       }

@@ -2,18 +2,17 @@ package com.github.distcompiler.dcal
 
 import com.github.distcompiler.dcal.DCalAST.{Expression, Statement, aCall}
 
-import scala.collection.mutable.ListBuffer
+import scala.util.Either
 
 /**
  * Performs scope analysis on a DCalAST.Module against the following rules:
- * - Names must be in scope before they are referenced. A name is in scope if it is either a state variable, a
- *   declared local (using DCal var/let), a def name, or a module name.
+ * - Names must be in scope before they are referenced.
  * - A name must not be declared more than once in a scope, even if the redeclaration is done for a different name type.
  *
- * There are other rules, for example typechecking rules, are reserved for another pass to handle. Namely:
- * - The bindings of all let and var statements must semi-type-check. This means that in a let/var statement, if the
+ * There are other rules, for example typechecking rules, reserved for another pass to handle. Namely:
+ * - The bindings of all let and var statements must type-check. This means that in a let/var statement, if the
  *   assignment operator is \`\in\`, then the binding must be a set.
- * - Operands in binary, relative, and logical operations must type-check.
+ * - Operands in binary, relative, and logical operations must be of the same type.
  */
 object DCalScopeAnalyzer {
   enum NameInfo {
@@ -25,33 +24,42 @@ object DCalScopeAnalyzer {
 
   inline def ctx(using ctx: Context): Context = ctx
 
-  final case class Context(nameInfoOf: Map[String, NameInfo] = Map.empty,
-                           defsOf: Map[String, Set[String]] = Map.empty) {
+  final case class Context(nameInfoOf: Map[String, NameInfo] = Map.empty, defsOf: Map[List[String], Set[String]] = Map.empty) {
     def withNameInfo(name: String, nameInfo: NameInfo): Context =
       copy(nameInfoOf = nameInfoOf.updated(name, nameInfo))
 
     def withNameInfo[T](name: String, nameInfo: NameInfo)(fn: Context ?=> T): T =
-      given Context = withNameInfo(name = name, nameInfo = nameInfo)
-      fn
+      fn(using withNameInfo(name = name, nameInfo = nameInfo))
 
-    def withImport(importName: String, defNames: Set[String]): Context =
-      copy(defsOf = defsOf.updated(importName, defNames))
+    def withModuleInfo(moduleName: List[String], defNames: Set[String]): Context =
+      moduleName match
+        case m::Nil => copy(defsOf = defsOf.updated(moduleName, defNames)).withNameInfo(m, NameInfo.Module)
+        case _ => copy(defsOf = defsOf.updated(moduleName, defNames))
+
+    def withModuleInfos[T](moduleDefsMap: Map[List[String], Set[String]])(fn: Context ?=> T): T =
+      fn(using moduleDefsMap.foldLeft(this) { (_ctx, kv) => _ctx.withModuleInfo(kv._1.tail, kv._2) })
   }
 
   private val specDir = os.pwd / "src" / "test" / "resources" / "DCal"
 
+  private def findRedeclaredNames(names: List[String])(using Context): Iterable[String] =
+    names.groupBy(identity).collect {
+      case (redeclaredName, _ :: _ :: _) => redeclaredName
+      case (name, _) if ctx.nameInfoOf.contains(name) || ctx.defsOf.contains(List(name)) => name
+    }
+
   private def analyzeCall(call: DCalAST.aCall)(using Context): DCalErrors =
     val moduleDefNameErrs = call match {
-      case aCall(None, defName, _) =>
+      case aCall(Nil, defName, _) =>
         ctx.nameInfoOf.get(defName) match
           case Some(NameInfo.Definition) => DCalErrors(Nil)
           case _ => DCalErrors(DefinitionNotFound(defName))
 
-      case aCall(Some(moduleName), defName, _) =>
-        ctx.nameInfoOf.get(moduleName) match
-          case Some(NameInfo.Module) =>
-            if ctx.defsOf(moduleName).contains(defName) then DCalErrors(Nil) else DCalErrors(MemberNotFound(moduleName, defName))
-          case _ => DCalErrors(ModuleNotFound(moduleName))
+      case aCall(moduleNames, defName, _) =>
+        ctx.defsOf.get(moduleNames) match
+          case Some(defs) =>
+            if defs(defName) then DCalErrors(Nil) else DCalErrors(MemberNotFound(moduleNames.mkString("."), defName))
+          case _ => DCalErrors(ModuleNotFound(moduleNames.mkString(".")))
     }
 
     val argErrs = call.args.map(analyzeExpression)
@@ -73,13 +81,10 @@ object DCalScopeAnalyzer {
       case Expression.BracketedExpression(expression) => analyzeExpression(expression)
   }
 
-  // For statements that declare and/or define a name, if that name already exists
   private def analyzeStatement(dcalStmt: DCalAST.Statement)(using Context): DCalErrors = {
     dcalStmt match
       case Statement.Await(expression) => analyzeExpression(expression)
 
-      // Loops over list of AssignPair
-      // For each, checks that name is (a mutable local or) a state variable and calls analyzeExpression on expression
       case Statement.AssignPairs(assignPairs) => DCalErrors.union(assignPairs.map{ assignPair =>
         val nameErrs = ctx.nameInfoOf.get(assignPair.name) match
           case Some(NameInfo.State) => DCalErrors(Nil)
@@ -90,7 +95,6 @@ object DCalScopeAnalyzer {
       })
 
       case Statement.Let(name, _, binding) =>
-        // Check that name has not been declared
         val nameErrs = ctx.nameInfoOf.get(name) match
           case Some(_) => DCalErrors(RedeclaredName(name))
           case None => DCalErrors(Nil)
@@ -120,7 +124,6 @@ object DCalScopeAnalyzer {
     def analyzeStatements(stmts: List[DCalAST.Statement], errs: DCalErrors)(using Context): DCalErrors = {
       stmts match
         case Nil => errs
-        // Analyzes head, creates a new ctx if necessary, recurses on tail
         case s::ss =>
           val sErrs = analyzeStatement(s)
           s match
@@ -136,96 +139,81 @@ object DCalScopeAnalyzer {
   }
 
   private def analyzeDefinition(dcalDef: DCalAST.Definition)(using Context): DCalErrors = {
-    // Adds params to ctx before analyzing def body
     val ctxWithParams = dcalDef.params.foldLeft(ctx)( (_ctx, param) =>
       _ctx.withNameInfo(param, NameInfo.Local)
     )
     analyzeBlock(dcalDef.body)(using ctxWithParams)
   }
 
-  private def analyzeImports(dcalModuleName: String, dcalImportNames: List[String]): DCalErrors = {
-    // Checks import names do not clash with module name and one another
-    val redeclared = (dcalModuleName :: dcalImportNames).groupBy(identity).collect {
-      case (redeclaredImportName, _ :: _ :: _) => redeclaredImportName
-    }.toList
+  private def analyzeImports(dcalModuleName: String, dcalImportNames: List[String])(using Context): Either[DCalErrors, Map[List[String], Set[String]]] = {
+    val redeclared = findRedeclaredNames(dcalImportNames)
 
-    // Checks that file matching import name exists in the file system.
-    val notFound = dcalImportNames.collect {
-      case moduleName if !redeclared.contains(moduleName) && !os.exists(specDir / moduleName) => moduleName
-    }
-
-    // Finds circular dependencies
-    val visited = scala.collection.mutable.Set(dcalModuleName)
-    val circular = ListBuffer.empty[(String, String)]
-
-    def findCircularDependency(moduleName: String, importName: String): Unit = {
-      if visited.contains(importName) then {
-        circular += ((moduleName, importName))
-      } else {
-        visited += importName
-        val importedModule = DCalParser(contents = os.read(specDir / importName), fileName = importName)
-        importedModule.imports.foreach { importedImportName => findCircularDependency(importName, importedImportName) }
+    if redeclared.isEmpty then {
+      val notFound = dcalImportNames.collect {
+        case moduleName if !os.exists(specDir / moduleName) => moduleName
       }
+
+      if notFound.isEmpty then {
+        def dfsImport(moduleNames: List[String], importName: String, visited: Set[String], moduleInfosOrErr: Either[CircularDependency, Map[List[String], Set[String]]]): Either[CircularDependency, Map[List[String], Set[String]]] = {
+          if visited(importName) then {
+            Left(CircularDependency(moduleNames))
+          } else {
+            moduleInfosOrErr match
+              case Left(_) => moduleInfosOrErr
+              case Right(_moduleInfos) =>
+                val importedModule = DCalParser(contents = os.read(specDir / importName), fileName = importName)
+                val newModule = moduleNames :+ importName
+                val newDefs = importedModule.definitions.map(_.name).toSet
+                val updatedModuleInfos = _moduleInfos + (newModule -> newDefs)
+                importedModule.imports.foldLeft(Right(updatedModuleInfos).withLeft[CircularDependency]) { (_defs, importedImportName) =>
+                  dfsImport(newModule, importedImportName, visited + importName, _defs)
+                }
+          }
+        }
+
+        dcalImportNames.foldLeft(
+          Right(Map.empty: Map[List[String], Set[String]]).withLeft[CircularDependency]
+        ) { (_moduleInfos, importName) =>
+          dfsImport(List(dcalModuleName), importName, Set(dcalModuleName), _moduleInfos)
+        } match
+          case Left(circularErr) => Left(DCalErrors(circularErr))
+          case Right(moduleInfos) => Right(moduleInfos)
+      } else {
+        Left(DCalErrors(notFound.map(ModuleNotFound)))
+      }
+    } else {
+      Left(DCalErrors(redeclared.map(RedeclaredName).toList))
     }
-
-    val redeclaredSet = redeclared.toSet
-    val notFoundSet = notFound.toSet
-    dcalImportNames.filter { importName =>
-      !redeclaredSet.contains(importName) && !notFoundSet.contains(importName)
-    }.foreach { importName => findCircularDependency(dcalModuleName, importName) }
-
-    DCalErrors.union(
-      List(
-        DCalErrors(redeclared.map(RedeclaredName)),
-        DCalErrors(notFound.map(ModuleNotFound)),
-        DCalErrors(
-          circular.toList.map{ case (m, i) => CircularDependency(m, i) }
-        )
-      )
-    )
   }
 
   private def analyzeModule(dcalModule: DCalAST.Module)(using Context): DCalErrors = {
-    // Adds module name to context before analyzing imports, so that analyzeImport can check for module name clashes
-    val ctxWithModule = ctx.withNameInfo(dcalModule.name, NameInfo.Module)
-
-    val importErrs = analyzeImports(dcalModule.name, dcalModule.imports)
-    val ctxWithImports =
-      dcalModule.imports.foldLeft(ctxWithModule)( (_ctx, importName) =>
-        val importedModule = DCalParser(contents = os.read(specDir / importName), fileName = importName)
-        val defNames = importedModule.definitions.map(_.name).toSet
-        _ctx.withNameInfo(importName, NameInfo.Module).withImport(importName, defNames)
-      )
-
-    // Checks def names do not clash
-    // Adds def names to context before analyzing body, because one def can refer to another
-    val (ctxWithDefs, defNameErrs) =
-    dcalModule.definitions.foldLeft((ctxWithImports, DCalErrors(Nil)))( (acc, aDef) =>
-      acc._1.nameInfoOf.get(aDef.name) match
-        case None => (
-          acc._1.withNameInfo(aDef.name, NameInfo.Definition),
-          acc._2
-        )
-        case Some(_) => (
-          acc._1,
-          DCalErrors.union(acc._2, DCalErrors(RedeclaredName(aDef.name)))
-        )
-    )
-    val bodyErrs = dcalModule.definitions.map { aDef => analyzeDefinition(aDef)(using ctxWithDefs) }
-
-    // Returns the union of all errors from imports and body
-    DCalErrors.union(importErrs::defNameErrs::bodyErrs)
+    ctx.withNameInfo(dcalModule.name, NameInfo.Module) {
+      analyzeImports(dcalModule.name, dcalModule.imports) match {
+        case Left(importErrs) => importErrs
+        case Right(moduleInfos) =>
+          ctx.withModuleInfos(moduleInfos) {
+            val redeclaredDefNames = findRedeclaredNames(dcalModule.definitions.map(_.name)).toList
+            if redeclaredDefNames.isEmpty then {
+              val ctxWithDefs =
+                dcalModule.definitions.foldLeft(ctx)((_ctx, aDef) =>
+                  _ctx.withNameInfo(aDef.name, NameInfo.Definition)
+                )
+              DCalErrors.union(dcalModule.definitions.map { aDef => analyzeDefinition(aDef)(using ctxWithDefs) })
+            } else {
+              DCalErrors(redeclaredDefNames.map(RedeclaredName))
+            }
+          }
+      }
+    }
   }
 
   def apply(contents: String, fileName: String): DCalErrors =
     val dcalModule = DCalParser(contents = contents, fileName = fileName)
-    analyzeModule(dcalModule)(using Context(
-      nameInfoOf = Map[String, NameInfo](
-        "str" -> NameInfo.State,
-        "x" -> NameInfo.State,
-        "y" -> NameInfo.State,
-        "i" -> NameInfo.State,
-        "set" -> NameInfo.State
-      ))
-    )
+    analyzeModule(dcalModule)(using Context(nameInfoOf = Map[String, NameInfo](
+      "str" -> NameInfo.State,
+      "x" -> NameInfo.State,
+      "y" -> NameInfo.State,
+      "i" -> NameInfo.State,
+      "set" -> NameInfo.State
+    )))
 }

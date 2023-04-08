@@ -190,18 +190,18 @@ object DCalParser {
     }
 
     lazy val aCall: Parser[DCalAST.aCall] = {
-      val importedName = name ~ elem(DCalTokenData.Dot) ~ name
+      val importedName = delimited(name, elem(DCalTokenData.Dot))
       val args = elem(DCalTokenData.OpenParenthesis) ~> opt(delimited(expression)) <~ elem(DCalTokenData.CloseParenthesis)
 
       (name ~ args).map {
         case defName ~ args => DCalAST.aCall(
-          moduleNameOpt = None,
+          moduleName = Nil,
           definitionName = defName,
           args = args.getOrElse(Nil)
         )
       } | (importedName ~ args).map {
-        case moduleName ~ _ ~ defName ~ args => DCalAST.aCall(
-          moduleNameOpt = Some(moduleName), definitionName = defName, args = args.getOrElse(Nil)
+        case (moduleNames :+ defName) ~ args => DCalAST.aCall(
+          moduleName = moduleNames, definitionName = defName, args = args.getOrElse(Nil)
         )
       }
     }
