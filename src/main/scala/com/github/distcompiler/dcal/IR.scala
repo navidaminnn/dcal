@@ -15,6 +15,8 @@ object IR {
   node ::=
   | <name>
   | <let>
+  | <map on set>
+  | <filter on set>
   | <uninterpreted>
   */
   enum Node {

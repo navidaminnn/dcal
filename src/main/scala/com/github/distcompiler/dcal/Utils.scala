@@ -52,7 +52,7 @@ object Utils {
       }
 
     /**
-     * Converts a list of IR.Node representing TLA+ code to a String of TLA+ code
+     * Converts a list of IR nodes representing TLA+ code to an char iterator of TLA+ code
      */
     def stringifyNodes(nodes: List[IR.Node]): Iterator[Char] =
       nodes.iterator.flatMap(stringifyNode)

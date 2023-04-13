@@ -232,22 +232,4 @@ class DCalCompilerTest extends AnyFunSuite {
         )
       }
   }
-
-  List(
-    // Place failing tests here
-  ).foreach {
-    case TLCTest(testDescription, module, defName, params, initialStates, expectedStates) =>
-      ignore(testDescription) {
-        val compiledModule = IRBuilder(contents = module, fileName = "<filename>")
-        val stringifiedModule = IRUtils.stringifyModule(compiledModule).mkString
-        executeTLA(
-          testModule = stringifiedModule,
-          testModuleName = compiledModule.name,
-          testDefName = defName,
-          testParams = params,
-          initialStates = initialStates,
-          expectedStates = expectedStates
-        )
-      }
-  }
 }
