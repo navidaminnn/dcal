@@ -76,10 +76,10 @@ object DCalScopeAnalyzer {
         case None => DCalErrors(NameNotFound(name))
       }
       case Expression.Set(members) => DCalErrors.union(members.map(analyzeExpression))
-      case Expression.ExpressionUnOp(_, _) => ???
-      case Expression.ExpressionBinOp(lhs, _, rhs) => DCalErrors.union(analyzeExpression(lhs), analyzeExpression(rhs))
-      case Expression.ExpressionRelOp(lhs, _, rhs) => DCalErrors.union(analyzeExpression(lhs), analyzeExpression(rhs))
-      case Expression.ExpressionLogicOp(lhs, _, rhs) => DCalErrors.union(analyzeExpression(lhs), analyzeExpression(rhs))
+      case Expression.ExpressionUnOp(_, expr) => analyzeExpression(expr)
+      case Expression.ExpressionBinOp(lhs, _, rhs) => analyzeExpression(lhs) || analyzeExpression(rhs)
+      case Expression.ExpressionRelOp(lhs, _, rhs) => analyzeExpression(lhs) || analyzeExpression(rhs)
+      case Expression.ExpressionLogicOp(lhs, _, rhs) => analyzeExpression(lhs) || analyzeExpression(rhs)
       case Expression.BracketedExpression(expression) => analyzeExpression(expression)
   }
 
@@ -93,19 +93,17 @@ object DCalScopeAnalyzer {
           case Some(_) => DCalErrors(ReassignmentToImmutable(assignPair.name))
           case None => DCalErrors(NameNotFound(assignPair.name))
         val expressionErrs = analyzeExpression(assignPair.expression)
-        DCalErrors.union(nameErrs, expressionErrs)
+        nameErrs || expressionErrs
       })
 
       case Statement.Let(name, _, binding) =>
         val nameErrs = ctx.nameInfoOf.get(name) match
           case Some(_) => DCalErrors(RedeclaredName(name))
           case None => DCalErrors(Nil)
-
         val bindingErrs = binding match
           case Left(call) => analyzeCall(call)
           case Right(expr) => analyzeExpression(expr)
-
-        DCalErrors.union(nameErrs, bindingErrs)
+        nameErrs || bindingErrs
 
       case Statement.Var(name, expressionOpt) =>
         val nameErrs = ctx.nameInfoOf.get(name) match
@@ -114,10 +112,10 @@ object DCalScopeAnalyzer {
         val exprErrs = expressionOpt.map {
           case (_, binding) => analyzeExpression(binding)
         }.getOrElse(DCalErrors(Nil))
-        DCalErrors.union(nameErrs, exprErrs)
+        nameErrs || exprErrs
 
       case Statement.IfThenElse(predicate, thenBlock, elseBlock) =>
-        DCalErrors.union(List(analyzeExpression(predicate), analyzeBlock(thenBlock), analyzeBlock(elseBlock)))
+        analyzeExpression(predicate) || analyzeBlock(thenBlock) || analyzeBlock(elseBlock)
 
       case Statement.Call(call) => analyzeCall(call)
   }
@@ -130,12 +128,12 @@ object DCalScopeAnalyzer {
           val sErrs = analyzeStatement(s)
           s match
             case Statement.Let(name, _, _) => ctx.withNameInfo(name, NameInfo.Local){
-              analyzeStatements(ss, DCalErrors.union(errs, sErrs))
+              analyzeStatements(ss, errs || sErrs)
             }
             case Statement.Var(name, _) => ctx.withNameInfo(name, NameInfo.State){
-              analyzeStatements(ss, DCalErrors.union(errs, sErrs))
+              analyzeStatements(ss, errs || sErrs)
             }
-            case _ => analyzeStatements(ss, DCalErrors.union(errs, sErrs))
+            case _ => analyzeStatements(ss, errs || sErrs)
     }
     analyzeStatements(dcalBlock.statements, DCalErrors(Nil))
   }
