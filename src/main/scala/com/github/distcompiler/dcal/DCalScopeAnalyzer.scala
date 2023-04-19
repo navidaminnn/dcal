@@ -2,6 +2,7 @@ package com.github.distcompiler.dcal
 
 import com.github.distcompiler.dcal.DCalAST.{Expression, Statement, aCall}
 
+import scala.annotation.tailrec
 import scala.util.Either
 
 /**
@@ -151,6 +152,7 @@ object DCalScopeAnalyzer {
    * TODO: When recursive definition (defrec) is supported, exclude them from this circular definition check.
    */
   private def analyzeDefinitionDependencies(dcalDefs: List[DCalAST.Definition])(using Context): Either[DCalErrors, List[String]] = {
+    @tailrec
     def getDependencies(stmts: List[DCalAST.Statement], deps: Iterator[String]): Iterator[String] = {
       stmts match
         case Nil => deps
@@ -169,7 +171,7 @@ object DCalScopeAnalyzer {
         depsOf + (_def.name -> getDependencies(_def.body.statements, Iterator[String]()).toList)
       }
 
-    Utils.TopologicalSort(dependenciesOf).sort match {
+    Utils.TopologicalSort.sort(dependenciesOf) match {
       case Left(err) => Left(DCalErrors(err))
       case Right(orderedDefs) => Right(orderedDefs)
     }
