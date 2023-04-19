@@ -51,6 +51,13 @@ final case class ReassignmentToImmutable(name: String) extends DCalError {
 /**
  * Thrown when two modules import each other, directly or indirectly.
  */
-final case class CircularDependency(importChain: List[String]) extends DCalError {
-  val description = s"Circular dependency detected through ${importChain.mkString("->")}: <line number>"
+final case class CircularImport(importChain: List[String]) extends DCalError {
+  val description = s"Circular import ${importChain.mkString("->")} detected: <line number>"
+}
+
+/**
+ * Thrown when two definitions, declared with def instead of defrec, call each other, directly or indirectly.
+ */
+final case class CircularDefinition(recursiveDef: String) extends DCalError {
+  val description = s"Circular definition $recursiveDef detected: <line number>"
 }

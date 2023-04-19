@@ -6,12 +6,14 @@ import scala.util.Either
 
 /**
  * Performs scope analysis on a DCalAST.Module against the following rules:
- * - Names must be in scope before they are referenced.
+ * - Names must be declared before they are referenced, except for non-recursive definitions.
+ * - Recursive definitions must be declared with `defrec` instead of def`.
  * - A name must not be declared more than once in a scope, even if the redeclaration is done for a different name type.
+ * - Imports must be acyclic.
  *
  * There are other rules, for example typechecking rules, reserved for another pass to handle. Namely:
  * - The bindings of all let and var statements must type-check. This means that in a let/var statement, if the
- *   assignment operator is \`\in\`, then the binding must be a set.
+ *   assignment operator is `in`, then the binding must be a set.
  * - Operands in binary, relative, and logical operations must be of the same type.
  */
 object DCalScopeAnalyzer {
@@ -145,6 +147,51 @@ object DCalScopeAnalyzer {
     analyzeBlock(dcalDef.body)(using ctxWithParams)
   }
 
+  /**
+   * Assumes all definitions have been analyzed so that input definitions are free of all scoping errors, except for
+   * circular call dependencies. Most importantly, definition names are free of redeclaration and not found errors.
+   * TODO: When recursive definition (defrec) is supported, exclude them from this circular definition check.
+   */
+  private def analyzeDefinitionDependencies(dcalDefs: List[DCalAST.Definition])(using Context): Either[DCalErrors, List[String]] = {
+    def getDependencies(stmts: List[DCalAST.Statement], deps: Iterator[String]): Iterator[String] = {
+      stmts match
+        case Nil => deps
+        case s :: ss => s match
+          case DCalAST.Statement.Call(DCalAST.aCall(Nil, defName, _)) =>
+            getDependencies(ss, deps ++ Iterator(defName))
+          case DCalAST.Statement.Let(_, _, Left(DCalAST.aCall(Nil, defName, _))) =>
+            getDependencies(ss, deps ++ Iterator(defName))
+          case DCalAST.Statement.IfThenElse(_, thenBlock, elseBlock) =>
+            getDependencies(thenBlock.statements ::: elseBlock.statements ::: ss, deps)
+          case _ => getDependencies(ss, deps)
+    }
+
+    val dependenciesOf: Map[String, List[String]] =
+      dcalDefs.foldLeft(Map[String, List[String]]()) { (depsOf, _def) =>
+        depsOf + (_def.name -> getDependencies(_def.body.statements, Iterator[String]()).toList)
+      }
+
+    Utils.TopologicalSort(dependenciesOf).sort match {
+      case Left(err) => Left(DCalErrors(err))
+      case Right(orderedDefs) => Right(orderedDefs)
+    }
+  }
+
+  private def analyseDefinitions(dcalDefs: List[DCalAST.Definition])(using Context): DCalErrors =
+    val ctxWithDefs =
+      dcalDefs.foldLeft(ctx)((_ctx, aDef) =>
+        _ctx.withNameInfo(aDef.name, NameInfo.Definition)
+      )
+    val defBodyErrs = DCalErrors.union(dcalDefs.map { aDef => analyzeDefinition(aDef)(using ctxWithDefs) })
+    if defBodyErrs.isEmpty then
+      analyzeDefinitionDependencies(dcalDefs) match {
+        case Left(defDependencyErr) => defDependencyErr
+        case Right(_) => DCalErrors(Nil)
+      }
+    else
+      defBodyErrs
+
+
   private def analyzeImports(dcalModuleName: String, dcalImportNames: List[String])(using Context): Either[DCalErrors, Map[List[String], Set[String]]] = {
     val redeclared = findRedeclaredNames(dcalImportNames)
 
@@ -154,9 +201,9 @@ object DCalScopeAnalyzer {
       }
 
       if notFound.isEmpty then {
-        def dfsImport(moduleNames: List[String], importName: String, visited: Set[String], moduleInfosOrErr: Either[CircularDependency, Map[List[String], Set[String]]]): Either[CircularDependency, Map[List[String], Set[String]]] = {
+        def dfsImport(moduleNames: List[String], importName: String, visited: Set[String], moduleInfosOrErr: Either[CircularImport, Map[List[String], Set[String]]]): Either[CircularImport, Map[List[String], Set[String]]] = {
           if visited(importName) then {
-            Left(CircularDependency(moduleNames))
+            Left(CircularImport(moduleNames))
           } else {
             moduleInfosOrErr match
               case Left(_) => moduleInfosOrErr
@@ -165,14 +212,14 @@ object DCalScopeAnalyzer {
                 val newModule = moduleNames :+ importName
                 val newDefs = importedModule.definitions.map(_.name).toSet
                 val updatedModuleInfos = _moduleInfos + (newModule -> newDefs)
-                importedModule.imports.foldLeft(Right(updatedModuleInfos).withLeft[CircularDependency]) { (_defs, importedImportName) =>
+                importedModule.imports.foldLeft(Right(updatedModuleInfos).withLeft[CircularImport]) { (_defs, importedImportName) =>
                   dfsImport(newModule, importedImportName, visited + importName, _defs)
                 }
           }
         }
 
         dcalImportNames.foldLeft(
-          Right(Map.empty: Map[List[String], Set[String]]).withLeft[CircularDependency]
+          Right(Map.empty: Map[List[String], Set[String]]).withLeft[CircularImport]
         ) { (_moduleInfos, importName) =>
           dfsImport(List(dcalModuleName), importName, Set(dcalModuleName), _moduleInfos)
         } match
@@ -193,15 +240,10 @@ object DCalScopeAnalyzer {
         case Right(moduleInfos) =>
           ctx.withModuleInfos(moduleInfos) {
             val redeclaredDefNames = findRedeclaredNames(dcalModule.definitions.map(_.name)).toList
-            if redeclaredDefNames.isEmpty then {
-              val ctxWithDefs =
-                dcalModule.definitions.foldLeft(ctx)((_ctx, aDef) =>
-                  _ctx.withNameInfo(aDef.name, NameInfo.Definition)
-                )
-              DCalErrors.union(dcalModule.definitions.map { aDef => analyzeDefinition(aDef)(using ctxWithDefs) })
-            } else {
+            if redeclaredDefNames.isEmpty then
+              analyseDefinitions(dcalModule.definitions)
+            else
               DCalErrors(redeclaredDefNames.map(RedeclaredName))
-            }
           }
       }
     }

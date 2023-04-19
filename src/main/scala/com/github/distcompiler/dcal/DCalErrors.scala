@@ -7,6 +7,8 @@ case class DCalErrors(errors: List[DCalError]) extends Exception {
 
   def ||(that: DCalErrors) =
     DCalErrors(this.errors ::: that.errors)
+
+  def isEmpty = errors.isEmpty
 }
 
 object DCalErrors extends Exception {

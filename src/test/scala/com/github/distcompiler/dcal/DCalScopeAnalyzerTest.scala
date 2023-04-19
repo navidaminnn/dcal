@@ -205,13 +205,21 @@ class DCalScopeAnalyzerTest extends AnyFunSuite {
       expectedScopeErrs = DCalErrors(NameNotFound("v"))
     ),
     TestCase(
-      description = "Procedure call, mutual reference",
+      description = "Procedure call, recursive",
+      dcalModule =
+        s"""$testModule
+           |def func1() { if x = 0 then {} else { func1(); } }
+           |""".stripMargin,
+      expectedScopeErrs = DCalErrors(CircularDefinition("func1"))
+    ),
+    TestCase(
+      description = "Procedure call, mutually recursive",
       dcalModule =
         s"""$testModule
            |def func1() { if x = 0 then {} else { func2(); } }
            |def func2() { x := x - 1; func1(); }
            |""".stripMargin,
-      expectedScopeErrs = DCalErrors(Nil)
+      expectedScopeErrs = DCalErrors(CircularDefinition("func1"))
     ),
     TestCase(
       description = "Import, happy path",
@@ -376,9 +384,9 @@ class DCalScopeAnalyzerTest extends AnyFunSuite {
   List(
     // Place tests that read from the file system here
     // Circular import
-    "TestModule5" -> DCalErrors(CircularDependency(List("TestModule5", "TestModule6"))),
+    "TestModule5" -> DCalErrors(CircularImport(List("TestModule5", "TestModule6"))),
     // Indirect circular import
-    "TestModule7".stripMargin -> DCalErrors(CircularDependency(List("TestModule7", "TestModule8", "TestModule9"))),
+    "TestModule7".stripMargin -> DCalErrors(CircularImport(List("TestModule7", "TestModule8", "TestModule9"))),
   ).foreach {
     case (input, expectedOutput) =>
       test(s"analyze scope file $input") {
