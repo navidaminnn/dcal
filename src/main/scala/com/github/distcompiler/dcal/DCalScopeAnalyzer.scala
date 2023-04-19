@@ -249,6 +249,7 @@ object DCalScopeAnalyzer {
 
   def apply(contents: String, fileName: String): DCalErrors =
     val dcalModule = DCalParser(contents = contents, fileName = fileName)
+    // FIXME: These context entries are for testing. Remove later (possibly when nested def is supported).
     analyzeModule(dcalModule)(using Context(nameInfoOf = Map[String, NameInfo](
       "str" -> NameInfo.State,
       "x" -> NameInfo.State,
