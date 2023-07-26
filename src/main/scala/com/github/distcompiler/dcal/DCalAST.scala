@@ -45,8 +45,8 @@ object DCalAST {
   set ::= `{` <expression>* `}`
 
   boolean ::=
-      | TRUE
-      | FALSE
+          | TRUE
+          | FALSE
 
   binop ::= `+` | `-`
 
