@@ -226,10 +226,10 @@ object DCalScopeAnalyzer {
           case Left(circularErr) => Left(DCalErrors(circularErr))
           case Right(moduleInfos) => Right(moduleInfos)
       } else {
-        Left(DCalErrors(notFound.map(ModuleNotFound)))
+        Left(DCalErrors(notFound.map(ModuleNotFound(_))))
       }
     } else {
-      Left(DCalErrors(redeclared.map(RedeclaredName).toList))
+      Left(DCalErrors(redeclared.map(RedeclaredName(_)).toList))
     }
   }
 
@@ -243,7 +243,7 @@ object DCalScopeAnalyzer {
             if redeclaredDefNames.isEmpty then
               analyseDefinitions(dcalModule.definitions)
             else
-              DCalErrors(redeclaredDefNames.map(RedeclaredName))
+              DCalErrors(redeclaredDefNames.map(RedeclaredName(_)))
           }
       }
     }
