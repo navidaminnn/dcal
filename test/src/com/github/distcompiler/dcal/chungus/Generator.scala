@@ -2,10 +2,13 @@ package test.com.github.distcompiler.dcal.chungus
 
 import scala.annotation.targetName
 
-sealed abstract class Generator[+T] { self =>
+sealed abstract class Generator[T] { self =>
   import Generator.*
 
   def apply(budget: Int): LazyList[Result[T]]
+
+  final def up[U >: T]: Generator[U] =
+    self.map(value => value)
 
   final def filter(fn: T => Boolean): Generator[T] =
     new Generator[T] {
@@ -107,7 +110,7 @@ object Generator {
   given sumGenerator[T](using mirror: deriving.Mirror.SumOf[T])(using partGens: Tuple.Map[mirror.MirroredElemTypes, Generator]): Generator[T] =
     partGens
       .productIterator
-      .foldLeft(none: Generator[T]) { (acc, gen) =>
+      .foldLeft(none.up: Generator[T]) { (acc, gen) =>
         acc | gen.asInstanceOf[Generator[T]]
       }
 
@@ -125,7 +128,7 @@ object Generator {
     iterable.iterator
       .map(one)
       .reduceOption(_ | _)
-      .getOrElse(none)
+      .getOrElse(none.up)
 
   def listOf[T](generator: Generator[T]): Generator[List[T]] =
     one(Nil)

@@ -294,14 +294,14 @@ object Parser {
       }
     }
 
-    given capturePrePositionSourceLocated[Elem <: SourceLocated, Input](using inputOps: InputOps[Elem, Input]): CapturePrePosition[Elem, Input] with {
+    given capturePrePositionSourceLocated[Elem, Input](using inputOps: InputOps[Ps[Elem], Input]): CapturePrePosition[Ps[Elem], Input] with {
       override def capture(input: Input): SourceLocation =
         inputOps.read(input)
           .map(_._1.sourceLocation)
           .getOrElse(inputOps.getPrevSourceLocation(input))
     }
 
-    given capturePrePositionEitherSourceLocated[Error, Elem <: SourceLocated, Input](using inputOps: InputOps[Either[Error, Elem], Input]): CapturePrePosition[Either[Error, Elem], Input] with {
+    given capturePrePositionEitherSourceLocated[Error, Elem, Input](using inputOps: InputOps[Either[Error, Ps[Elem]], Input]): CapturePrePosition[Either[Error, Ps[Elem]], Input] with {
       override def capture(input: Input): SourceLocation =
         inputOps.read(input)
           .map(_._1)

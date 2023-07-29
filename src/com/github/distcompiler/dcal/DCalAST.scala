@@ -1,41 +1,40 @@
 package com.github.distcompiler.dcal
 
-import parsing.{SourceLocated, SourceLocation}
-import scala.quoted.Expr
+import parsing.{Ps, SourceLocation}
 
 object DCalAST {
-  final case class Module(name: String, imports: List[String], definitions: List[Definition])(using SourceLocation) extends SourceLocated
-  final case class Definition(name: String, params: List[String], body: Statement.Block)(using SourceLocation) extends SourceLocated
+  final case class Module(name: Ps[String], imports: List[Ps[String]], definitions: List[Ps[Definition]])
+  final case class Definition(name: Ps[String], params: List[Ps[String]], body: Ps[Statement.Block])
 
-  enum Path(using SourceLocation) extends SourceLocated {
-    case Name(name: String)(using SourceLocation)
-    case Project(prefix: Path, name: String)(using SourceLocation)
-    case Index(prefix: Path, index: Expression)(using SourceLocation)
+  enum Path {
+    case Name(name: String)
+    case Project(prefix: Ps[Path], name: String)
+    case Index(prefix: Ps[Path], index: Ps[Expression])
   }
 
-  enum Binding(using SourceLocation) extends SourceLocated {
-    case Value(expr: Expression)(using SourceLocation)
-    case Selection(binding: Binding)(using SourceLocation)
-    case Call(path: Path, arguments: List[Expression])(using SourceLocation)
+  enum Binding {
+    case Value(expr: Ps[Expression])
+    case Selection(binding: Ps[Binding])
+    case Call(path: Ps[Path], arguments: List[Ps[Expression]])
   }
 
-  enum Statement(using SourceLocation) extends SourceLocated {
-    case Await(expression: Expression)(using SourceLocation)
-    case Assignment(pairs: List[AssignPair])(using SourceLocation)
-    case Let(name: String, binding: Binding)(using SourceLocation)
-    case Var(name: String, binding: Binding)(using SourceLocation)
-    case Block(statements: List[Statement])(using SourceLocation)
-    case If(predicate: Expression, thenBlock: Block, elseBlockOpt: Option[Block])(using SourceLocation)
-    case Call(call: Binding.Call)(using SourceLocation)
+  enum Statement {
+    case Await(expression: Ps[Expression])
+    case Assignment(pairs: List[Ps[AssignPair]])
+    case Let(name: Ps[String], binding: Ps[Binding])
+    case Var(name: Ps[String], binding: Ps[Binding])
+    case Block(statements: List[Ps[Statement]])
+    case If(predicate: Ps[Expression], thenBlock: Ps[Block], elseBlockOpt: Option[Ps[Block]])
+    case Call(call: Ps[Binding.Call])
   }
 
-  final case class AssignPair(path: Path, rhs: Expression)(using SourceLocation) extends SourceLocated
+  final case class AssignPair(path: Ps[Path], rhs: Ps[Expression])
 
-  enum Expression(using SourceLocation) extends SourceLocated {
-    case PathRef(path: Path)(using SourceLocation)
-    case IntLiteral(value: BigInt)(using SourceLocation)
-    case StringLiteral(value: String)(using SourceLocation)
-    case OpCall(path: Path, arguments: List[Expression])(using SourceLocation)
-    case SetConstructor(members: List[Expression])(using SourceLocation)
+  enum Expression {
+    case PathRef(path: Ps[Path])
+    case IntLiteral(value: BigInt)
+    case StringLiteral(value: String)
+    case OpCall(path: Ps[Path], arguments: List[Ps[Expression]])
+    case SetConstructor(members: List[Ps[Expression]])
   }
 }

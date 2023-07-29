@@ -4,30 +4,32 @@ import utest.*
 import chungus.*
 
 import com.github.distcompiler.dcal.DCalTokenizer
-import com.github.distcompiler.dcal.parsing.SourceLocation
+import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
 
 object DCalTokenizerTests extends TestSuite {
   import DCalTokenizer.*
   import Generator.*
+
+  private given dummyLoc: SourceLocation = SourceLocation(path = "<dummy>", offsetStart = -1, offsetEnd = -1)
   
   val tokenGen =
     locally {
-      given dummyLoc: SourceLocation = SourceLocation(path = "<dummy>", offsetStart = -1, offsetEnd = -1)
-
-      val anyInt: Generator[BigInt] = one(BigInt(0)) | one(BigInt(10)) | one(BigInt(123456789)) 
+      given anyInt: Generator[BigInt] = one(BigInt(0)) | one(BigInt(10)) | one(BigInt(123456789)) 
       val anyNameChar: Generator[Char] = (chooseAny('0' to '9') | chooseAny("_abcXYZ"))
       val anyNameChars: Generator[String] = listOf(anyNameChar).map(_.mkString)
       val anyStringChar: Generator[Char] = anyNameChar | chooseAny("\"\n\t\\")
       val anyStringChars: Generator[String] = listOf(anyStringChar).map(_.mkString)
-      val anyToken: Generator[Token] =
-        anyOf[Keyword].map(Token.Keyword(_))
-        | anyOf[Punctuation].map(Token.Punctuation(_))
-        | anyOf[Operator].map(Token.Operator(_))
-        | anyInt.map(Token.IntLiteral(_))
-        | anyNameChars.filter(_.nonEmpty).filter(_.exists(Character.isAlphabetic)).map(Token.Name(_))
-        | anyStringChars.map(Token.StringLiteral(_))
 
-      anyToken
+      given Generator[Token.Name] =
+        anyNameChars
+          .filter(_.nonEmpty)
+          .filter(_.exists(Character.isAlphabetic))
+          .map(Token.Name(_))
+
+      given Generator[Token.StringLiteral] =
+        anyStringChars.map(Token.StringLiteral(_))
+
+      anyOf[Token]
     }
 
   enum Whitespace {
@@ -78,12 +80,13 @@ object DCalTokenizerTests extends TestSuite {
 
       listOf(tokenGen | anyOf[Whitespace])
         .filter(adjacentPairRules)
-        .forall(budget = 9) { tokensOrSpace =>
+        .forall(budget = 11) { tokensOrSpace =>
           val strForm = renderSeq(tokensOrSpace)
           try {
             val reparsedTokens = DCalTokenizer(strForm, path = "<dummy>").toList
             val expectedtokens = tokensOrSpace
               .collect { case tok: Token => tok }
+              .map(Ps(_))
               .map(Right(_))
 
             
