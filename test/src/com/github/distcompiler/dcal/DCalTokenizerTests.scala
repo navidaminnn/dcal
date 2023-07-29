@@ -15,7 +15,7 @@ object DCalTokenizerTests extends TestSuite {
       given dummyLoc: SourceLocation = SourceLocation(path = "<dummy>", offsetStart = -1, offsetEnd = -1)
 
       val anyInt: Generator[BigInt] = one(BigInt(0)) | one(BigInt(10)) | one(BigInt(123456789)) 
-      val anyNameChar: Generator[Char] = (chooseAny('0' to '9') | chooseAny("abc") | chooseAny("XYZ"))
+      val anyNameChar: Generator[Char] = (chooseAny('0' to '9') | chooseAny("_abcXYZ"))
       val anyNameChars: Generator[String] = listOf(anyNameChar).map(_.mkString)
       val anyStringChar: Generator[Char] = anyNameChar | chooseAny("\"\n\t\\")
       val anyStringChars: Generator[String] = listOf(anyStringChar).map(_.mkString)
