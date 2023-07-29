@@ -1,17 +1,23 @@
 package test.com.github.distcompiler.dcal.chungus
 
 import scala.annotation.targetName
-import cats.Eval
-import cats.data.Chain
 
 sealed abstract class Generator[+T] { self =>
   import Generator.*
 
-  def apply(budget: Int): Chain[Result[T]]
+  def apply(budget: Int): LazyList[Result[T]]
+
+  final def filter(fn: T => Boolean): Generator[T] =
+    new Generator[T] {
+      override def apply(budget: Int): LazyList[Result[T]] =
+        self(budget).filter {
+          case Result(value, _) => fn(value)
+        }
+    }
 
   final def map[U](fn: T => U): Generator[U] =
     new Generator[U] {
-      override def apply(budget: Int): Chain[Result[U]] =
+      override def apply(budget: Int): LazyList[Result[U]] =
         self.apply(budget).map {
           case Result(value, remainder) =>
             Result(fn(value), remainder)
@@ -20,7 +26,7 @@ sealed abstract class Generator[+T] { self =>
 
   final def flatMap[U](fn: T => Generator[U]): Generator[U] =
     new Generator[U] {
-      override def apply(budget: Int): Chain[Result[U]] =
+      override def apply(budget: Int): LazyList[Result[U]] =
         self.apply(budget).flatMap {
           case Result(value, remainder) =>
             fn(value).apply(remainder)
@@ -30,43 +36,55 @@ sealed abstract class Generator[+T] { self =>
   @targetName("or")
   final def |[U](other: Generator[U]): Generator[T | U] =
     new Generator[T | U] {
-      override def apply(budget: Int): Chain[Result[T | U]] = {
+      override def apply(budget: Int): LazyList[Result[T | U]] = {
         require(budget >= 0)
         if(budget == 0) {
-          Chain.nil
+          LazyList.empty
         } else {
           self.apply(budget) ++ other.apply(budget)
         }
       }
     }
 
-  final def forall(budget: Int)(fn: T => Any): Unit =
-    self.apply(budget).iterator.foreach {
-      case Result(value, _) => fn(value)
+  final def forall(budget: Int)(fn: T => Any): Unit = {
+    var count = 0
+    try {
+      self.apply(budget).iterator.foreach {
+        case Result(value, _) =>
+          count += 1
+          fn(value)
+      }
+      assert(count != 0)
+      println(s"finished checking $count combinations with a budget of $budget units")
+    } catch {
+      case err =>
+        println(s"found an error after $count combinations with a budget of $budget units")
+        throw err
     }
+  }
 }
 
 object Generator {
   final case class Result[+T](value: T, remainder: Int)
 
   object none extends Generator[Nothing] {
-    override def apply(budget: Int): Chain[Result[Nothing]] =
-      Chain.nil
+    override def apply(budget: Int): LazyList[Result[Nothing]] =
+      LazyList.empty
   }
 
   object unit extends Generator[Unit] {
-    override def apply(budget: Int): Chain[Result[Unit]] =
-      Chain.one(Result((), budget))
+    override def apply(budget: Int): LazyList[Result[Unit]] =
+      LazyList(Result((), budget))
   }
 
   def one[T](value: T): Generator[T] =
     new Generator[T] {
-      override def apply(budget: Int): Chain[Result[T]] = {
+      override def apply(budget: Int): LazyList[Result[T]] = {
         require(budget >= 0)
         if(budget == 0) {
-          Chain.nil
+          LazyList.empty
         } else {
-          Chain.one(Result(value, budget - 1))
+          LazyList(Result(value, budget - 1))
         }
       }
     }
@@ -97,11 +115,17 @@ object Generator {
 
   def costOne[T](generator: Generator[T]): Generator[T] =
     new Generator[T] {
-      override def apply(budget: Int): Chain[Result[T]] = {
+      override def apply(budget: Int): LazyList[Result[T]] = {
         require(budget >= 0)
         generator.apply(math.max(0, budget - 1))
       }
     }
+
+  def chooseAny[T](iterable: Iterable[T]): Generator[T] =
+    iterable.iterator
+      .map(one)
+      .reduceOption(_ | _)
+      .getOrElse(none)
 
   def listOf[T](generator: Generator[T]): Generator[List[T]] =
     one(Nil)

@@ -3,18 +3,37 @@ package com.github.distcompiler.dcal.parsing
 import scala.annotation.targetName
 import cats.Eval
 import cats.data.Chain
+import cats.Now
+import cats.Later
+import cats.Always
+
+// import sourcecode.Enclosing
+
+// final case class Eval[+T](value: T) {
+//   def map[U](fn: T => U)(using enc: Enclosing): Eval[U] = {
+//     println(s"in ${enc.value}")
+//     Eval(fn(value))
+//   }
+//   def flatMap[U](fn: T => Eval[U])(using enc: Enclosing): Eval[U] = {
+//     println(s"in ${enc.value}")
+//     fn(value)
+//   }
+// }
+
+// object Eval {
+//   def now[T](value: T): Eval[T] = Eval(value)
+// }
 
 abstract class Parser[Elem, Input, Error, +T](using inputOps: InputOps[Elem, Input])(using errorOps: ErrorOps[Elem, Input, Error])(using ops: Parser.Ops[Elem, Input, Error]) { self =>
   import Parser.*
   import ops.*
 
-  def apply(prevResult: R[?], input: Input): Eval[R[T]]
+  def apply(input: Input): Eval[R[T]]
 
   final def parse(input: Input): Either[Error, (T, Input)] =
-    self(Result.Trivial((), input), input).value match {
-      case Result.Trivial(value, nextInput) => Right((value, nextInput))
-      case Result.Progress(value, nextInput) => Right((value, nextInput))
-      case Result.Backtrack(error) => Left(error)
+    self(input).value match {
+      case Result.Ok(value, nextInput, _, _) => Right((value, nextInput))
+      case Result.Backtrack(error, _) => Left(error)
       case Result.Fatal(error) => Left(error)
     }    
 
@@ -39,33 +58,47 @@ abstract class Parser[Elem, Input, Error, +T](using inputOps: InputOps[Elem, Inp
   final lazy val right: P[Right[Nothing, T]] = self.map(Right(_))
 
   final lazy val assertProgress: P[T] =
-    P { (prevResult, input) =>
-      self(prevResult, input).map {
-        case Result.Trivial(_, _) =>
+    P { input =>
+      self(input).map {
+        case Result.Ok(_, _, false, _) =>
           throw AssertionError("Lack of progress detected! This would mean something like rep() is spinning in place.")
         case otherwise => otherwise
       }
     }
 
   final lazy val peek: P[T] =
-    P { (prevResult, input) =>
-      self(prevResult, input).map {
-        case Result.Progress(value, nextInput) => Result.Trivial(value, nextInput)
+    P { input =>
+      self(input).map {
+        case Result.Ok(value, nextInput, _, backtrackedOpt) =>
+          Result.Ok(value, nextInput, false, backtrackedOpt)
         case otherwise => otherwise
       }
     }
 
   final def flatMap[U](fn: T => P[U]): P[U] =
-    P { (prevResult, input) =>
-      self(prevResult, input).flatMap {
-        case Result.Trivial(value, nextInput) => fn(value)(prevResult, nextInput)
-        case newPrevResult @ Result.Progress(value, nextInput) =>
-          fn(value)(newPrevResult, nextInput)
-        case Result.Backtrack(error) =>
-          prevResult match {
-            case Result.Progress(_, _) => Eval.now(Result.Fatal(error))
-            case _ => Eval.now(Result.Backtrack(error))
+    P { input =>
+      self(input).flatMap {
+        case Result.Ok(value, nextInput, madeProgress1, backtrackedOpt1) =>
+          fn(value)(nextInput).map {
+            case Result.Ok(value, nextInput, madeProgress2, backtrackedOpt2) =>
+              val madeProgress = madeProgress1 || madeProgress2
+              Result.Ok(value, nextInput,
+                madeProgress = madeProgress,
+                backtrackedOpt = if(madeProgress2) {
+                  None
+                } else {
+                  (backtrackedOpt1.toList ++ backtrackedOpt2.toList)
+                    .reduceOption(errorOps.combine)
+                })
+            case Result.Backtrack(error, floating) if madeProgress1 =>
+              if(floating) {
+                Result.Backtrack(error, false)
+              } else {
+                Result.Fatal(error)
+              }
+            case otherwise => otherwise
           }
+        case Result.Backtrack(error, floating) => Eval.now(Result.Backtrack(error, floating))
         case Result.Fatal(error) => Eval.now(Result.Fatal(error))
       }
     }
@@ -87,26 +120,17 @@ abstract class Parser[Elem, Input, Error, +T](using inputOps: InputOps[Elem, Inp
   @targetName("or")
   final def |[U](other: =>P[U]): P[T | U] = {
     lazy val otherLazy = other
-    P { (prevResult, input) =>
-      // pass a trivial here because we are in a disjunction.
-      // we'll stitch backtracking info back on if it matters
-      // each disjunction should believe it has a clean slate, or else parsing more than one or two tokens will always fail
-      self(Result.Trivial((), input), input).flatMap {
-        case Result.Trivial(value, nextInput) =>
-          Eval.now(Result.Trivial(value, nextInput))
-        case Result.Progress(value, nextInput) =>
-          Eval.now(Result.Progress(value, nextInput))
-        case Result.Backtrack(error) =>
-          val btError =
-            prevResult match {
-              case Result.Backtrack(prevError) =>
-                errorOps.combine(prevError, error)
-              case Result.Fatal(prevFatalError) =>
-                throw AssertionError(s"We should never be backtracking from a fatal error! (err: $prevFatalError)")
-              case _ => error
-            }
-
-          otherLazy(Result.Backtrack(btError), input)
+    P { input =>
+      self(input).flatMap {
+        case Result.Ok(value, nextInput, madeProgress, backtrackedOpt) =>
+          Eval.now(Result.Ok(value, nextInput, madeProgress, backtrackedOpt))
+        case Result.Backtrack(error, floating) =>
+          otherLazy(input).map {
+            case Result.Ok(value, nextInput, madeProgress, backtrackedOpt) =>
+              Result.Ok(value, nextInput, madeProgress, (backtrackedOpt.toList ++ List(error)).reduceOption(errorOps.combine))
+            case Result.Backtrack(error2, floating2) => Result.Backtrack(errorOps.combine(error, error2), floating2)
+            case otherwise => otherwise
+          }
         case Result.Fatal(error) => Eval.now(Result.Fatal(error))
       }
     }
@@ -151,9 +175,8 @@ abstract class Parser[Elem, Input, Error, +T](using inputOps: InputOps[Elem, Inp
 
 object Parser {
   enum Result[Input, Error, +T] {
-    case Trivial(value: T, nextInput: Input)
-    case Progress(value: T, nextInput: Input)
-    case Backtrack(error: Error)
+    case Ok(value: T, nextInput: Input, madeProgress: Boolean, backtrackedOpt: Option[Error])
+    case Backtrack(error: Error, floating: Boolean)
     case Fatal(error: Error)
   }
 
@@ -169,8 +192,8 @@ object Parser {
     import Parser.Result
     type P[T] = Parser[Elem, Input, Error, T]
     object P {
-      def apply[T](fn: (R[?], Input) => Eval[R[T]]): P[T] = new Parser[Elem, Input, Error, T] {
-        override def apply(prevResult: R[?], input: Input): Eval[R[T]] = fn(prevResult, input)
+      def apply[T](fn: Input => Eval[R[T]]): P[T] = new Parser[Elem, Input, Error, T] {
+        override def apply(input: Input): Eval[R[T]] = fn(input)
       }
     }
     type R[T] = Parser.Result[Input, Error, T]
@@ -178,32 +201,48 @@ object Parser {
     export Parser.~
 
     def trivial[T](value: T): P[T] =
-      P { (_, input) => Eval.now(Result.Trivial(value, input)) }
+      P { input => Eval.now(Result.Ok(value, input, false, None)) }
 
     val eof: P[Unit] =
-      P { (_, input) =>
+      P { input =>
         inputOps.read(input) match {
-          case None => Eval.now(Result.Trivial((), input))
+          case None => Eval.now(Result.Ok((), input, false, None))
           case Some((actualElem, _)) =>
-            Eval.now(Result.Backtrack(errorOps.expectedEOF(input = input, actualElem = actualElem)))
+            Eval.now(Result.Backtrack(errorOps.expectedEOF(input = input, actualElem = actualElem), false))
         }
       }
 
     val input: P[Input] =
-      P { (_, input) => Eval.now(Result.Trivial(input, input)) }
+      P { input => Eval.now(Result.Ok(input, input, false, None)) }
 
     val anyElem: P[Elem] =
-      P { (_, input) =>
+      P { input =>
         inputOps.read(input) match {
           case None =>
-            Eval.now(Result.Backtrack(errorOps.unexpectedEOF(input)))
+            Eval.now(Result.Backtrack(errorOps.unexpectedEOF(input), false))
           case Some((elem, nextInput)) =>
-            Eval.now(Result.Progress(elem, nextInput))
+            Eval.now(Result.Ok(elem, nextInput, true, None))
+        }
+      }
+
+    def log[T](name: String)(parser: P[T]): P[T] =
+      P { input =>
+        println(s"[$name] entering")
+        parser(input).map {
+          case res @ Result.Ok(value, nextInput, madeProgress, backtrackedOpt) =>
+            println(s"[$name] parsed $value, madeProgress=$madeProgress and backtrackedOpt=$backtrackedOpt")
+            res
+          case res @ Result.Backtrack(error, floating) =>
+            println(s"[$name] backtrack $error, floating=$floating")
+            res
+          case res @ Result.Fatal(error) =>
+            println(s"[$name] fatal $error")
+            res
         }
       }
 
     def backtrack[T](error: Error): P[T] =
-      P { (_ , _) => Eval.now(Result.Backtrack(error)) }
+      P { _ => Eval.now(Result.Backtrack(error, true)) }
 
     def phrase[T](body: P[T]): P[T] =
       body <~ eof

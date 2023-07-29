@@ -81,7 +81,7 @@ object DCalTokenizer {
   private def str(str: String): P[String] =
     str.view
       .map(elem)
-      .reduceOption(_ ~> _)
+      .reduceOption(_ ~>? _)
       .map(_.map(_ => str))
       .getOrElse(trivial(str))
 
@@ -114,8 +114,8 @@ object DCalTokenizer {
       val strEscape: P[Char] = capturingPosition(elem('\\') ~> anyElem).constrain {
         case ('\\', _) => Right('\\')
         case ('"', _) => Right('"')
-        case ('n', _) => Right('n')
-        case ('t', _) => Right('t')
+        case ('n', _) => Right('\n')
+        case ('t', _) => Right('\t')
         case (ch, given SourceLocation) =>
           Left(err(TokenizerError.ExpectedAbstract(category = "string escape", actualChar = ch)))
       }
@@ -130,7 +130,7 @@ object DCalTokenizer {
       val underscore: P[Char] = elem('_')
       val character: P[Char] = underscore | alphabetic | numeric
 
-      (rep(underscore | numeric) ~ alphabetic ~ rep(character))
+      (rep(underscore | numeric) ~? alphabetic ~ rep(character))
     }.mapPositioned {
       case c1 ~ c2 ~ c3 =>
         Token.Name(s"${c1.iterator.mkString}$c2${c3.iterator.mkString}")
@@ -161,13 +161,11 @@ object DCalTokenizer {
     }
 
   private val singleTokenOpt: P[Option[Token]] =
-    {
-      intLiteral
-      | stringLiteral
-      | fixedTokens
-      | name
-    }
-      .map(Some(_))
+    ( stringLiteral
+    | fixedTokens
+    | name
+    | intLiteral
+    ).map(Some(_))
     | whitespace.map(_ => None)
 
   def apply(contents: Iterable[Char], path: String, offsetStart: Int = 0): Iterator[Either[NonEmptyChain[TokenizerError], Token]] =
