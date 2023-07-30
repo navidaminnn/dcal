@@ -1,6 +1,8 @@
 package test.com.github.distcompiler.dcal.chungus
 
+import cats.data.Chain
 import scala.annotation.targetName
+import scala.Conversion
 
 sealed abstract class Generator[T] { self =>
   import Generator.*
@@ -49,6 +51,27 @@ sealed abstract class Generator[T] { self =>
       }
     }
 
+  final def zip[U](other: Generator[U]): Generator[(T, U)] =
+    self.flatMap(lhs => other.map(lhs -> _))
+
+  final def flatten[U](using ev: T <:< Generator[U]): Generator[U] =
+    self.flatMap(identity)
+
+  final def ++[U](using ev: T <:< Chain[U])(other: Generator[Chain[U]]): Generator[Chain[U]] =
+    for {
+      lhs <- self
+      rhs <- other
+    } yield lhs ++ rhs
+
+  object force extends Generator[T] {
+    override def apply(budget: Int): LazyList[Result[T]] = {
+      require(budget >= 0)
+      self(budget = Int.MaxValue).map {
+        case Result(value, _) => Result(value, budget)
+      }
+    }
+  }
+
   final def forall(budget: Int)(fn: T => Any): Unit = {
     var count = 0
     try {
@@ -92,29 +115,40 @@ object Generator {
       }
     }
 
+  def lzy[T](generator: =>Generator[T]): Generator[T] =
+    new Generator[T] {
+      lazy val gen = generator
+      override def apply(budget: Int): LazyList[Result[T]] = gen(budget)
+    }
+
   given tupleGeneratorEmpty: Generator[EmptyTuple] = unit.map(_ => EmptyTuple)
-  given tupleGeneratorCons[T, Rest <: Tuple](using tGen: Generator[T], restGen: Generator[Rest]): Generator[T *: Rest] =
+  given tupleGeneratorCons[T, Rest <: Tuple](using tGen: =>Generator[T], restGen: =>Generator[Rest]): Generator[T *: Rest] =
     for {
-      t <- tGen
-      rest <- restGen
+      t <- lzy(tGen)
+      rest <- lzy(restGen)
     } yield t *: rest
 
-  given productGenerator[T](using mirror: deriving.Mirror.ProductOf[T])(using genParts: Generator[mirror.MirroredElemTypes]): Generator[T] =
-    costOne(genParts.map(mirror.fromTuple))
+  given productGenerator[T](using mirror: deriving.Mirror.ProductOf[T])(using genParts: =>Generator[mirror.MirroredElemTypes]): Generator[T] =
+    costOne(lzy(genParts).map(mirror.fromTuple))
 
-  given generatorTupleSingleton[T](using gen: Generator[T]): Tuple1[Generator[T]] =
-    Tuple1(gen)
-  given generatorTupleCons[T, Rest <: Tuple](using ev: Tuple.InverseMap[Rest, Generator] <:< Tuple)(using tGen: Generator[T], rest: Rest): (Generator[T] *: Rest) =
-    tGen *: rest
+  given generatorTupleSingleton[T](using gen: =>Generator[T]): Tuple1[Generator[T]] =
+    Tuple1(lzy(gen))
+  given generatorTupleCons[T, Rest <: Tuple](using ev: Tuple.InverseMap[Rest, Generator] <:< Tuple)(using tGen: =>Generator[T], rest: Rest): (Generator[T] *: Rest) =
+    lzy(tGen) *: rest
 
-  given sumGenerator[T](using mirror: deriving.Mirror.SumOf[T])(using partGens: Tuple.Map[mirror.MirroredElemTypes, Generator]): Generator[T] =
-    partGens
-      .productIterator
-      .foldLeft(none.up: Generator[T]) { (acc, gen) =>
-        acc | gen.asInstanceOf[Generator[T]]
-      }
+  given sumGenerator[T](using mirror: deriving.Mirror.SumOf[T])(using partGens: =>Tuple.Map[mirror.MirroredElemTypes, Generator]): Generator[T] with {
+    lazy val partGensLzy =
+      partGens
+        .productIterator
+        .foldLeft(none.up: Generator[T]) { (acc, gen) =>
+          acc | gen.asInstanceOf[Generator[T]]
+        }
+    override def apply(budget: Int): LazyList[Result[T]] = partGensLzy(budget)
+  }
 
-  def anyOf[T](using gen: Generator[T]): Generator[T] = gen
+  given listOfGenerator[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen)
+
+  def anyOf[T](using gen: =>Generator[T]): Generator[T] = lzy(gen)
 
   def costOne[T](generator: Generator[T]): Generator[T] =
     new Generator[T] {
@@ -138,4 +172,32 @@ object Generator {
           tail <- listOf(generator)
         } yield head :: tail
       }
+
+  trait ChainCatable[T] {
+    def elems: Generator[Chain[T]]
+  }
+  object ChainCatable {
+    def apply[T](gen: Generator[Chain[T]]): ChainCatable[T] =
+      new ChainCatable[T] {
+        override def elems: Generator[Chain[T]] = gen
+      }
+
+    given oneChain[T]: Conversion[Chain[T], ChainCatable[T]] = one
+
+    given singleton[T]: Conversion[T, ChainCatable[T]] = Chain.one
+
+    given iterableOnceSplay[U, T](using conv: Conversion[U, ChainCatable[T]]): Conversion[IterableOnce[U], ChainCatable[T]] with {
+      override def apply(x: IterableOnce[U]): ChainCatable[T] =
+        chainCat(x.iterator.map(conv).toSeq*)
+    }
+
+    given chainChain[T]: Conversion[Generator[Chain[T]], ChainCatable[T]] = ChainCatable(_)
+  }
+
+  def chainCat[T](catables: ChainCatable[T]*): Generator[Chain[T]] =
+    catables.foldLeft(one(Chain.nil): Generator[Chain[T]]) { (acc, catable) =>
+      acc.flatMap { prefix =>
+        catable.elems.map(prefix ++ _)
+      }
+    }
 }

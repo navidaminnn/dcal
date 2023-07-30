@@ -269,7 +269,7 @@ object Parser {
     def rep1sep[T](elem: P[T], sep: P[?]): P[Chain[T]] =
       elem.flatMap(firstValue => rep(sep ~>? elem).map(firstValue +: _))
 
-    def capturingPosition[T](parser: P[T])(using capturePrePosition: CapturePrePosition[Elem, Input]): P[(T, SourceLocation)] =
+    def capturingPosition[T](parser: P[T])(using capturePrePosition: =>CapturePrePosition[Elem, Input]): P[(T, SourceLocation)] =
       for {
         prePos <- input.map(capturePrePosition.capture)
         value <- parser
