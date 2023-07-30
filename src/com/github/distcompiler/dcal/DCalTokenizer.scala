@@ -11,7 +11,7 @@ object DCalTokenizer {
     case Name(name: String)
     case Keyword(keyword: DCalTokenizer.Keyword)
     case Punctuation(punctuation: DCalTokenizer.Punctuation)
-    case Operator(operator: DCalTokenizer.Operator)
+    case BinaryOperator(operator: DCalTokenizer.BinaryOperator)
   }
 
   transparent trait Meta { self: Product =>
@@ -43,7 +43,7 @@ object DCalTokenizer {
     case `.`
   }
 
-  enum Operator extends Meta {
+  enum BinaryOperator extends Meta {
     case `\\in`
     case `\\notin`
     case `=`
@@ -150,7 +150,7 @@ object DCalTokenizer {
     mkLiteralSet {
       Keyword.values.iterator.map(kw => (kw.productPrefix, (loc: SourceLocation) ?=> Ps(Token.Keyword(kw))))
       ++ Punctuation.values.iterator.map(p => (p.productPrefix, (loc: SourceLocation) ?=> Ps(Token.Punctuation(p))))
-      ++ Operator.values.iterator.map(op => (op.productPrefix, (loc: SourceLocation) ?=> Ps(Token.Operator(op))))
+      ++ BinaryOperator.values.iterator.map(op => (op.productPrefix, (loc: SourceLocation) ?=> Ps(Token.BinaryOperator(op))))
     }
 
   private val whitespace: P[Unit] =

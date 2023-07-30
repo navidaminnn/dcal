@@ -4,8 +4,6 @@ import scala.annotation.targetName
 import cats.Eval
 import cats.data.Chain
 import cats.Now
-import cats.Later
-import cats.Always
 
 // import sourcecode.Enclosing
 

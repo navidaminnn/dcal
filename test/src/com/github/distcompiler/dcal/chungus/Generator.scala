@@ -3,6 +3,7 @@ package test.com.github.distcompiler.dcal.chungus
 import cats.data.Chain
 import scala.annotation.targetName
 import scala.Conversion
+import scala.util.Try
 
 sealed abstract class Generator[T] { self =>
   import Generator.*
@@ -72,7 +73,7 @@ sealed abstract class Generator[T] { self =>
     }
   }
 
-  final def forall(budget: Int)(fn: T => Any): Unit = {
+  final def forall(budget: Int, expectedCount: Int = -1)(fn: T => Any): Unit = {
     var count = 0
     try {
       self.apply(budget).iterator.foreach {
@@ -81,6 +82,9 @@ sealed abstract class Generator[T] { self =>
           fn(value)
       }
       assert(count != 0)
+      if(expectedCount != -1) {
+        assert(count == expectedCount)
+      }
       println(s"finished checking $count combinations with a budget of $budget units")
     } catch {
       case err =>
@@ -129,7 +133,12 @@ object Generator {
     } yield t *: rest
 
   given productGenerator[T](using mirror: deriving.Mirror.ProductOf[T])(using genParts: =>Generator[mirror.MirroredElemTypes]): Generator[T] =
-    costOne(lzy(genParts).map(mirror.fromTuple))
+    costOne(lzy(genParts))
+      .map { tuple =>
+        Try(mirror.fromTuple(tuple))
+      }
+      .filter(_.isSuccess)
+      .map(_.get)
 
   given generatorTupleSingleton[T](using gen: =>Generator[T]): Tuple1[Generator[T]] =
     Tuple1(lzy(gen))

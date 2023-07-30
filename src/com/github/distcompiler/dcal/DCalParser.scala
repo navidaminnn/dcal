@@ -6,8 +6,7 @@ import cats.data.NonEmptyChain
 import com.github.distcompiler.dcal.DCalAST.*
 import com.github.distcompiler.dcal.DCalTokenizer.*
 import com.github.distcompiler.dcal.parsing.InputOps
-import com.github.distcompiler.dcal.parsing.InputOps.LazyListInput
-import cats.data.NonEmptyChainImpl.Type
+import InputOps.LazyListInput
 
 object DCalParser {
   enum ParserError {
@@ -16,7 +15,7 @@ object DCalParser {
     case ExpectedAbstract(category: String, actualTok: Ps[Token])
     case ExpectedKeyword(expectedKeyword: Keyword, actualTok: Ps[Token])
     case ExpectedPunctuation(expectedPunctuation: Punctuation, actualTok: Ps[Token])
-    case ExpectedOperator(expectedOperator: Operator, actualTok: Ps[Token])
+    case ExpectedBinaryOperator(expectedOperator: BinaryOperator, actualTok: Ps[Token])
   }
 
   private type Elem = Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]
@@ -38,10 +37,10 @@ object DCalParser {
       ParserError.UnexpectedEOF(input.prevSourceLocation)
   }
   given inputOps: parsing.InputOps[Elem, Input] with {
-    override def getPrevSourceLocation(input: LazyListInput[Either[Type[Ps[TokenizerError]], Ps[Token]]]): SourceLocation =
+    override def getPrevSourceLocation(input: LazyListInput[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]]): SourceLocation =
       input.prevSourceLocation
 
-    override def read(input: LazyListInput[Either[Type[Ps[TokenizerError]], Ps[Token]]]): Option[(Either[Type[Ps[TokenizerError]], Ps[Token]], LazyListInput[Either[Type[Ps[TokenizerError]], Ps[Token]]])] =
+    override def read(input: LazyListInput[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]]): Option[(Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]], LazyListInput[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]])] =
       if(input.list.isEmpty) {
         None
       } else {
@@ -54,7 +53,7 @@ object DCalParser {
       }
   }
   given parsing.Parser.CapturePrePosition[Elem, Input] with {
-    override def capture(input: LazyListInput[Either[Type[Ps[TokenizerError]], Ps[Token]]]): SourceLocation =
+    override def capture(input: LazyListInput[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]]): SourceLocation =
       if(input.list.isEmpty) {
         input.prevSourceLocation
       } else {
@@ -88,10 +87,10 @@ object DCalParser {
       case tok => Left(err(ParserError.ExpectedPunctuation(expectedPunctuation = punctuation, actualTok = tok)))
     }
 
-  private def op(operator: Operator): P[Token.Operator] =
+  private def op(operator: BinaryOperator): P[Token.BinaryOperator] =
     anyTok.constrain {
-      case Ps(tok @ Token.Operator(`operator`)) => Right(tok)
-      case tok => Left(err(ParserError.ExpectedOperator(expectedOperator = operator, actualTok = tok)))
+      case Ps(tok @ Token.BinaryOperator(`operator`)) => Right(tok)
+      case tok => Left(err(ParserError.ExpectedBinaryOperator(expectedOperator = operator, actualTok = tok)))
     }
 
   private def ps[T](parser: P[T]): P[Ps[T]] =
@@ -140,22 +139,26 @@ object DCalParser {
     capturingPosition(pn(Punctuation.`{`) ~> repsep(expression, pn(Punctuation.`,`)) <~ pn(Punctuation.`}`))
       .mapPositioned(members => Ps(DCalAST.Expression.SetConstructor(members.toList)))
 
-  private def pathRefExpr: P[Ps[DCalAST.Expression.PathRef]] =
-    capturingPosition(path).mapPositioned(p => Ps(DCalAST.Expression.PathRef(p)))
+  private def opCallExpr: P[Ps[DCalAST.Expression.OpCall]] =
+    capturingPosition(ps(path) ~ opt(pn(Punctuation.`(`) ~> rep1sep(expression, pn(Punctuation.`,`)) <~ pn(Punctuation.`)`)))
+      .mapPositioned {
+        case name ~ arguments =>
+          Ps(DCalAST.Expression.OpCall(Right(name), arguments.map(_.toList).getOrElse(Nil)))
+      }
 
   private def exprBase: P[Ps[DCalAST.Expression]] =
     intLiteral
     | stringLiteral
-    | pathRefExpr
+    | opCallExpr
     | setConstructorExpr
     | (pn(Punctuation.`(`) ~> expression <~ pn(Punctuation.`)`))
 
   // TODO: precedence
   private def binOpExpr: P[Ps[DCalAST.Expression]] =
-    capturingPosition(exprBase ~ opt(ps(Operator.values.iterator.map(op).reduce(_ | _)) ~ exprBase)).mapPositioned {
+    capturingPosition(exprBase ~ opt(ps(BinaryOperator.values.iterator.map(op).reduce(_ | _)) ~ exprBase)).mapPositioned {
       case lhs ~ None => lhs
       case lhs ~ Some(op ~ rhs) =>
-        Ps(DCalAST.Expression.OpCall(Ps(DCalAST.Path.Name(op.value.operator.name))(using op.sourceLocation), List(lhs, rhs)))
+        Ps(DCalAST.Expression.OpCall(Left(Ps(op.value.operator)(using op.sourceLocation)), List(lhs, rhs)))
     }
   
   private lazy val expression: P[Ps[DCalAST.Expression]] =
@@ -199,7 +202,7 @@ object DCalParser {
       }
 
   private lazy val binding: P[Ps[DCalAST.Binding]] =
-    ((rep1(capturingPosition(op(Operator.`\\in`))).left | capturingPosition(op(Operator.`=`)).right) ~ (expression.left | call.right))
+    ((rep1(capturingPosition(op(BinaryOperator.`\\in`))).left | capturingPosition(op(BinaryOperator.`=`)).right) ~ (expression.left | call.right))
       .map {
         case signifier ~ valuePart =>
           def decorate(inner: Option[SourceLocation] => Ps[DCalAST.Binding]): Ps[DCalAST.Binding] =
@@ -257,6 +260,7 @@ object DCalParser {
     | varStmt
     | ifStmt
     | callStmt
+    | block
 
   private lazy val block: P[Ps[DCalAST.Statement.Block]] =
     capturingPosition(pn(Punctuation.`{`) ~> rep(statement) <~ pn(Punctuation.`}`))

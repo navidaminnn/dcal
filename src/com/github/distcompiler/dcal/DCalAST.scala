@@ -19,6 +19,12 @@ object DCalAST {
   }
 
   enum Statement {
+    this match {
+      case Assignment(pairs) =>
+        require(pairs.nonEmpty)
+      case _ =>
+    }
+
     case Await(expression: Ps[Expression])
     case Assignment(pairs: List[Ps[AssignPair]])
     case Let(name: Ps[String], binding: Ps[Binding])
@@ -31,10 +37,19 @@ object DCalAST {
   final case class AssignPair(path: Ps[Path], rhs: Ps[Expression])
 
   enum Expression {
-    case PathRef(path: Ps[Path])
+    this match {
+      case OpCall(path, arguments) =>
+        path match {
+          case Left(_) =>
+            require(arguments.size == 2)
+          case _ =>
+        }
+      case _ =>
+    }
+
     case IntLiteral(value: BigInt)
     case StringLiteral(value: String)
-    case OpCall(path: Ps[Path], arguments: List[Ps[Expression]])
+    case OpCall(path: Either[Ps[DCalTokenizer.BinaryOperator], Ps[Path]], arguments: List[Ps[Expression]])
     case SetConstructor(members: List[Ps[Expression]])
   }
 }

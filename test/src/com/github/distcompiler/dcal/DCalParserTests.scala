@@ -72,14 +72,35 @@ object DCalParserTests extends TestSuite {
 
   private def renderExpression(expression: Expression, needGroup: Boolean = false): GC[Token] =
     expression match {
-      case Expression.PathRef(path) =>
-        renderPath(path.value)
       case Expression.IntLiteral(value) =>
         one(Chain.one(Token.IntLiteral(value)))
       case Expression.StringLiteral(value) =>
         one(Chain.one(Token.StringLiteral(value)))
-      case Expression.OpCall(path, arguments) =>
-        one(Chain.nil) // stub
+      case Expression.OpCall(ref, arguments) =>
+        ref match {
+          case Left(op) =>
+            val List(lhs, rhs) = arguments
+            chainCat(
+              renderExpression(lhs.value, needGroup = true),
+              Token.BinaryOperator(op.value),
+              renderExpression(rhs, needGroup = true),
+            )
+          case Right(path) =>
+            chainCat(
+              renderPath(path.value),
+              if(arguments.nonEmpty) {
+                chainCat[Token](
+                  Token.Punctuation(Punctuation.`(`),
+                  arguments.iterator
+                    .map(renderExpression(_))
+                    .sepBy(List(one(Chain.one(Token.Punctuation(Punctuation.`,`))))),
+                  Token.Punctuation(Punctuation.`)`),
+                )
+              } else {
+                None: Option[Token]
+              },
+            )
+        }
       case Expression.SetConstructor(members) =>
         chainCat(
           Token.Punctuation(Punctuation.`{`),
@@ -96,7 +117,7 @@ object DCalParserTests extends TestSuite {
       case Binding.Value(expr) => 
         chainCat(
           if(needEquals) {
-            Some(Token.Operator(Operator.`=`))
+            Some(Token.BinaryOperator(BinaryOperator.`=`))
           } else {
             None: Option[Token]
           },
@@ -104,13 +125,13 @@ object DCalParserTests extends TestSuite {
         )
       case Binding.Selection(binding) =>
         chainCat(
-          Token.Operator(Operator.`\\in`),
+          Token.BinaryOperator(BinaryOperator.`\\in`),
           renderBinding(binding, needEquals = false),
         )
       case Binding.Call(path, arguments) =>
         chainCat(
           if(needEquals) {
-            Some(Token.Operator(Operator.`=`))
+            Some(Token.BinaryOperator(BinaryOperator.`=`))
           } else {
             None: Option[Token]
           },
@@ -137,8 +158,13 @@ object DCalParserTests extends TestSuite {
           .map(_.value)
           .map {
             case AssignPair(path, rhs) =>
-              ??? : GC[Token]
+              chainCat[Token](
+                renderPath(path),
+                Token.Punctuation(Punctuation.`:=`),
+                renderExpression(rhs),
+              )
           }
+          .sepBy(List(one(Chain.one(Token.Punctuation(Punctuation.`||`)))))
           .reduceOption(_ ++ _)
           .getOrElse(one(Chain.nil))
       case Statement.Let(name, binding) =>
@@ -225,10 +251,16 @@ object DCalParserTests extends TestSuite {
   
   def tests = Tests {
     test("to tokens and back") {
-      astTokPairs.forall(budget = 20) {
+      astTokPairs.forall(budget = 19, expectedCount = 738505) {
         case (expectedModule, tokens) =>
+          try {
           val result = DCalParser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")
           assert(result == Right(Ps(expectedModule)))
+          } catch {
+            case err =>
+              println(s"tokens: $tokens")
+              throw err
+          }
       }
     }
   }

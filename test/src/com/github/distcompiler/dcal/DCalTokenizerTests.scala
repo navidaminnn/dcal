@@ -38,31 +38,31 @@ object DCalTokenizerTests extends TestSuite {
     case `\t`
   }
 
+  private def renderSeq(tokensOrSpace: List[Token | Whitespace]): String =
+    tokensOrSpace.iterator
+      .flatMap[Char] {
+        case ws: Whitespace => ws.productPrefix
+        case Token.IntLiteral(value) => value.toString()
+        case Token.StringLiteral(value) =>
+          Iterator.single('"')
+          ++ value.iterator
+            .flatMap {
+              case '"' => "\\\""
+              case '\n' => "\\n"
+              case '\t' => "\\t"
+              case '\\' => "\\\\"
+              case ch => Iterator.single(ch)
+            }
+          ++ Iterator.single('\"')
+        case Token.Name(name) => name
+        case Token.BinaryOperator(op) => op.name
+        case Token.Keyword(kw) => kw.name
+        case Token.Punctuation(pn) => pn.name
+      }
+      .mkString
+
   def tests = Tests {
     test("to string and back") {
-      def renderSeq(tokensOrSpace: List[Token | Whitespace]): String =
-        tokensOrSpace.iterator
-          .flatMap[Char] {
-            case ws: Whitespace => ws.productPrefix
-            case Token.IntLiteral(value) => value.toString()
-            case Token.StringLiteral(value) => s"\"${
-              value.iterator
-                .flatMap {
-                  case '"' => "\\\""
-                  case '\n' => "\\n"
-                  case '\t' => "\\t"
-                  case '\\' => "\\\\"
-                  case ch => Some(ch)
-                }
-                .mkString
-            }\""
-            case Token.Name(name) => name
-            case Token.Operator(op) => op.name
-            case Token.Keyword(kw) => kw.name
-            case Token.Punctuation(pn) => pn.name
-          }
-          .mkString
-
       def adjacentPairRules(tokensOrSpace: List[Token | Whitespace]): Boolean =
         if(tokensOrSpace.isEmpty) {
           true
@@ -70,7 +70,7 @@ object DCalTokenizerTests extends TestSuite {
           (tokensOrSpace.iterator zip tokensOrSpace.tail).forall {
             // that's just one number at that point
             case (Token.IntLiteral(_), Token.IntLiteral(_)) => false
-            // names will just "eat" anything after them
+            // names will just "eat" ints, keywords, or token literals after them
             case (Token.Name(_), Token.Keyword(_) | Token.IntLiteral(_) | Token.Name(_)) => false
             // putting an int just before alphanumerics looks like a name
             case (Token.IntLiteral(_), Token.Keyword(_) | Token.Name(_)) => false
@@ -80,7 +80,7 @@ object DCalTokenizerTests extends TestSuite {
 
       listOf(tokenGen | anyOf[Whitespace])
         .filter(adjacentPairRules)
-        .forall(budget = 11) { tokensOrSpace =>
+        .forall(budget = 11, expectedCount = 640668) { tokensOrSpace =>
           val strForm = renderSeq(tokensOrSpace)
           try {
             val reparsedTokens = DCalTokenizer(strForm, path = "<dummy>").toList
