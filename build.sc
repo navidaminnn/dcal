@@ -7,6 +7,7 @@ object dcal extends RootModule with ScalaModule {
   def ivyDeps = Agg(
     ivy"com.lihaoyi::os-lib:0.9.1",
     ivy"org.typelevel::cats-core:2.9.0",
+    ivy"org.typelevel::kittens:3.0.0",
   )
 
   object test extends ScalaTests {

@@ -81,9 +81,9 @@ sealed abstract class Generator[T] { self =>
           count += 1
           fn(value)
       }
-      assert(count != 0)
+      assert(count != 0, "no tests ran - that's usually bad")
       if(expectedCount != -1) {
-        assert(count == expectedCount)
+        assert(count == expectedCount, s"unexpected test count $count; expected $expectedCount")
       }
       println(s"finished checking $count combinations with a budget of $budget units")
     } catch {
@@ -173,14 +173,20 @@ object Generator {
       .reduceOption(_ | _)
       .getOrElse(none.up)
 
-  def listOf[T](generator: Generator[T]): Generator[List[T]] =
-    one(Nil)
-    | costOne {
-        for {
-          head <- generator
-          tail <- listOf(generator)
-        } yield head :: tail
-      }
+  def listOf[T](generator: Generator[T], limit: Int = Int.MaxValue): Generator[List[T]] = {
+    require(limit >= 0)
+    if(limit == 0) {
+      none.up
+    } else {
+      one(Nil)
+      | costOne {
+          for {
+            head <- generator
+            tail <- listOf(generator, limit = limit - 1)
+          } yield head :: tail
+        }
+    }
+  }
 
   trait ChainCatable[T] {
     def elems: Generator[Chain[T]]

@@ -89,7 +89,6 @@ object DCalTokenizerTests extends TestSuite {
               .map(Ps(_))
               .map(Right(_))
 
-            
             assert(reparsedTokens == expectedtokens)
           } catch {
             case err =>

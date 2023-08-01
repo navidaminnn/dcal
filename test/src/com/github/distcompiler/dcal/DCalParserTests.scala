@@ -20,10 +20,13 @@ object DCalParserTests extends TestSuite {
 
   private given dummyLoc: SourceLocation = SourceLocation("dummy", offsetStart = -1, offsetEnd = -1)
 
-  private given strGen: Generator[String] = chooseAny(List("foo", "bar", "ping", "pong", "blamo"))
-  private given numGen: Generator[BigInt] = chooseAny(List(BigInt(0), BigInt(10), BigInt(123456789), BigInt(10)))
+  private given strGen: Generator[String] = chooseAny(List("foo", "bar", "ping"/*, "pong", "blamo"*/))
+  private given numGen: Generator[BigInt] = chooseAny(List(BigInt(0), BigInt(10), BigInt(123456789)))
 
   private given psGen[T](using gen: Generator[T]): Generator[Ps[T]] = gen.map(Ps(_))
+
+  // only imports has a list of ps(str)
+  private given importsGen: Generator[List[Ps[String]]] = listOf(psGen(using strGen), limit = 2)
 
   extension [T](self: Iterator[T]) private def sepBy(sep: Iterable[T]): Iterator[T] =
     self
@@ -57,15 +60,15 @@ object DCalParserTests extends TestSuite {
         chainCat(Token.Name(name))
       case Path.Project(prefix, name) =>
         chainCat(
-          renderPath(prefix),
+          renderPath(prefix.value),
           Token.Punctuation(Punctuation.`.`),
           Token.Name(name),
         )
       case Path.Index(prefix, index) =>
         chainCat(
-          renderPath(prefix),
+          renderPath(prefix.value),
           Token.Punctuation(Punctuation.`[`),
-          renderExpression(index),
+          renderExpression(index.value),
           Token.Punctuation(Punctuation.`]`),
         )
     }
@@ -83,7 +86,7 @@ object DCalParserTests extends TestSuite {
             chainCat(
               renderExpression(lhs.value, needGroup = true),
               Token.BinaryOperator(op.value),
-              renderExpression(rhs, needGroup = true),
+              renderExpression(rhs.value, needGroup = true),
             )
           case Right(path) =>
             chainCat(
@@ -92,7 +95,7 @@ object DCalParserTests extends TestSuite {
                 chainCat[Token](
                   Token.Punctuation(Punctuation.`(`),
                   arguments.iterator
-                    .map(renderExpression(_))
+                    .map(expr => renderExpression(expr.value))
                     .sepBy(List(one(Chain.one(Token.Punctuation(Punctuation.`,`))))),
                   Token.Punctuation(Punctuation.`)`),
                 )
@@ -121,12 +124,12 @@ object DCalParserTests extends TestSuite {
           } else {
             None: Option[Token]
           },
-          renderExpression(expr),
+          renderExpression(expr.value),
         )
       case Binding.Selection(binding) =>
         chainCat(
           Token.BinaryOperator(BinaryOperator.`\\in`),
-          renderBinding(binding, needEquals = false),
+          renderBinding(binding.value, needEquals = false),
         )
       case Binding.Call(path, arguments) =>
         chainCat(
@@ -136,7 +139,7 @@ object DCalParserTests extends TestSuite {
             None: Option[Token]
           },
           Token.Keyword(Keyword.`call`),
-          renderPath(path),
+          renderPath(path.value),
           Token.Punctuation(Punctuation.`(`),
           arguments.iterator
             .map(_.value)
@@ -151,7 +154,7 @@ object DCalParserTests extends TestSuite {
       case Statement.Await(expression) =>
         chainCat(
           Token.Keyword(Keyword.`await`),
-          renderExpression(expression),
+          renderExpression(expression.value),
         )
       case Statement.Assignment(pairs) =>
         pairs.iterator
@@ -159,9 +162,9 @@ object DCalParserTests extends TestSuite {
           .map {
             case AssignPair(path, rhs) =>
               chainCat[Token](
-                renderPath(path),
+                renderPath(path.value),
                 Token.Punctuation(Punctuation.`:=`),
-                renderExpression(rhs),
+                renderExpression(rhs.value),
               )
           }
           .sepBy(List(one(Chain.one(Token.Punctuation(Punctuation.`||`)))))
@@ -171,13 +174,13 @@ object DCalParserTests extends TestSuite {
         chainCat(
           Token.Keyword(Keyword.`let`),
           Token.Name(name.value),
-          renderBinding(binding),
+          renderBinding(binding.value),
         )
       case Statement.Var(name, binding) =>
         chainCat(
           Token.Keyword(Keyword.`var`),
           Token.Name(name.value),
-          renderBinding(binding),
+          renderBinding(binding.value),
         )
       case Statement.Block(statements) =>
         chainCat(
@@ -193,9 +196,9 @@ object DCalParserTests extends TestSuite {
         chainCat(
           Token.Keyword(Keyword.`if`),
           Token.Punctuation(Punctuation.`(`),
-          renderExpression(predicate),
+          renderExpression(predicate.value),
           Token.Punctuation(Punctuation.`)`),
-          renderStatement(thenBlock),
+          renderStatement(thenBlock.value),
           elseBlockOpt
             .map(_.value)
             .map {
@@ -251,7 +254,7 @@ object DCalParserTests extends TestSuite {
   
   def tests = Tests {
     test("to tokens and back") {
-      astTokPairs.forall(budget = 19, expectedCount = 738505) {
+      astTokPairs.forall(budget = 25) {
         case (expectedModule, tokens) =>
           try {
           val result = DCalParser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")

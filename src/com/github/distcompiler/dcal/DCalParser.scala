@@ -140,18 +140,18 @@ object DCalParser {
       .mapPositioned(members => Ps(DCalAST.Expression.SetConstructor(members.toList)))
 
   private def opCallExpr: P[Ps[DCalAST.Expression.OpCall]] =
-    capturingPosition(ps(path) ~ opt(pn(Punctuation.`(`) ~> rep1sep(expression, pn(Punctuation.`,`)) <~ pn(Punctuation.`)`)))
+    capturingPosition(path ~ opt(pn(Punctuation.`(`) ~> rep1sep(expression, pn(Punctuation.`,`)) <~ pn(Punctuation.`)`)))
       .mapPositioned {
         case name ~ arguments =>
           Ps(DCalAST.Expression.OpCall(Right(name), arguments.map(_.toList).getOrElse(Nil)))
       }
 
   private def exprBase: P[Ps[DCalAST.Expression]] =
-    intLiteral
+    (intLiteral
     | stringLiteral
     | opCallExpr
     | setConstructorExpr
-    | (pn(Punctuation.`(`) ~> expression <~ pn(Punctuation.`)`))
+    | (pn(Punctuation.`(`) ~> expression <~ pn(Punctuation.`)`))).map(_.up)
 
   // TODO: precedence
   private def binOpExpr: P[Ps[DCalAST.Expression]] =
@@ -218,7 +218,7 @@ object DCalParser {
             valuePart match {
               case Left(expr) =>
                 Ps(DCalAST.Binding.Value(expr))(using posOpt.getOrElse(expr.sourceLocation))
-              case Right(call) => call
+              case Right(call) => call.up
             }
           }
       }
@@ -254,13 +254,13 @@ object DCalParser {
       }
 
   private lazy val statement: P[Ps[DCalAST.Statement]] =
-    await
+    (await
     | assignment
     | letStmt
     | varStmt
     | ifStmt
     | callStmt
-    | block
+    | block).map(_.up)
 
   private lazy val block: P[Ps[DCalAST.Statement.Block]] =
     capturingPosition(pn(Punctuation.`{`) ~> rep(statement) <~ pn(Punctuation.`}`))
@@ -277,7 +277,7 @@ object DCalParser {
     }
 
   def apply(tokens: Iterator[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]], path: String, offsetStart: Int = 0): Either[NonEmptyChain[ParserError], Ps[DCalAST.Module]] = {
-    val result = phrase(ps(module)).parse(parsing.InputOps.LazyListInput(
+    val result = phrase(module).parse(parsing.InputOps.LazyListInput(
       path = path,
       offsetStart = offsetStart,
       list = LazyList.from(tokens),
