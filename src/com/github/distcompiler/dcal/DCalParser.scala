@@ -7,6 +7,7 @@ import com.github.distcompiler.dcal.DCalAST.*
 import com.github.distcompiler.dcal.DCalTokenizer.*
 import com.github.distcompiler.dcal.parsing.InputOps
 import InputOps.LazyListInput
+import cats.data.NonEmptyChainImpl.Type
 
 object DCalParser {
   enum ParserError {
@@ -37,6 +38,9 @@ object DCalParser {
       ParserError.UnexpectedEOF(input.prevSourceLocation)
   }
   given inputOps: parsing.InputOps[Elem, Input] with {
+    override def getIndex(input: LazyListInput[Either[Type[Ps[TokenizerError]], Ps[Token]]]): Int =
+      input.prevSourceLocation.offsetStart
+
     override def getPrevSourceLocation(input: LazyListInput[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]]): SourceLocation =
       input.prevSourceLocation
 

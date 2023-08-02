@@ -2,7 +2,6 @@ package test.com.github.distcompiler.dcal.chungus
 
 import cats.data.Chain
 import scala.annotation.targetName
-import scala.Conversion
 import scala.util.Try
 
 sealed abstract class Generator[T] { self =>
@@ -73,25 +72,8 @@ sealed abstract class Generator[T] { self =>
     }
   }
 
-  final def forall(budget: Int, expectedCount: Int = -1)(fn: T => Any): Unit = {
-    var count = 0
-    try {
-      self.apply(budget).iterator.foreach {
-        case Result(value, _) =>
-          count += 1
-          fn(value)
-      }
-      assert(count != 0, "no tests ran - that's usually bad")
-      if(expectedCount != -1) {
-        assert(count == expectedCount, s"unexpected test count $count; expected $expectedCount")
-      }
-      println(s"finished checking $count combinations with a budget of $budget units")
-    } catch {
-      case err =>
-        println(s"found an error after $count combinations with a budget of $budget units")
-        throw err
-    }
-  }
+  final def checkWith(checker: Checker[T]): Unit =
+    checker(self)
 }
 
 object Generator {
@@ -137,8 +119,15 @@ object Generator {
       .map { tuple =>
         Try(mirror.fromTuple(tuple))
       }
-      .filter(_.isSuccess)
-      .map(_.get)
+      .flatMap { result =>
+        result
+          .map(value => unit.map(_ => value))
+          .recover {
+            case _: IllegalArgumentException =>
+              none.up
+          }
+          .get
+      }
 
   given generatorTupleSingleton[T](using gen: =>Generator[T]): Tuple1[Generator[T]] =
     Tuple1(lzy(gen))

@@ -5,6 +5,7 @@ import chungus.*
 
 import com.github.distcompiler.dcal.DCalTokenizer
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
+import scala.concurrent.duration.FiniteDuration
 
 object DCalTokenizerTests extends TestSuite {
   import DCalTokenizer.*
@@ -61,39 +62,47 @@ object DCalTokenizerTests extends TestSuite {
       }
       .mkString
 
+  private def adjacentPairRules(tokensOrSpace: List[Token | Whitespace]): Boolean =
+    if(tokensOrSpace.isEmpty) {
+      true
+    } else {
+      (tokensOrSpace.iterator zip tokensOrSpace.tail).forall {
+        // that's just one number at that point
+        case (Token.IntLiteral(_), Token.IntLiteral(_)) => false
+        // names will just "eat" ints, keywords, or token literals after them
+        case (Token.Name(_), Token.Keyword(_) | Token.IntLiteral(_) | Token.Name(_)) => false
+        // putting an int just before alphanumerics looks like a name
+        case (Token.IntLiteral(_), Token.Keyword(_) | Token.Name(_)) => false
+        case _ => true
+      }
+    }
+
   def tests = Tests {
     test("to string and back") {
-      def adjacentPairRules(tokensOrSpace: List[Token | Whitespace]): Boolean =
-        if(tokensOrSpace.isEmpty) {
-          true
-        } else {
-          (tokensOrSpace.iterator zip tokensOrSpace.tail).forall {
-            // that's just one number at that point
-            case (Token.IntLiteral(_), Token.IntLiteral(_)) => false
-            // names will just "eat" ints, keywords, or token literals after them
-            case (Token.Name(_), Token.Keyword(_) | Token.IntLiteral(_) | Token.Name(_)) => false
-            // putting an int just before alphanumerics looks like a name
-            case (Token.IntLiteral(_), Token.Keyword(_) | Token.Name(_)) => false
-            case _ => true
-          }
-        }
-
       listOf(tokenGen | anyOf[Whitespace])
         .filter(adjacentPairRules)
-        .forall(budget = 11, expectedCount = 640668) { tokensOrSpace =>
-          val strForm = renderSeq(tokensOrSpace)
-          try {
-            val reparsedTokens = DCalTokenizer(strForm, path = "<dummy>").toList
-            val expectedtokens = tokensOrSpace
-              .collect { case tok: Token => tok }
-              .map(Ps(_))
-              .map(Right(_))
+        .checkWith {
+          import Checker.*
+          import java.time.Duration
 
-            assert(reparsedTokens == expectedtokens)
-          } catch {
-            case err =>
-              println(s"$tokensOrSpace ==> |$strForm")
-              throw err
+          timeLimited(maxDuration = Duration.ofMinutes(1)) {
+            exists[List[Token | Whitespace]](_.size >= 5)
+            && forall { tokensOrSpace =>
+              val strForm = renderSeq(tokensOrSpace)
+              try {
+                val reparsedTokens = DCalTokenizer(strForm, path = "<dummy>").toList
+                val expectedtokens = tokensOrSpace
+                  .collect { case tok: Token => tok }
+                  .map(Ps(_))
+                  .map(Right(_))
+
+                assert(reparsedTokens == expectedtokens)
+              } catch {
+                case err =>
+                  pprint(s"$tokensOrSpace ==> |$strForm")
+                  throw err
+              }
+            }
           }
         }
     }

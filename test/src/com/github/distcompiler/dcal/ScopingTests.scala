@@ -1,7 +1,9 @@
 package test.com.github.distcompiler.dcal
 
+import java.time.Duration
+
 import utest.*
-import chungus.Generator
+import chungus.{Generator, Checker}
 
 import com.github.distcompiler.dcal.{DCalAST, Scoping}
 import com.github.distcompiler.dcal.parsing.{SourceLocation, Ps}
@@ -30,11 +32,22 @@ object ScopingTests extends TestSuite {
     )
 
   def tests = Tests {
+    // idea: all idents must refer to _something_, and _one_ thing
+    // idea: all references have the right arity
+    // idea: no recorded references may also be reference errors
+    // idea: (more difficult) all well-scoped progs (need to generate) must be well-scoped
+
+    // more generally, some reference errors must exist, and some references must exist (TODO: implement existence assertions, and maybe counting checks)
     test("sanity") {
-      anyOf[Module].forall(budget = 20) { module =>
-        val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
-        if(info.referencePairs.nonEmpty) {
-          println(info)
+      anyOf[Module].checkWith {
+        import Checker.*
+        timeLimited(maxDuration = Duration.ofMinutes(1)) {
+          forall { module =>
+            val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
+            if(info.referencePairs.nonEmpty) {
+              println(info)
+            }
+          }
         }
       }
     }

@@ -1,6 +1,7 @@
 package com.github.distcompiler.dcal.parsing
 
 trait InputOps[Elem, Input] {
+  def getIndex(input: Input): Int
   def getPrevSourceLocation(input: Input): SourceLocation
   def read(input: Input): Option[(Elem, Input)]
 }
@@ -19,6 +20,8 @@ object InputOps {
   }
 
   given lazyCharListInputOps: InputOps[Char, LazyListInput[Char]] with {
+    override def getIndex(input: LazyListInput[Char]): Int = input.prevSourceLocation.offsetStart
+
     override def getPrevSourceLocation(input: LazyListInput[Char]): SourceLocation = input.prevSourceLocation
 
     override def read(input: LazyListInput[Char]): Option[(Char, LazyListInput[Char])] =

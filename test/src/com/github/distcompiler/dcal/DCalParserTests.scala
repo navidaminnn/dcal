@@ -1,15 +1,12 @@
 package test.com.github.distcompiler.dcal
 
 import cats.data.Chain
+import java.time.Duration
 
 import utest.*
-import chungus.Generator
-import com.github.distcompiler.dcal.DCalAST
+import chungus.{Generator, Checker}
+import com.github.distcompiler.dcal.{DCalAST, DCalTokenizer, DCalParser}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
-import com.github.distcompiler.dcal.DCalTokenizer
-import scala.collection.IterableOnceOps
-import java.awt.RenderingHints.Key
-import com.github.distcompiler.dcal.DCalParser
 
 object DCalParserTests extends TestSuite {
   import DCalAST.*
@@ -20,17 +17,22 @@ object DCalParserTests extends TestSuite {
 
   private given dummyLoc: SourceLocation = SourceLocation("dummy", offsetStart = -1, offsetEnd = -1)
 
-  private given strGen: Generator[String] = chooseAny(List("foo", "bar", "ping"/*, "pong", "blamo"*/))
-  private given numGen: Generator[BigInt] = chooseAny(List(BigInt(0), BigInt(10), BigInt(123456789)))
+  // use single token strings / bigints because the parser is insensitive to the values
+  private given strGen: Generator[String] = one("foo")
+  private given numGen: Generator[BigInt] = one(BigInt(1))
 
   private given psGen[T](using gen: Generator[T]): Generator[Ps[T]] = gen.map(Ps(_))
 
-  // only imports has a list of ps(str)
-  private given importsGen: Generator[List[Ps[String]]] = listOf(psGen(using strGen), limit = 2)
+  // if we focus on generating lists that are too long we'll never get very deep. length <= 3 seems good here.
+  private given limitedListOf[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen, limit = 3)
 
-  extension [T](self: Iterator[T]) private def sepBy(sep: Iterable[T]): Iterator[T] =
-    self
-      .scanLeft(None: Option[Iterator[T]]) { (prevOpt, elem) =>
+  extension [FA](self: FA)(using isIterableOnce: collection.generic.IsIterableOnce[FA]) {
+    private def sepBy(sep: isIterableOnce.A): Iterator[isIterableOnce.A] =
+      self.sepByAll(Some(sep): Iterable[isIterableOnce.A])
+
+    private def sepByAll(sep: Iterable[isIterableOnce.A]): Iterator[isIterableOnce.A] =
+      isIterableOnce(self).iterator
+        .scanLeft(None: Option[Iterator[isIterableOnce.A]]) { (prevOpt, elem) =>
         prevOpt match {
           case None =>
             Some(Iterator.single(elem))
@@ -40,6 +42,7 @@ object DCalParserTests extends TestSuite {
       }
       .flatten
       .flatten
+  }
 
   private def renderImports(imports: List[Ps[String]]): GC[Token] =
     imports match {
@@ -50,7 +53,7 @@ object DCalParserTests extends TestSuite {
           imports.iterator
             .map(_.value)
             .map(Token.Name(_))
-            .sepBy(List(Token.Punctuation(Punctuation.`,`))),
+            .sepBy(Token.Punctuation(Punctuation.`,`)),
         )
     }
 
@@ -83,11 +86,22 @@ object DCalParserTests extends TestSuite {
         ref match {
           case Left(op) =>
             val List(lhs, rhs) = arguments
-            chainCat(
-              renderExpression(lhs.value, needGroup = true),
-              Token.BinaryOperator(op.value),
-              renderExpression(rhs.value, needGroup = true),
-            )
+            val mainPart =
+              chainCat[Token](
+                renderExpression(lhs.value, needGroup = !needGroup),
+                Token.BinaryOperator(op.value),
+                renderExpression(rhs.value, needGroup = !needGroup),
+              )
+
+            if(needGroup) {
+              chainCat(
+                Token.Punctuation(Punctuation.`(`),
+                mainPart,
+                Token.Punctuation(Punctuation.`)`),
+              )
+            } else {
+              mainPart
+            }
           case Right(path) =>
             chainCat(
               renderPath(path.value),
@@ -96,7 +110,7 @@ object DCalParserTests extends TestSuite {
                   Token.Punctuation(Punctuation.`(`),
                   arguments.iterator
                     .map(expr => renderExpression(expr.value))
-                    .sepBy(List(one(Chain.one(Token.Punctuation(Punctuation.`,`))))),
+                    .sepBy(one(Chain.one(Token.Punctuation(Punctuation.`,`)))),
                   Token.Punctuation(Punctuation.`)`),
                 )
               } else {
@@ -110,7 +124,7 @@ object DCalParserTests extends TestSuite {
           members.iterator
             .map(_.value)
             .map(renderExpression(_))
-            .sepBy(List(one(Chain.one(Token.Punctuation(Punctuation.`,`))))),
+            .sepBy(one(Chain.one(Token.Punctuation(Punctuation.`,`)))),
           Token.Punctuation(Punctuation.`}`),
         )
     }
@@ -144,7 +158,7 @@ object DCalParserTests extends TestSuite {
           arguments.iterator
             .map(_.value)
             .map(renderExpression(_))
-            .sepBy(List(one(Chain.one(Token.Punctuation(Punctuation.`,`))))),
+            .sepBy(one(Chain.one(Token.Punctuation(Punctuation.`,`)))),
           Token.Punctuation(Punctuation.`)`),
         )
     }
@@ -167,7 +181,7 @@ object DCalParserTests extends TestSuite {
                 renderExpression(rhs.value),
               )
           }
-          .sepBy(List(one(Chain.one(Token.Punctuation(Punctuation.`||`)))))
+          .sepBy(one(Chain.one(Token.Punctuation(Punctuation.`||`))))
           .reduceOption(_ ++ _)
           .getOrElse(one(Chain.nil))
       case Statement.Let(name, binding) =>
@@ -225,7 +239,7 @@ object DCalParserTests extends TestSuite {
             params.iterator
               .map(_.value)
               .map(Token.Name(_))
-              .sepBy(List(Token.Punctuation(Punctuation.`,`))),
+              .sepBy(Token.Punctuation(Punctuation.`,`)),
             Token.Punctuation(Punctuation.`)`),
             renderStatement(body.value),
           )
@@ -244,26 +258,25 @@ object DCalParserTests extends TestSuite {
     )
   }
 
-  private def astTokPairs: Generator[(Module, Chain[Token])] = {
+  private def astTokPairs: Generator[(Module, List[Token])] = {
     for {
       module <- anyOf[Module]
       // don't pay for rendering; limited combos come from module
       toks <- renderModule(module).force
-    } yield (module, toks)
+    } yield (module, toks.toList)
   }
   
   def tests = Tests {
     test("to tokens and back") {
-      astTokPairs.forall(budget = 25) {
-        case (expectedModule, tokens) =>
-          try {
-          val result = DCalParser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")
-          assert(result == Right(Ps(expectedModule)))
-          } catch {
-            case err =>
-              println(s"tokens: $tokens")
-              throw err
+      astTokPairs.checkWith {
+        import Checker.*
+        timeLimited(maxDuration = Duration.ofMinutes(1)) {
+          forall {
+            case (expectedModule, tokens) =>
+              val result = DCalParser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")
+              assert(result == Right(Ps(expectedModule)))
           }
+        }
       }
     }
   }
