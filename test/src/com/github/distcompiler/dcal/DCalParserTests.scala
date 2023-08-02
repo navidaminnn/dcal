@@ -270,7 +270,7 @@ object DCalParserTests extends TestSuite {
     test("to tokens and back") {
       astTokPairs.checkWith {
         import Checker.*
-        timeLimited(maxDuration = Duration.ofMinutes(1)) {
+        timeLimited(maxDuration = Duration.ofMinutes(1), printRoundExample = false) {
           forall {
             case (expectedModule, tokens) =>
               val result = DCalParser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")

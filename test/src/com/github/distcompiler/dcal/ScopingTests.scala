@@ -41,12 +41,12 @@ object ScopingTests extends TestSuite {
     test("sanity") {
       anyOf[Module].checkWith {
         import Checker.*
-        timeLimited(maxDuration = Duration.ofMinutes(1)) {
+        timeLimited(maxDuration = Duration.ofMinutes(1), printRoundExample = false) {
           forall { module =>
             val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
-            if(info.referencePairs.nonEmpty) {
-              println(info)
-            }
+            // if(info.referencePairs.nonEmpty) {
+            //   println(info)
+            // }
           }
         }
       }

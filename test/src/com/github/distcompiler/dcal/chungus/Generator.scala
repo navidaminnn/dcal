@@ -7,52 +7,75 @@ import scala.util.Try
 sealed abstract class Generator[T] { self =>
   import Generator.*
 
-  def apply(budget: Int): LazyList[Result[T]]
+  def getSingleton: Option[T] = None
+  def isDefinitelyEmpty: Boolean = false
+  def apply(budget: Int): LazyList[Either[Result[T], Generator[T]]]
 
   final def up[U >: T]: Generator[U] =
-    self.map(value => value)
+    self.asInstanceOf[Generator[U]]
 
   final def filter(fn: T => Boolean): Generator[T] =
-    new Generator[T] {
-      override def apply(budget: Int): LazyList[Result[T]] =
-        self(budget).filter {
-          case Result(value, _) => fn(value)
-        }
+    self.flatMap { value =>
+      if(fn(value)) {
+        free_!(value)
+      } else {
+        none.up
+      }
     }
 
   final def map[U](fn: T => U): Generator[U] =
-    new Generator[U] {
-      override def apply(budget: Int): LazyList[Result[U]] =
-        self.apply(budget).map {
-          case Result(value, remainder) =>
-            Result(fn(value), remainder)
-        }
-    }
+    self.flatMap(value => free_!(fn(value)))
 
   final def flatMap[U](fn: T => Generator[U]): Generator[U] =
-    new Generator[U] {
-      override def apply(budget: Int): LazyList[Result[U]] =
-        self.apply(budget).flatMap {
-          case Result(value, remainder) =>
-            fn(value).apply(remainder)
-        }
+    if(self.isDefinitelyEmpty) {
+      none.up
+    } else {
+      self.getSingleton match {
+        case Some(value) => fn(value)
+        case None => 
+          new Generator[U] {
+            override def apply(budget: Int): LazyList[Either[Result[U], Generator[U]]] =
+              self.apply(budget).flatMap {
+                case Left(Result(value, remainder)) =>
+                  fn(value)(remainder)
+                case Right(nextGen) if nextGen.isDefinitelyEmpty =>
+                  Iterator.empty
+                case Right(nextGen) =>
+                  Iterator.single(Right(nextGen.flatMap(fn)))
+              }
+          }
+      }
     }
 
   @targetName("or")
   final def |[U](other: Generator[U]): Generator[T | U] =
-    new Generator[T | U] {
-      override def apply(budget: Int): LazyList[Result[T | U]] = {
-        require(budget >= 0)
-        if(budget == 0) {
-          LazyList.empty
-        } else {
-          self.apply(budget) ++ other.apply(budget)
+    if(self.isDefinitelyEmpty) {
+      other.up
+    } else if(other.isDefinitelyEmpty) {
+      self.up
+    } else {
+      new Generator[T | U] {
+        override def apply(budget: Int): LazyList[Either[Result[T | U], Generator[T | U]]] = {
+          require(budget >= 0)
+          if(budget == 0) {
+            Right(this) #:: LazyList.empty
+          } else {
+            val leftList: LazyList[Either[Result[T | U], Generator[T | U]]] = self.up.apply(budget)
+            val rightList: LazyList[Either[Result[T | U], Generator[T | U]]] = other.up.apply(budget)
+            if(leftList.nonEmpty && rightList.nonEmpty) {
+              leftList #::: rightList
+            } else if(leftList.nonEmpty) {
+              leftList
+            } else {
+              rightList
+            }
+          }
         }
       }
     }
 
   final def zip[U](other: Generator[U]): Generator[(T, U)] =
-    self.flatMap(lhs => other.map(lhs -> _))
+    self.flatMap(lhs => other.map((lhs, _)))
 
   final def flatten[U](using ev: T <:< Generator[U]): Generator[U] =
     self.flatMap(identity)
@@ -64,10 +87,15 @@ sealed abstract class Generator[T] { self =>
     } yield lhs ++ rhs
 
   object force extends Generator[T] {
-    override def apply(budget: Int): LazyList[Result[T]] = {
+    override def getSingleton: Option[T] = self.getSingleton
+
+    override def isDefinitelyEmpty: Boolean = self.isDefinitelyEmpty
+
+    override def apply(budget: Int): LazyList[Either[Result[T], Generator[T]]] = {
       require(budget >= 0)
       self(budget = Int.MaxValue).map {
-        case Result(value, _) => Result(value, budget)
+        case Left(Result(value, _)) => Left(Result(value, budget))
+        case Right(nextGen) => Right(nextGen.force)
       }
     }
   }
@@ -79,32 +107,30 @@ sealed abstract class Generator[T] { self =>
 object Generator {
   final case class Result[+T](value: T, remainder: Int)
 
+  final def free_![T](value: T): Generator[T] =
+    new Generator[T] {
+      override def getSingleton: Option[T] = Some(value)
+
+      override def apply(budget: Int): LazyList[Either[Result[T], Generator[T]]] =
+        Left(Result(value, budget)) #:: LazyList.empty
+    }
+
   object none extends Generator[Nothing] {
-    override def apply(budget: Int): LazyList[Result[Nothing]] =
+    override def isDefinitelyEmpty: Boolean = true
+
+    override def apply(budget: Int): LazyList[Either[Result[Nothing], Generator[Nothing]]] =
       LazyList.empty
   }
 
-  object unit extends Generator[Unit] {
-    override def apply(budget: Int): LazyList[Result[Unit]] =
-      LazyList(Result((), budget))
-  }
+  val unit: Generator[Unit] = free_!(())
 
   def one[T](value: T): Generator[T] =
-    new Generator[T] {
-      override def apply(budget: Int): LazyList[Result[T]] = {
-        require(budget >= 0)
-        if(budget == 0) {
-          LazyList.empty
-        } else {
-          LazyList(Result(value, budget - 1))
-        }
-      }
-    }
+    costOne(free_!(value))
 
   def lzy[T](generator: =>Generator[T]): Generator[T] =
     new Generator[T] {
       lazy val gen = generator
-      override def apply(budget: Int): LazyList[Result[T]] = gen(budget)
+      override def apply(budget: Int): LazyList[Either[Result[T], Generator[T]]] = gen(budget)
     }
 
   given tupleGeneratorEmpty: Generator[EmptyTuple] = unit.map(_ => EmptyTuple)
@@ -141,7 +167,7 @@ object Generator {
         .foldLeft(none.up: Generator[T]) { (acc, gen) =>
           acc | gen.asInstanceOf[Generator[T]]
         }
-    override def apply(budget: Int): LazyList[Result[T]] = partGensLzy(budget)
+    override def apply(budget: Int): LazyList[Either[Result[T], Generator[T]]] = partGensLzy(budget)
   }
 
   given listOfGenerator[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen)
@@ -149,10 +175,18 @@ object Generator {
   def anyOf[T](using gen: =>Generator[T]): Generator[T] = lzy(gen)
 
   def costOne[T](generator: Generator[T]): Generator[T] =
-    new Generator[T] {
-      override def apply(budget: Int): LazyList[Result[T]] = {
-        require(budget >= 0)
-        generator.apply(math.max(0, budget - 1))
+    if(generator.isDefinitelyEmpty) {
+      none.up
+    } else {
+      new Generator[T] {
+        override def apply(budget: Int): LazyList[Either[Result[T], Generator[T]]] = {
+          require(budget >= 0)
+          if(budget == 0) {
+            Right(this) #:: LazyList.empty
+          } else {
+            generator(budget - 1)
+          }
+        }
       }
     }
 

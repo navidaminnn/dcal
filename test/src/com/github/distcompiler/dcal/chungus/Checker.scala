@@ -85,66 +85,84 @@ object Checker {
       ensureSpace()
       builder ++= s"${duration.toMillisPart()}ms"
     }
+    // only print nanoseconds if there's nothing else
+    if(duration.toNanosPart() != 0 && builder.isEmpty) {
+      ensureSpace()
+      builder ++= s"${duration.toNanosPart()}ns"
+    }
 
+    assert(builder.nonEmpty)
     builder.result()
   }
 
-  def timeLimited[T](maxDuration: Duration)(streamChecker: StreamChecker[T]): Checker[T] =
+  def timeLimited[T](maxDuration: Duration, printRoundExample: Boolean = true)(streamChecker: StreamChecker[T]): Checker[T] =
     Checker { gen =>
       val startTime = Instant.now()
 
       // state space analytics
-      var maxCountExplored = 0
-      var maxCountExploredCurr = 0
-      def maxCountExploredOverall: Int =
-        math.max(maxCountExplored, maxCountExploredCurr)
-
+      var countExplored = 0
       var lastExample: Option[Example[T]] = None
-
       var roundStart = Instant.now()
-      var budget = 0
-      try {
-        val count =
-          streamChecker {
-            Iterator.continually {
-              if(budget > 0) {
-                println(s"round over. took ${humanDuration(Duration.between(roundStart, Instant.now()))} and covered $maxCountExploredCurr states")
-                if(lastExample.nonEmpty) {
-                  println("printing last example from round:")
-                  pprint.pprintln(lastExample.get)
-                }
-              }
-              maxCountExplored = maxCountExploredCurr
-              maxCountExploredCurr = 0
 
-              budget += 1
-              println(s"starting round with budget $budget...")
-              roundStart = Instant.now()
-              gen.apply(budget)
-            }
-            .flatten
-            .takeWhile { _ =>
-              // don't call now() too often. every 100 might be a good balance of accuracy and rate reduction
-              if(maxCountExploredCurr % 100 == 0) {
-                Instant.now().isBefore(roundStart.plus(maxDuration))
-              } else {
-                true
+      var nextGenAcc = mutable.ListBuffer(gen)
+      var roundNum = 0
+      try {
+        streamChecker {
+          Iterator.continually {
+            if(roundNum > 0) {
+              println(s"round over. took ${humanDuration(Duration.between(roundStart, Instant.now()))} and covered $countExplored states so far")
+              if(lastExample.nonEmpty && printRoundExample) {
+                println("printing last example from round:")
+                pprint.pprintln(lastExample.get)
               }
             }
-            .map(_.value)
-            .map(Example(_, budget))
-            .tapEach { example =>
-              lastExample = Some(example)
-              maxCountExploredCurr += 1
+
+            
+            if(nextGenAcc.isEmpty) {
+              println(s"state space exhausted. exiting")
+              None
+            } else {
+              roundNum += 1
+              roundStart = Instant.now()
+              println(s"starting round $roundNum...")
+              val theGens = nextGenAcc.result()
+              nextGenAcc.clear()
+              Some(theGens.iterator.flatMap(_.apply(1)))
             }
           }
-          .size
+          .takeWhile(_.nonEmpty)
+          .flatten
+          .flatten
+          .flatMap {
+            case Left(result) => Iterator.single(result)
+            case Right(nextGen) =>
+              if(!nextGen.isDefinitelyEmpty) {
+                nextGenAcc += nextGen
+              }
+              Iterator.empty
+          }
+          .takeWhile { _ =>
+            // don't call now() too often. every 1000 might be a good balance of accuracy and rate reduction
+            if(countExplored % 1000 == 0) {
+              Instant.now().isBefore(startTime.plus(maxDuration))
+            } else {
+              true
+            }
+          }
+          .map(_.value)
+          .map(Example(_, roundNum))
+          .tapEach { example =>
+            lastExample = Some(example)
+            countExplored += 1
+          }
+        }
+        .foreach(_ => ())
           
-        assert(count > 0, s"checked no values - that's usually bad")
-        println(s"successful checking after ${humanDuration(Duration.between(startTime, Instant.now()))}, after exploring a maximum space of $maxCountExploredOverall states")
+        assert(countExplored > 0, s"checked no values - that's usually bad")
+        println(s"successful checking after ${humanDuration(Duration.between(startTime, Instant.now()))}, after exploring $countExplored states")
       } catch {
         case err =>
-          println(s"found error after ${humanDuration(Duration.between(startTime, Instant.now()))}, exploring a maximum space of $maxCountExploredOverall states")
+          println(s"found error after ${humanDuration(Duration.between(startTime, Instant.now()))}, exploring $countExplored states")
           if(lastExample.nonEmpty) {
             println("printing last example considered:")
             pprint.pprintln(lastExample.get)
