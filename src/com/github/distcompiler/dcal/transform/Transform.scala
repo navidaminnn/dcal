@@ -36,11 +36,6 @@ object Transform {
       transTuple(Tuple.fromProductTyped(comonad.extract(from)))
   }
 
-  // given transformComonad[F[_], A, B](using ev: util.NotGiven[deriving.Mirror.SumOf[A]])(using comonad: Comonad[F])(using transA: =>Transform[A, B]): Transform[F[A], B] with {
-  //   override def apply(from: F[A]): B =
-  //     transA(comonad.extract(from))
-  // }
-
   given tupleOfTransformsOneM[F[_], Hd, B](using transHd: =>Transform[F[Hd], B]): Tuple1[Transform[F[Hd], B]] =
     Tuple1(lzyTrans(transHd))
 

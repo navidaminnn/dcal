@@ -1,21 +1,37 @@
 package test.com.github.distcompiler.dcal.chungus
 
-import cats.data.Chain
 import scala.annotation.targetName
 import scala.util.Try
 
-sealed abstract class Generator[T] { self =>
+import cats.data.Chain
+import cats.{Eval, Semigroup}
+import cats.implicits.given
+
+enum Generator[T] {
   import Generator.*
 
-  def getSingleton: Option[T] = None
-  def isDefinitelyEmpty: Boolean = false
-  def apply(budget: Int): LazyList[Either[Result[T], Generator[T]]]
+  case Empty extends Generator[Nothing]
+  case Singleton(value: T)
+  case Force(gen: Generator[T])
+  case Pay(gen: Generator[T])
+  case Lazy(genFn: () => Generator[T])
+  case Disjunction(left: Generator[T], right: Generator[T])
+  case FlatMap[T, U](self: Generator[T], fn: T => Generator[U]) extends Generator[U]
 
-  final def up[U >: T]: Generator[U] =
-    self.asInstanceOf[Generator[U]]
+  def isDefinitelyEmpty: Boolean =
+    this match {
+      case Empty => true
+      case _ => false
+    }
 
-  final def filter(fn: T => Boolean): Generator[T] =
-    self.flatMap { value =>
+  def up[U >: T]: Generator[U] =
+    this.asInstanceOf[Generator[U]]
+
+  def map[U](fn: T => U): Generator[U] =
+    this.flatMap(value => free_!(fn(value)))
+
+  def filter(fn: T => Boolean): Generator[T] =
+    this.flatMap { value =>
       if(fn(value)) {
         free_!(value)
       } else {
@@ -23,117 +39,162 @@ sealed abstract class Generator[T] { self =>
       }
     }
 
-  final def map[U](fn: T => U): Generator[U] =
-    self.flatMap(value => free_!(fn(value)))
-
-  final def flatMap[U](fn: T => Generator[U]): Generator[U] =
-    if(self.isDefinitelyEmpty) {
-      none.up
-    } else {
-      self.getSingleton match {
-        case Some(value) => fn(value)
-        case None => 
-          new Generator[U] {
-            override def apply(budget: Int): LazyList[Either[Result[U], Generator[U]]] =
-              self.apply(budget).flatMap {
-                case Left(Result(value, remainder)) =>
-                  fn(value)(remainder)
-                case Right(nextGen) if nextGen.isDefinitelyEmpty =>
-                  Iterator.empty
-                case Right(nextGen) =>
-                  Iterator.single(Right(nextGen.flatMap(fn)))
-              }
-          }
-      }
-    }
-
-  @targetName("or")
-  final def |[U](other: Generator[U]): Generator[T | U] =
-    if(self.isDefinitelyEmpty) {
-      other.up
-    } else if(other.isDefinitelyEmpty) {
-      self.up
-    } else {
-      new Generator[T | U] {
-        override def apply(budget: Int): LazyList[Either[Result[T | U], Generator[T | U]]] = {
-          require(budget >= 0)
-          if(budget == 0) {
-            Right(this) #:: LazyList.empty
-          } else {
-            val leftList: LazyList[Either[Result[T | U], Generator[T | U]]] = self.up.apply(budget)
-            val rightList: LazyList[Either[Result[T | U], Generator[T | U]]] = other.up.apply(budget)
-            if(leftList.nonEmpty && rightList.nonEmpty) {
-              leftList #::: rightList
-            } else if(leftList.nonEmpty) {
-              leftList
-            } else {
-              rightList
-            }
-          }
-        }
-      }
-    }
-
-  final def zip[U](other: Generator[U]): Generator[(T, U)] =
-    self.flatMap(lhs => other.map((lhs, _)))
-
-  final def flatten[U](using ev: T <:< Generator[U]): Generator[U] =
-    self.flatMap(identity)
-
-  final def ++[U](using ev: T <:< Chain[U])(other: Generator[Chain[U]]): Generator[Chain[U]] =
+  def ++(using semigroup: Semigroup[T])(other: Generator[T]): Generator[T] =
     for {
-      lhs <- self
-      rhs <- other
-    } yield lhs ++ rhs
+      left <- this
+      right <- other
+    } yield semigroup.combine(left, right)
 
-  object force extends Generator[T] {
-    override def getSingleton: Option[T] = self.getSingleton
+  def flatMap[U](fn: T => Generator[U]): Generator[U] =
+    this match {
+      case Empty => Empty.up
+      case Singleton(value) => fn(value)
+      case Force(_) | Lazy(_) => FlatMap(this, fn)
+      case Pay(gen) => Pay(gen.flatMap(fn))
+      case Disjunction(left, right) =>
+        left.flatMap(fn) | right.flatMap(fn)
+      case FlatMap(self, prevFn) =>
+        FlatMap(self, prevFn.andThen(_.flatMap(fn)))
+    }
 
-    override def isDefinitelyEmpty: Boolean = self.isDefinitelyEmpty
+  def force: Generator[T] =
+    Force(this)
+  
+  @targetName("or")
+  def |[U](other: Generator[U]): Generator[T | U] =
+    (this, other) match {
+      case (Empty, _) => other
+      case (_, Empty) => this
+      case (Pay(genL), Pay(genR)) => Pay(genL | genR)
+      case _ => Disjunction(this.up, other.up)
+    }
 
-    override def apply(budget: Int): LazyList[Either[Result[T], Generator[T]]] = {
+  def checkWith(checker: Checker[T]): Unit =
+    checker(this)
+
+  def computeResultsForRound(round: Int): Iterator[Option[T]] = {
+    def impl[T](self: Generator[T], budget: Int): Iterator[(T, Int)] = {
       require(budget >= 0)
-      self(budget = Int.MaxValue).map {
-        case Left(Result(value, _)) => Left(Result(value, budget))
-        case Right(nextGen) => Right(nextGen.force)
+      self match {
+        case Empty => Iterator.empty
+        case Singleton(value) => Iterator.single((value, budget))
+        case Force(gen) =>
+          impl(gen, budget = Int.MaxValue).map {
+            case (value, _) => (value, budget)
+          }
+        case Pay(gen) if budget == 0 => Iterator.empty
+        case Pay(gen) => impl(gen, budget = budget - 1)
+        case Lazy(genFn) => impl(genFn(), budget)
+        case Disjunction(left, right) =>
+          impl(left, budget) ++ impl(right, budget)
+        case FlatMap(self, fn) =>
+          impl(self, budget).flatMap {
+            case (value, budget) => impl(fn(value), budget)
+          }
       }
     }
+    
+    impl(this, budget = round)
+      .map {
+        case (value, 0) => Some(value)
+        case _ => None
+      }
   }
 
-  final def checkWith(checker: Checker[T]): Unit =
-    checker(self)
+  def unconsRound: (Iterator[Option[T]], Generator[T]) = {
+    enum State {
+      case Unpaid
+      case HavePaid
+      case Forced
+    }
+
+    def impl[T](self: Generator[T], state: State): Eval[(LazyList[(T, State)], Generator[T])] =
+      self match {
+        case Empty => Eval.now((LazyList.empty, self))
+        case Singleton(value) =>
+          Eval.now(((value, state) #:: LazyList.empty, self))
+        case Force(gen) =>
+          val origState = state
+          impl(gen, state = State.Forced).map {
+            case (iter, nextGen) =>
+              iter.map {
+                case (value, state) =>
+                  assert(state == State.Forced)
+                  (value, origState)
+              } -> (if(nextGen ne gen) Force(nextGen) else self)
+          }
+        case Pay(gen) if state == State.Unpaid =>
+          impl(gen, State.HavePaid)
+        case Pay(gen) if state == State.Forced =>
+          impl(gen, State.Forced)
+        case Pay(_) =>
+          Eval.now((LazyList.empty, self))
+        case Lazy(genFn) =>
+          impl(genFn(), state)
+        case Disjunction(left, right) =>
+          for {
+            (iterLeft, nextGenLeft) <- impl(left, state)
+            (iterRight, nextGenRight) <- impl(right, state)
+          } yield (
+            (iterLeft #::: iterRight) ->
+            (if((nextGenLeft eq left) && (nextGenRight eq right)) self else nextGenLeft | nextGenRight)
+          )
+        case FlatMap(self, fn) =>
+          impl(self, state).flatMap {
+            case (iter, nextGen) =>
+              var finishedIterating = false
+              var nextGenAcc = nextGen.flatMap(fn)
+              iter
+                .flatTraverse {
+                  case (value, state) =>
+                    impl(fn(value), state).map {
+                      case (iter, nextGen) =>
+                        nextGenAcc = nextGenAcc | nextGen
+                        iter
+                    }
+                }
+                .map { iter =>
+                  (iter #::: LazyList.from(iterSentinel { finishedIterating = true }))
+                  -> lzy {
+                    assert(finishedIterating)
+                    nextGenAcc
+                  }
+                }
+          }
+      }
+
+    val (iter, nextGen) = impl(this, state = State.Unpaid).value
+    val fixedIter = iter
+      .iterator
+      .collect {
+        case (value, State.HavePaid) => Some(value)
+        case (value, State.Unpaid) => None
+        case (value, State.Forced) => throw AssertionError(s"should never find a top-level forced state")
+      }
+
+    (fixedIter, nextGen)
+  }
 }
 
 object Generator {
-  final case class Result[+T](value: T, remainder: Int)
-
-  final def free_![T](value: T): Generator[T] =
-    new Generator[T] {
-      override def getSingleton: Option[T] = Some(value)
-
-      override def apply(budget: Int): LazyList[Either[Result[T], Generator[T]]] =
-        Left(Result(value, budget)) #:: LazyList.empty
-    }
-
-  object none extends Generator[Nothing] {
-    override def isDefinitelyEmpty: Boolean = true
-
-    override def apply(budget: Int): LazyList[Either[Result[Nothing], Generator[Nothing]]] =
-      LazyList.empty
-  }
-
-  val unit: Generator[Unit] = free_!(())
+  def none: Generator[Nothing] =
+    Generator.Empty
 
   def one[T](value: T): Generator[T] =
     costOne(free_!(value))
 
-  def lzy[T](generator: =>Generator[T]): Generator[T] =
-    new Generator[T] {
-      lazy val gen = generator
-      override def apply(budget: Int): LazyList[Either[Result[T], Generator[T]]] = gen(budget)
-    }
+  def free_![T](value: T): Generator[T] =
+    Generator.Singleton(value)
 
-  given tupleGeneratorEmpty: Generator[EmptyTuple] = unit.map(_ => EmptyTuple)
+  def costOne[T](gen: Generator[T]): Generator[T] =
+    Generator.Pay(gen)
+
+  def lzy[T](gen: =>Generator[T]): Generator[T] = {
+    lazy val lzyGen = gen
+    Generator.Lazy(() => gen)
+  }
+
+  given tupleGeneratorEmpty: Generator[EmptyTuple] = free_!(EmptyTuple)
   given tupleGeneratorCons[T, Rest <: Tuple](using tGen: =>Generator[T], restGen: =>Generator[Rest]): Generator[T *: Rest] =
     for {
       t <- lzy(tGen)
@@ -147,7 +208,7 @@ object Generator {
       }
       .flatMap { result =>
         result
-          .map(value => unit.map(_ => value))
+          .map(value => free_!(value))
           .recover {
             case _: IllegalArgumentException =>
               none.up
@@ -160,41 +221,26 @@ object Generator {
   given generatorTupleCons[T, Rest <: Tuple](using ev: Tuple.InverseMap[Rest, Generator] <:< Tuple)(using tGen: =>Generator[T], rest: Rest): (Generator[T] *: Rest) =
     lzy(tGen) *: rest
 
-  given sumGenerator[T](using mirror: deriving.Mirror.SumOf[T])(using partGens: =>Tuple.Map[mirror.MirroredElemTypes, Generator]): Generator[T] with {
-    lazy val partGensLzy =
+  given sumGenerator[T](using mirror: deriving.Mirror.SumOf[T])(using partGens: =>Tuple.Map[mirror.MirroredElemTypes, Generator]): Generator[T] =
+    lzy {
       partGens
         .productIterator
         .foldLeft(none.up: Generator[T]) { (acc, gen) =>
           acc | gen.asInstanceOf[Generator[T]]
         }
-    override def apply(budget: Int): LazyList[Either[Result[T], Generator[T]]] = partGensLzy(budget)
-  }
+    }
 
   given listOfGenerator[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen)
 
   def anyOf[T](using gen: =>Generator[T]): Generator[T] = lzy(gen)
 
-  def costOne[T](generator: Generator[T]): Generator[T] =
-    if(generator.isDefinitelyEmpty) {
-      none.up
-    } else {
-      new Generator[T] {
-        override def apply(budget: Int): LazyList[Either[Result[T], Generator[T]]] = {
-          require(budget >= 0)
-          if(budget == 0) {
-            Right(this) #:: LazyList.empty
-          } else {
-            generator(budget - 1)
-          }
-        }
-      }
-    }
-
   def chooseAny[T](iterable: Iterable[T]): Generator[T] =
-    iterable.iterator
-      .map(one)
-      .reduceOption(_ | _)
-      .getOrElse(none.up)
+    costOne {
+      iterable.iterator
+        .map(free_!)
+        .reduceOption(_ | _)
+        .getOrElse(none.up)
+    }
 
   def listOf[T](generator: Generator[T], limit: Int = Int.MaxValue): Generator[List[T]] = {
     require(limit >= 0)
@@ -205,7 +251,7 @@ object Generator {
       | costOne {
           for {
             head <- generator
-            tail <- listOf(generator, limit = limit - 1)
+            tail <- lzy(listOf(generator, limit = limit - 1))
           } yield head :: tail
         }
     }

@@ -136,86 +136,85 @@ object Scoping {
       }
   }
 
-  def scopeBinding(binding: Ps[Binding])(using ScopingContext): Scoping[Unit] = {
-    given transformCall: Transform[Ps[Binding.Call], Scoping[Unit]] with {
-      override def apply(from: Ps[Binding.Call]): Scoping[Unit] = {
-        val Ps(Binding.Call(path, arguments)) = from
-        for {
-          _ <- ctx.lookup(path.value) match {
-            case None =>
-              Scoping.error(ScopingError.UndefinedReference(from.up))
-            case Some(defn) =>
-              Scoping.tellRef(from.up -> defn.up)
-          }
-          _ <- arguments.traverse_(scopeExpression)
-        } yield ()
-      }
-    }
-
+  def scopeBinding(binding: Ps[Binding])(using ScopingContext): Scoping[Unit] =
     Transform[Ps[Binding], Scoping[Unit]](binding)
-  }
 
-  def scopeExpression(expression: Ps[Expression])(using ScopingContext): Scoping[Unit] = {
-    given transformOpCall: Transform[Ps[Expression.OpCall], Scoping[Unit]] with {
-      override def apply(from: Ps[Expression.OpCall]): Scoping[Unit] = {
-        // TODO: arity checking!
-        val Ps(Expression.OpCall(ident, arguments)) = from
-        val id = 
-          ident match {
-            case Left(op) => op
-            case Right(path) => path
-          }
-        for {
-          _ <- ctx.lookup(id.value) match {
-            case None =>
-              Scoping.error(ScopingError.UndefinedReference(from.up))
-            case Some(defn) =>
-              Scoping.tellRef(from.up -> defn.up)
-          }
-          _ <- arguments.traverse_(scopeExpression)
-        } yield ()
-      }
-    }
-
+  def scopeExpression(expression: Ps[Expression])(using ScopingContext): Scoping[Unit] =
     Transform[Ps[Expression], Scoping[Unit]](expression)
+
+  def scopeStatement(statement: Ps[Statement])(using ScopingContext): Scoping[Unit] =
+    Transform[Ps[Statement], Scoping[Unit]](statement)
+
+  given scopeOtherPs[T](using trans: =>Transform[T, Scoping[Unit]]): Transform[Ps[T], Scoping[Unit]] with {
+    override def apply(from: Ps[T]): Scoping[Unit] =
+      trans(from.value)
   }
 
-  def scopeStatement(stmt: Ps[Statement])(using ScopingContext): Scoping[Unit] = {
-    given transformCall: Transform[Ps[Statement.Call], Scoping[Unit]] with {
-      override def apply(from: Ps[Statement.Call]): Scoping[Unit] = {
-        val Ps(Statement.Call(call)) = from
-        scopeBinding(call.up)
+  given scopeBindingCall(using ScopingContext): Transform[Ps[Binding.Call], Scoping[Unit]] with {
+    override def apply(from: Ps[Binding.Call]): Scoping[Unit] = {
+      val Ps(Binding.Call(path, arguments)) = from
+      for {
+        _ <- ctx.lookup(path.value) match {
+          case None =>
+            Scoping.error(ScopingError.UndefinedReference(from.up))
+          case Some(defn) =>
+            Scoping.tellRef(from.up -> defn.up)
+        }
+        _ <- arguments.traverse_(scopeExpression)
+      } yield ()
+    }
+  }
+
+  given scopeExpressionOpCall(using ScopingContext): Transform[Ps[Expression.OpCall], Scoping[Unit]] with {
+    override def apply(from: Ps[Expression.OpCall]): Scoping[Unit] = {
+      // TODO: arity checking!
+      val Ps(Expression.OpCall(ident, arguments)) = from
+      val id = 
+        ident match {
+          case Left(op) => op
+          case Right(path) => path
+        }
+      for {
+        _ <- ctx.lookup(id.value) match {
+          case None =>
+            Scoping.error(ScopingError.UndefinedReference(from.up))
+          case Some(defn) =>
+            Scoping.tellRef(from.up -> defn.up)
+        }
+        _ <- arguments.traverse_(scopeExpression)
+      } yield ()
+    }
+  }
+
+  given scopeStatementCall(using ScopingContext): Transform[Ps[Statement.Call], Scoping[Unit]] with {
+    override def apply(from: Ps[Statement.Call]): Scoping[Unit] = {
+      val Ps(Statement.Call(call)) = from
+      scopeBinding(call.up)
+    }
+  }
+
+  given scopeStatements(using ScopingContext): Transform[List[Ps[Statement]], Scoping[Unit]] with {
+    override def apply(from: List[Ps[Statement]]): Scoping[Unit] = {
+      from match {
+        case Nil => Scoping.unit
+        case stmt :: restStmts =>
+          def scopeLetVar(name: String, binding: Ps[Binding], defn: Ps[Def]): Scoping[Unit] = {
+            val newCtx = ctx.withDefs(Map(name -> defn))
+            for {
+              _ <- scopeBinding(binding)
+              _ <- restStmts.traverse_(scopeStatement(_)(using newCtx))
+            } yield ()
+          }
+
+          stmt match {
+            case defn @ Ps(d @ Statement.Let(name, binding)) =>
+              scopeLetVar(name.value, binding, defn.map(_ => d))
+            case defn @ Ps(d @ Statement.Var(name, binding)) =>
+              scopeLetVar(name.value, binding, defn.map(_ => d))
+            case _ =>
+              Monoid.combine(scopeStatement(stmt), scopeStatements(restStmts))
+          }
       }
     }
-
-    given transformExpr: Transform[Ps[Expression], Scoping[Unit]] = scopeExpression
-
-    given transformStmts: Transform[List[Ps[Statement]], Scoping[Unit]] with {
-      override def apply(from: List[Ps[Statement]]): Scoping[Unit] =
-        from match {
-          case Nil => Scoping.unit
-          case stmt :: restStmts =>
-            def scopeLetVar(name: String, binding: Ps[Binding], defn: Ps[Def]): Scoping[Unit] = {
-              val newCtx = ctx.withDefs(Map(name -> defn))
-              for {
-                _ <- scopeBinding(binding)
-                _ <- restStmts.traverse_(scopeStatement(_)(using newCtx))
-              } yield ()
-            }
-
-            stmt match {
-              case defn @ Ps(d @ Statement.Let(name, binding)) =>
-                scopeLetVar(name.value, binding, defn.map(_ => d))
-              case defn @ Ps(d @ Statement.Var(name, binding)) =>
-                scopeLetVar(name.value, binding, defn.map(_ => d))
-              case _ =>
-                Monoid.combine(transformStmt(stmt), transformStmts(restStmts))
-            }
-        }
-    }
-
-    lazy val transformStmt: Transform[Ps[Statement], Scoping[Unit]] = Transform.apply
-
-    transformStmt(stmt)
   }
 }
