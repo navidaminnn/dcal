@@ -5,15 +5,15 @@ import cats.data.{EitherT, WriterT, Chain}
 import cats.{Eval, Monoid}
 import cats.implicits.given
 
-import parsing.Ps
+import parsing.{Ps, PsK}
 import transform.Transform
 
 object Scoping {
   import DCalAST.*
 
   enum ScopingError {
-    case Redefinition(first: Ps[Def], second: Ps[Def])
-    case UndefinedReference(ref: Ps[Referent])
+    case Redefinition(first: PsK[Def], second: PsK[Def])
+    case UndefinedReference(ref: PsK[Referent])
   }
 
   type Def =
@@ -44,9 +44,9 @@ object Scoping {
 
   private inline def ctx(using ctx: ScopingContext): ScopingContext = ctx
 
-  final case class ScopingInfo(referencePairs: Chain[(Ps[Referent], Ps[Def])], errors: Chain[ScopingError]) derives Monoid
+  final case class ScopingInfo(referencePairs: Chain[ReferencePair], errors: Chain[ScopingError]) derives Monoid
 
-  type ReferencePair = (Ps[Referent], Ps[Def])
+  type ReferencePair = (PsK[Referent], PsK[Def])
   type ReferenceInfo = Chain[ReferencePair]
   type Scoping[T] = WriterT[Eval, ScopingInfo, T]
   object Scoping {
@@ -104,7 +104,7 @@ object Scoping {
         case (_, firstDef :: redefinitions) =>
           redefinitions
             .traverse_ { redefinition =>
-              Scoping.error(ScopingError.Redefinition(firstDef.up, redefinition.up))
+              Scoping.error(ScopingError.Redefinition(firstDef.toPsK.up, redefinition.toPsK.up))
             }
         case _ =>
           Scoping.unit
@@ -127,7 +127,7 @@ object Scoping {
       .traverse_ {
         case (_, firstDef :: redefinitions) =>
           redefinitions.traverse_ { redefinition =>
-            Scoping.error(ScopingError.Redefinition(firstDef.up, redefinition.up))
+            Scoping.error(ScopingError.Redefinition(firstDef.toPsK.up, redefinition.toPsK.up))
           }
         case _ => Scoping.unit
       }
@@ -156,9 +156,9 @@ object Scoping {
       for {
         _ <- ctx.lookup(path.value) match {
           case None =>
-            Scoping.error(ScopingError.UndefinedReference(from.up))
+            Scoping.error(ScopingError.UndefinedReference(from.toPsK.up))
           case Some(defn) =>
-            Scoping.tellRef(from.up -> defn.up)
+            Scoping.tellRef(from.toPsK.up -> defn.toPsK.up)
         }
         _ <- arguments.traverse_(scopeExpression)
       } yield ()
@@ -177,9 +177,9 @@ object Scoping {
       for {
         _ <- ctx.lookup(id.value) match {
           case None =>
-            Scoping.error(ScopingError.UndefinedReference(from.up))
+            Scoping.error(ScopingError.UndefinedReference(from.toPsK.up))
           case Some(defn) =>
-            Scoping.tellRef(from.up -> defn.up)
+            Scoping.tellRef(from.toPsK.up -> defn.toPsK.up)
         }
         _ <- arguments.traverse_(scopeExpression)
       } yield ()

@@ -1,6 +1,5 @@
 package com.github.distcompiler.dcal.parsing
 
-import com.github.distcompiler.dcal.transform.Transform
 import cats.Comonad
 
 final case class Ps[T](value: T)(using val sourceLocation: SourceLocation) {
@@ -9,6 +8,8 @@ final case class Ps[T](value: T)(using val sourceLocation: SourceLocation) {
 
   def up[U >: T]: Ps[U] =
     map(v => v: U)
+
+  def toPsK: PsK[T] = PsK(value, sourceLocation)
 }
 
 object Ps {

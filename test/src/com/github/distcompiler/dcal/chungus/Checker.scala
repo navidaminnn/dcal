@@ -12,43 +12,72 @@ sealed trait Checker[T] { self =>
 object Checker {
   final case class Example[T](value: T, budget: Int)
 
-  sealed trait StreamChecker[T] { self =>
-    def apply(data: Iterator[Example[T]]): Iterator[Example[T]]
+  final case class PosInfo(fullName: String, lineNum: Int)
+  object PosInfo {
+    inline given posInfo(using fullName: sourcecode.FullName.Machine, line: sourcecode.Line): PosInfo =
+      PosInfo(fullName = fullName.value, lineNum = line.value)
+  }
 
-    @targetName("and")
+  enum StreamChecker[T] {
+    case Forall(fn: T => Unit, posInfo: PosInfo)
+    case Exists(pred: T => Boolean, posInfo: PosInfo)
+    case And(left: StreamChecker[T], right: StreamChecker[T])
+    case Transform[T, U](fn: T => U, innerChecker: StreamChecker[U]) extends StreamChecker[T]
+
     def &&(other: StreamChecker[T]): StreamChecker[T] =
-      StreamChecker { data =>
-        other(self(data))
-      }
-  }
-  object StreamChecker {
-    def apply[T](fn: Iterator[Example[T]] => Iterator[Example[T]]): StreamChecker[T] =
-      new StreamChecker[T] {
-        override def apply(data: Iterator[Example[T]]): Iterator[Example[T]] = fn(data)
-      }
+      And(this, other)
 
-    def exists[T](pred: T => Boolean)(using fullName: sourcecode.FullName, lineNum: sourcecode.Line): StreamChecker[T] =
-      StreamChecker { data =>
-        var count = 0
-        data.tapEach {
-          case Example(value, _) if pred(value) =>
-            count += 1
-          case _ =>
-        } ++ iterSentinel {
-          assert(count > 0, s"no examples found for ${fullName.value}:${lineNum.value}")
+    def apply(data: Iterator[Example[T]]): Unit = {
+      def impl[T](self: StreamChecker[T]): Option[Example[T]] => Unit =
+        self match {
+          case Forall(fn, posInfo) =>
+            {
+              case None =>
+              case Some(Example(value, _)) =>
+                fn(value)
+            }
+          case Exists(pred, posInfo) =>
+            var count = 0
+            {
+              case None =>
+                assert(count > 0, s"no examples found for ${posInfo.fullName}:${posInfo.lineNum}")
+              case Some(Example(value, _)) =>
+                if(pred(value)) {
+                  count += 1
+                }
+            }
+          case And(left, right) =>
+            val leftFn = impl(left)
+            val rightFn = impl(right)
+            { exampleOpt =>
+              leftFn(exampleOpt)
+              rightFn(exampleOpt)
+            }
+          case Transform(fn, innerChecker) =>
+            val innerFn = impl(innerChecker)
+            { exampleOpt =>
+              innerFn {
+                exampleOpt.map {
+                  case Example(value, budget) => Example(fn(value), budget)
+                }
+              }
+            }
         }
-      }
-
-    def forall[T](fn: T => Unit): StreamChecker[T] =
-      StreamChecker { data =>
-        data.tapEach {
-          case Example(value, _) =>
-            fn(value)
-        }
-      }
+      
+      val check = impl(this)
+      data.map(Some(_)).foreach(check)
+      check(None) // check at end
+    }
   }
 
-  export StreamChecker.{apply as _, *}
+  def forall[T](fn: T => Unit)(using posInfo: PosInfo): StreamChecker[T] =
+    StreamChecker.Forall(fn, posInfo)
+
+  def exists[T](pred: T => Boolean)(using posInfo: PosInfo): StreamChecker[T] =
+    StreamChecker.Exists(pred, posInfo)
+
+  def transform[T, U](fn: T => U)(innerChecker: StreamChecker[U]): StreamChecker[T] =
+    StreamChecker.Transform(fn, innerChecker)
 
   def apply[T](fn: Generator[T] => Unit): Checker[T] =
     new Checker[T] {
@@ -134,7 +163,6 @@ object Checker {
             countExploredSinceLast += 1
           }
         }
-        .foreach(_ => ())
           
         assert(countExplored > 0, s"checked no values - that's usually bad")
         println(fansi.Color.Green(">>successful checking") ++ s" after ${humanDuration(Duration.between(startTime, Instant.now()))}, after exploring $countExplored states")
