@@ -40,7 +40,7 @@ object Checker {
             var count = 0
             {
               case None =>
-                assert(count > 0, s"no examples found for ${posInfo.fullName}:${posInfo.lineNum}")
+                Predef.assert(count > 0, s"no examples found for ${posInfo.fullName}:${posInfo.lineNum}")
               case Some(Example(value, _)) =>
                 if(pred(value)) {
                   count += 1
@@ -85,7 +85,7 @@ object Checker {
     }
 
   private def humanDuration(duration: Duration): String = {
-    val builder = mutable.StringBuilder.newBuilder
+    val builder = mutable.StringBuilder()
     def ensureSpace(): Unit =
       if(builder.nonEmpty) {
         builder ++= " "
@@ -164,14 +164,14 @@ object Checker {
           }
         }
           
-        assert(countExplored > 0, s"checked no values - that's usually bad")
+        Predef.assert(countExplored > 0, s"checked no values - that's usually bad")
         println(fansi.Color.Green(">>successful checking") ++ s" after ${humanDuration(Duration.between(startTime, Instant.now()))}, after exploring $countExplored states")
       } catch {
         case err =>
           println(fansi.Color.Red("!!found error") ++ s" after ${humanDuration(Duration.between(startTime, Instant.now()))}, exploring $countExplored states")
           if(lastExample.nonEmpty) {
             print("  printing last example considered: ")
-            pprint.tokenize(lastExample, initialOffset = 2).foreach(print)
+            pprint.tokenize(lastExample.get, initialOffset = 2).foreach(print)
             println()
           }
           throw err

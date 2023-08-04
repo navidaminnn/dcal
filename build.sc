@@ -2,7 +2,7 @@ import mill._, scalalib._
 
 object dcal extends RootModule with ScalaModule {
   def scalaVersion = "3.3.0"
-  def scalacOptions = Seq("-source", "future"/*, "-Ysafe-init"*/)
+  def scalacOptions = Seq("-source", "future", "-feature", "-deprecation"/*, "-Ysafe-init"*/)
 
   def ivyDeps = Agg(
     ivy"com.lihaoyi::os-lib:0.9.1",

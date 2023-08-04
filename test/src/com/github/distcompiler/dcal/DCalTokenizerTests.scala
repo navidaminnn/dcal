@@ -1,6 +1,6 @@
 package test.com.github.distcompiler.dcal
 
-import utest.*
+import utest.{TestSuite, Tests, test}
 import chungus.*
 
 import com.github.distcompiler.dcal.DCalTokenizer
@@ -77,34 +77,36 @@ object DCalTokenizerTests extends TestSuite {
       }
     }
 
-  def tests = Tests {
-    test("to string and back") {
-      listOf(tokenGen | anyOf[Whitespace])
-        .filter(adjacentPairRules)
-        .checkWith {
-          import Checker.*
-          import java.time.Duration
+  def toStringAndBack(): Unit = {
+    listOf(tokenGen | anyOf[Whitespace])
+      .filter(adjacentPairRules)
+      .checkWith {
+        import Checker.*
+        import java.time.Duration
 
-          timeLimited(maxDuration = Duration.ofMinutes(1)) {
-            exists[List[Token | Whitespace]](_.size >= 5)
-            && forall { tokensOrSpace =>
-              val strForm = renderSeq(tokensOrSpace)
-              try {
-                val reparsedTokens = DCalTokenizer(strForm, path = "<dummy>").toList
-                val expectedtokens = tokensOrSpace
-                  .collect { case tok: Token => tok }
-                  .map(Ps(_))
-                  .map(Right(_))
+        timeLimited(maxDuration = Duration.ofMinutes(1)) {
+          exists[List[Token | Whitespace]](_.size >= 5)
+          && forall { tokensOrSpace =>
+            val strForm = renderSeq(tokensOrSpace)
+            try {
+              val reparsedTokens = DCalTokenizer(strForm, path = "<dummy>").toList
+              val expectedtokens = tokensOrSpace
+                .collect { case tok: Token => tok }
+                .map(Ps(_))
+                .map(Right(_))
 
-                assert(reparsedTokens == expectedtokens)
-              } catch {
-                case err =>
-                  pprint(s"$tokensOrSpace ==> |$strForm")
-                  throw err
-              }
+              assert(reparsedTokens == expectedtokens)
+            } catch {
+              case err =>
+                pprint(s"$tokensOrSpace ==> |$strForm")
+                throw err
             }
           }
         }
-    }
+      }
+  }
+
+  def tests = Tests {
+    test("to string and back") - toStringAndBack()
   }
 }

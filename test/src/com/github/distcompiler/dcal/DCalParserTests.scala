@@ -1,10 +1,11 @@
 package test.com.github.distcompiler.dcal
 
 import cats.data.Chain
+import cats.syntax.all.given
 import java.time.Duration
 
-import utest.*
-import chungus.{Generator, Checker}
+import utest.{TestSuite, Tests, test}
+import chungus.*
 import com.github.distcompiler.dcal.{DCalAST, DCalTokenizer, DCalParser}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
 
@@ -14,6 +15,12 @@ object DCalParserTests extends TestSuite {
   import Generator.*
 
   private type GC[T] = Generator[Chain[T]]
+
+  private def tok(tok: Token): GC[Token] =
+    one(Chain.one(tok))
+
+  private def toks(toks: Token*): GC[Token] =
+    one(Chain.fromSeq(toks))
 
   private given dummyLoc: SourceLocation = SourceLocation("dummy", offsetStart = -1, offsetEnd = -1)
 
@@ -26,236 +33,175 @@ object DCalParserTests extends TestSuite {
   // if we focus on generating lists that are too long we'll never get very deep. length <= 3 seems good here.
   private given limitedListOf[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen, limit = 3)
 
-  extension [FA](self: FA)(using isIterableOnce: collection.generic.IsIterableOnce[FA]) {
-    private def sepBy(sep: isIterableOnce.A): Iterator[isIterableOnce.A] =
-      self.sepByAll(Some(sep): Iterable[isIterableOnce.A])
+  private def renderSepBy[T,U](seq: Seq[T])(sep: Chain[U])(fn: T => Generator[Chain[U]]): GC[U] =
+    Chain.fromSeq(seq)
+      .traverse[Generator, Chain[Chain[U]]](elem => fn(elem).map(Chain.one))
+      .map(_.intercalate(Chain.one(sep)).flatten)
 
-    private def sepByAll(sep: Iterable[isIterableOnce.A]): Iterator[isIterableOnce.A] =
-      isIterableOnce(self).iterator
-        .scanLeft(None: Option[Iterator[isIterableOnce.A]]) { (prevOpt, elem) =>
-        prevOpt match {
-          case None =>
-            Some(Iterator.single(elem))
-          case Some(_) =>
-            Some(sep.iterator ++ Iterator.single(elem))
-        }
-      }
-      .flatten
-      .flatten
-  }
+  private def renderCommaSep[T](seq: Seq[T])(fn: T => GC[Token]): GC[Token] =
+    renderSepBy(seq)(Chain.one(Token.Punctuation(Punctuation.`,`)))(fn)
 
-  private def renderImports(imports: List[Ps[String]]): GC[Token] =
+  private def renderImports(imports: List[Ps[Import]]): GC[Token] =
     imports match {
       case Nil => one(Chain.nil)
       case imports =>
-        chainCat(
-          Token.Keyword(Keyword.`import`),
-          imports.iterator
-            .map(_.value)
-            .map(Token.Name(_))
-            .sepBy(Token.Punctuation(Punctuation.`,`)),
-        )
+        tok(Token.Keyword(Keyword.`import`))
+        ++ renderCommaSep(imports) {
+          case Ps(Import.Name(name)) => one(Chain.one(Token.Name(name)))
+        }
     }
 
   private def renderPath(path: Path): GC[Token] =
     path match {
       case Path.Name(name) =>
-        chainCat(Token.Name(name))
+        tok(Token.Name(name))
       case Path.Project(prefix, name) =>
-        chainCat(
-          renderPath(prefix.value),
+        renderPath(prefix.value)
+        ++ toks(
           Token.Punctuation(Punctuation.`.`),
           Token.Name(name),
         )
       case Path.Index(prefix, index) =>
-        chainCat(
-          renderPath(prefix.value),
-          Token.Punctuation(Punctuation.`[`),
-          renderExpression(index.value),
-          Token.Punctuation(Punctuation.`]`),
-        )
+        renderPath(prefix.value)
+        ++ tok(Token.Punctuation(Punctuation.`[`))
+        ++ renderExpression(index.value)
+        ++ tok(Token.Punctuation(Punctuation.`]`))
     }
 
-  private def renderExpression(expression: Expression, needGroup: Boolean = false): GC[Token] =
-    expression match {
-      case Expression.IntLiteral(value) =>
-        one(Chain.one(Token.IntLiteral(value)))
-      case Expression.StringLiteral(value) =>
-        one(Chain.one(Token.StringLiteral(value)))
-      case Expression.OpCall(ref, arguments) =>
-        ref match {
-          case Left(op) =>
-            val List(lhs, rhs) = arguments
-            val mainPart =
-              chainCat[Token](
-                renderExpression(lhs.value, needGroup = !needGroup),
-                Token.BinaryOperator(op.value),
-                renderExpression(rhs.value, needGroup = !needGroup),
-              )
+  private def renderExpression(expression: Expression, needGroup: Boolean = false): GC[Token] = {
+    def addGroup(body: GC[Token]): GC[Token] =
+      tok(Token.Punctuation(Punctuation.`(`))
+      ++ body
+      ++ tok(Token.Punctuation(Punctuation.`)`))
 
-            if(needGroup) {
-              chainCat(
-                Token.Punctuation(Punctuation.`(`),
-                mainPart,
-                Token.Punctuation(Punctuation.`)`),
-              )
-            } else {
-              mainPart
-            }
-          case Right(path) =>
-            chainCat(
-              renderPath(path.value),
-              if(arguments.nonEmpty) {
-                chainCat[Token](
-                  Token.Punctuation(Punctuation.`(`),
-                  arguments.iterator
-                    .map(expr => renderExpression(expr.value))
-                    .sepBy(one(Chain.one(Token.Punctuation(Punctuation.`,`)))),
-                  Token.Punctuation(Punctuation.`)`),
-                )
-              } else {
-                None: Option[Token]
-              },
-            )
-        }
-      case Expression.SetConstructor(members) =>
-        chainCat(
-          Token.Punctuation(Punctuation.`{`),
-          members.iterator
-            .map(_.value)
-            .map(renderExpression(_))
-            .sepBy(one(Chain.one(Token.Punctuation(Punctuation.`,`)))),
-          Token.Punctuation(Punctuation.`}`),
-        )
+    def groupOrNo(body: GC[Token]): GC[Token] =
+      if(needGroup) {
+        addGroup(body)
+      } else {
+        body | addGroup(body)
+      }
+
+    groupOrNo {
+      expression match {
+        case Expression.IntLiteral(value) =>
+          tok(Token.IntLiteral(value))
+        case Expression.StringLiteral(value) =>
+          tok(Token.StringLiteral(value))
+        case Expression.OpCall(ref, arguments) =>
+          ref match {
+            case Left(op) =>
+              val List(lhs, rhs) = arguments
+              
+              renderExpression(lhs.value, needGroup = true)
+              ++ tok(Token.BinaryOperator(op.value))
+              ++ renderExpression(rhs.value, needGroup = true)
+            case Right(path) =>
+              renderPath(path.value)
+              ++ (if(arguments.nonEmpty) {
+                tok(Token.Punctuation(Punctuation.`(`))
+                ++ renderCommaSep(arguments)(expr => renderExpression(expr.value))
+                ++ tok(Token.Punctuation(Punctuation.`)`))
+              } else one(Chain.empty))
+          }
+        case Expression.SetConstructor(members) =>
+          tok(Token.Punctuation(Punctuation.`{`))
+          ++ renderCommaSep(members)(expr => renderExpression(expr.value))
+          ++ tok(Token.Punctuation(Punctuation.`}`))
+      }
     }
+  }
 
   private def renderBinding(binding: Binding, needEquals: Boolean = true): GC[Token] =
     binding match {
       case Binding.Value(expr) => 
-        chainCat(
-          if(needEquals) {
-            Some(Token.BinaryOperator(BinaryOperator.`=`))
-          } else {
-            None: Option[Token]
-          },
-          renderExpression(expr.value),
-        )
+        (if(needEquals) {
+          tok(Token.BinaryOperator(BinaryOperator.`=`))
+        } else {
+          one(Chain.empty)
+        })
+        ++ renderExpression(expr.value)
       case Binding.Selection(binding) =>
-        chainCat(
-          Token.BinaryOperator(BinaryOperator.`\\in`),
-          renderBinding(binding.value, needEquals = false),
-        )
+        tok(Token.BinaryOperator(BinaryOperator.`\\in`))
+        ++ renderBinding(binding.value, needEquals = false)
       case Binding.Call(path, arguments) =>
-        chainCat(
-          if(needEquals) {
-            Some(Token.BinaryOperator(BinaryOperator.`=`))
-          } else {
-            None: Option[Token]
-          },
-          Token.Keyword(Keyword.`call`),
-          renderPath(path.value),
-          Token.Punctuation(Punctuation.`(`),
-          arguments.iterator
-            .map(_.value)
-            .map(renderExpression(_))
-            .sepBy(one(Chain.one(Token.Punctuation(Punctuation.`,`)))),
-          Token.Punctuation(Punctuation.`)`),
-        )
+        (if(needEquals) {
+          tok(Token.BinaryOperator(BinaryOperator.`=`))
+        } else {
+          one(Chain.empty)
+        })
+        ++ tok(Token.Keyword(Keyword.`call`))
+        ++ renderPath(path.value)
+        ++ tok(Token.Punctuation(Punctuation.`(`))
+        ++ renderCommaSep(arguments)(arg => renderExpression(arg.value))
+        ++ tok(Token.Punctuation(Punctuation.`)`))
     }
 
   private def renderStatement(statement: Statement): GC[Token] =
     statement match {
       case Statement.Await(expression) =>
-        chainCat(
-          Token.Keyword(Keyword.`await`),
-          renderExpression(expression.value),
-        )
+        tok(Token.Keyword(Keyword.`await`))
+        ++ renderExpression(expression.value)
       case Statement.Assignment(pairs) =>
-        pairs.iterator
-          .map(_.value)
-          .map {
-            case AssignPair(path, rhs) =>
-              chainCat[Token](
-                renderPath(path.value),
-                Token.Punctuation(Punctuation.`:=`),
-                renderExpression(rhs.value),
-              )
-          }
-          .sepBy(one(Chain.one(Token.Punctuation(Punctuation.`||`))))
-          .reduceOption(_ ++ _)
-          .getOrElse(one(Chain.nil))
+        renderSepBy(pairs)(Chain.one(Token.Punctuation(Punctuation.`||`))) {
+          case Ps(AssignPair(path, rhs)) =>
+            renderPath(path.value)
+            ++ tok(Token.Punctuation(Punctuation.`:=`))
+            ++ renderExpression(rhs.value)
+        }
       case Statement.Let(name, binding) =>
-        chainCat(
-          Token.Keyword(Keyword.`let`),
-          Token.Name(name.value),
-          renderBinding(binding.value),
-        )
+        tok(Token.Keyword(Keyword.`let`))
+        ++ tok(Token.Name(name.value))
+        ++ renderBinding(binding.value)
       case Statement.Var(name, binding) =>
-        chainCat(
-          Token.Keyword(Keyword.`var`),
-          Token.Name(name.value),
-          renderBinding(binding.value),
-        )
+        tok(Token.Keyword(Keyword.`var`))
+        ++ tok(Token.Name(name.value))
+        ++ renderBinding(binding.value)
       case Statement.Block(statements) =>
-        chainCat(
-          Token.Punctuation(Punctuation.`{`),
-          statements.iterator
-            .map(_.value)
-            .map(renderStatement)
-            .reduceOption(_ ++ _)
-            .getOrElse(one(Chain.nil)),
-          Token.Punctuation(Punctuation.`}`),
-        )
+        tok(Token.Punctuation(Punctuation.`{`))
+        ++ Chain.fromSeq(statements)
+          .flatTraverse(stmt => renderStatement(stmt.value))
+        ++ tok(Token.Punctuation(Punctuation.`}`))
       case Statement.If(predicate, thenBlock, elseBlockOpt) =>
-        chainCat(
-          Token.Keyword(Keyword.`if`),
-          Token.Punctuation(Punctuation.`(`),
-          renderExpression(predicate.value),
-          Token.Punctuation(Punctuation.`)`),
-          renderStatement(thenBlock.value),
-          elseBlockOpt
-            .map(_.value)
-            .map {
-              case block =>
-                chainCat[Token](
-                  Token.Keyword(Keyword.`else`),
-                  renderStatement(block),
-                )
-            }
-        )
+        tok(Token.Keyword(Keyword.`if`))
+        ++ tok(Token.Punctuation(Punctuation.`(`))
+        ++ renderExpression(predicate.value)
+        ++ tok(Token.Punctuation(Punctuation.`)`))
+        ++ renderStatement(thenBlock.value)
+        ++ (elseBlockOpt match {
+          case None => one(Chain.empty)
+          case Some(Ps(elseBlock)) =>
+            tok(Token.Keyword(Keyword.`else`))
+            ++ renderStatement(elseBlock)
+        })
       case Statement.Call(Ps(binding @ Binding.Call(_, _))) =>
         renderBinding(binding, needEquals = false)
     }
 
+  private def renderDefParam(param: Ps[DefParam]): GC[Token] =
+    param.value match {
+      case DefParam.Name(name) =>
+        tok(Token.Name(name))
+    }
+
   private def renderDefinitions(definitions: List[Ps[Definition]]): GC[Token] =
-    definitions.iterator
-      .map(_.value)
-      .map {
-        case Definition(name, params, body) =>
-          chainCat[Token](
-            Token.Keyword(Keyword.`def`),
-            Token.Name(name.value),
-            Token.Punctuation(Punctuation.`(`),
-            params.iterator
-              .map(_.value)
-              .map(Token.Name(_))
-              .sepBy(Token.Punctuation(Punctuation.`,`)),
-            Token.Punctuation(Punctuation.`)`),
-            renderStatement(body.value),
-          )
+    Chain.fromIterableOnce(definitions)
+      .flatTraverse[Generator, Token] {
+        case Ps(Definition(name, params, body)) =>
+          tok(Token.Keyword(Keyword.`def`))
+          ++ tok(Token.Name(name.value))
+          ++ tok(Token.Punctuation(Punctuation.`(`))
+          ++ renderCommaSep(params)(renderDefParam)
+          ++ tok(Token.Punctuation(Punctuation.`)`))
+          ++ renderStatement(body.value)
       }
-      .reduceOption(_ ++ _)
-      .getOrElse(one(Chain.nil))
 
   private def renderModule(module: Module): GC[Token] = {
     val Module(name, imports, definitions) = module
 
-    chainCat(
-      Token.Keyword(Keyword.`module`),
-      Token.Name(name.value),
-      renderImports(imports),
-      renderDefinitions(definitions),
-    )
+    tok(Token.Keyword(Keyword.`module`))
+    ++ tok(Token.Name(name.value))
+    ++ renderImports(imports)
+    ++ renderDefinitions(definitions)
   }
 
   private def astTokPairs: Generator[(Module, List[Token])] = {
@@ -271,7 +217,11 @@ object DCalParserTests extends TestSuite {
       astTokPairs.checkWith {
         import Checker.*
         timeLimited(maxDuration = Duration.ofMinutes(1), printRoundExample = false) {
-          forall {
+          exists[(Module, List[Token])] {
+            case (expectedModule, _) =>
+              expectedModule.definitions.size >= 2
+          }
+          && forall {
             case (expectedModule, tokens) =>
               val result = DCalParser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")
               assert(result == Right(Ps(expectedModule)))

@@ -106,13 +106,13 @@ object DCalParser {
       case tok => Left(err(ParserError.ExpectedAbstract(category = "name", actualTok = tok)))
     }
 
-  private def imports: P[List[Ps[String]]] =
-    kw(Keyword.`import`) ~> rep1sep(ps(name), pn(Punctuation.`,`)).map(_.toList)
+  private def defParam: P[Ps[DCalAST.DefParam]] =
+    ps(name.map(DCalAST.DefParam.Name(_)))
 
   private def definition: P[Ps[DCalAST.Definition]] =
     capturingPosition {
       kw(Keyword.`def`) ~> ps(name)
-      ~ (pn(Punctuation.`(`) ~> repsep(ps(name), pn(Punctuation.`,`)) <~ pn(Punctuation.`)`))
+      ~ (pn(Punctuation.`(`) ~> repsep(defParam, pn(Punctuation.`,`)) <~ pn(Punctuation.`)`))
       ~ block
     }.mapPositioned {
       case name ~ params ~ body =>
@@ -269,6 +269,12 @@ object DCalParser {
   private lazy val block: P[Ps[DCalAST.Statement.Block]] =
     capturingPosition(pn(Punctuation.`{`) ~> rep(statement) <~ pn(Punctuation.`}`))
       .mapPositioned(stmts => Ps(DCalAST.Statement.Block(stmts.toList)))
+
+  private def `import`: P[Ps[DCalAST.Import]] =
+    ps(name.map(DCalAST.Import.Name(_)))
+
+  private def imports: P[List[Ps[DCalAST.Import]]] =
+    kw(Keyword.`import`) ~> rep1sep(`import`, pn(Punctuation.`,`)).map(_.toList)
 
   private def module: P[Ps[DCalAST.Module]] =
     capturingPosition(kw(Keyword.`module`) ~> ps(name) ~ opt(imports) ~ rep(definition)).mapPositioned {

@@ -4,7 +4,7 @@ import scala.annotation.targetName
 import scala.util.Try
 
 import cats.data.Chain
-import cats.{Eval, Semigroup}
+import cats.{Semigroup, Monad, StackSafeMonad, Eval}
 import cats.implicits.given
 
 enum Generator[T] {
@@ -85,37 +85,91 @@ enum Generator[T] {
     checker(this)
 
   def computeResultsForRound(round: Int): Iterator[Option[T]] = {
-    def impl[T](self: Generator[T], budget: Int): Iterator[(T, Int)] = {
-      require(budget >= 0)
+    enum Step[+T] {
+      case Done
+      case Progress(value: T, budget: Int, nextStep: Eval[Step[T]])
+    }
+
+    def impl[T](self: Generator[T], budget: Int): Eval[Step[T]] = {
+      assert(budget >= 0)
       self match {
-        case Empty => Iterator.empty
-        case Singleton(value) => Iterator.single((value, budget))
-        case Selection(values) => values.iterator.map((_, budget))
+        case Empty => Eval.now(Step.Done)
+        case Singleton(value) =>
+          Eval.now(Step.Progress(value, budget, Eval.now(Step.Done)))
+        case Selection(values) =>
+          def perpetuate(values: Chain[T]): Eval[Step[T]] =
+            values.uncons match {
+              case None => Eval.now(Step.Done)
+              case Some(value, restValues) =>
+                Eval.now(Step.Progress(value, budget, Eval.defer(perpetuate(restValues))))
+            }
+
+          perpetuate(values)
         case Force(gen) =>
-          impl(gen, budget = Int.MaxValue).map {
-            case (value, _) => (value, budget)
+          def perpetuate(step: Eval[Step[T]]): Eval[Step[T]] =
+            step.map {
+              case Step.Done => Step.Done
+              case Step.Progress(valueOpt, _, nextStep) =>
+                Step.Progress(valueOpt, budget, perpetuate(nextStep))
+            }
+
+          perpetuate(impl(gen, Int.MaxValue))
+        case Pay(gen) =>
+          if(budget == 0) {
+            Eval.now(Step.Done)
+          } else {
+            impl(gen, budget - 1)
           }
-        case Pay(gen) if budget == 0 => Iterator.empty
-        case Pay(gen) => impl(gen, budget = budget - 1)
-        case Lazy(genFn) => impl(genFn(), budget)
+        case Lazy(genFn) =>
+          impl(genFn(), budget)
         case Disjunction(left, right) =>
-          impl(left, budget) ++ impl(right, budget)
-        case FlatMap(self, fn) =>
-          impl(self, budget).flatMap {
-            case (value, budget) => impl(fn(value), budget)
-          }
+          def attachRight(step: Eval[Step[T]]): Eval[Step[T]] =
+            step.flatMap {
+              case Step.Done => impl(right, budget)
+              case Step.Progress(value, budget, nextStep) =>
+                Eval.now(Step.Progress(value, budget, attachRight(nextStep)))
+            }
+
+          attachRight(impl(left, budget))
+        case fm: FlatMap[tt, T] =>
+          val self = fm.self
+          val fn = fm.fn
+          def perpetuateOuter(step: Eval[Step[tt]]): Eval[Step[T]] =
+            step.flatMap {
+              case Step.Done => Eval.now(Step.Done)
+              case Step.Progress(value, budget, nextStep) =>
+                def perpetuateInner(step: Eval[Step[T]]): Eval[Step[T]] =
+                  step.flatMap {
+                    case Step.Done =>
+                      perpetuateOuter(nextStep)
+                    case Step.Progress(value, budget, nextStep) =>
+                      Eval.now(Step.Progress(value, budget, perpetuateInner(nextStep)))
+                  }
+
+                perpetuateInner(impl(fn(value), budget))
+            }
+
+          perpetuateOuter(impl(self, budget))
       }
     }
-    
-    impl(this, budget = round)
-      .map {
-        case (value, 0) => Some(value)
-        case _ => None
+
+    Iterator.unfold(impl(this, round)) { nextStep =>
+      nextStep.value match {
+        case Step.Done => None
+        case Step.Progress(value, budget, nextStep) =>
+          Some((if(budget == 0) Some(value) else None, nextStep))
       }
+    }
   }
 }
 
 object Generator {
+  given generatorMonad: StackSafeMonad[Generator] with {
+    override def pure[A](x: A): Generator[A] = free_!(x)
+
+    override def flatMap[A, B](fa: Generator[A])(f: A => Generator[B]): Generator[B] = fa.flatMap(f)
+  }
+
   def none: Generator[Nothing] =
     Generator.Empty
 
@@ -198,32 +252,4 @@ object Generator {
         }
     }
   }
-
-  trait ChainCatable[T] {
-    def elems: Generator[Chain[T]]
-  }
-  object ChainCatable {
-    def apply[T](gen: Generator[Chain[T]]): ChainCatable[T] =
-      new ChainCatable[T] {
-        override def elems: Generator[Chain[T]] = gen
-      }
-
-    given oneChain[T]: Conversion[Chain[T], ChainCatable[T]] = one
-
-    given singleton[T]: Conversion[T, ChainCatable[T]] = Chain.one
-
-    given iterableOnceSplay[U, T](using conv: Conversion[U, ChainCatable[T]]): Conversion[IterableOnce[U], ChainCatable[T]] with {
-      override def apply(x: IterableOnce[U]): ChainCatable[T] =
-        chainCat(x.iterator.map(conv).toSeq*)
-    }
-
-    given chainChain[T]: Conversion[Generator[Chain[T]], ChainCatable[T]] = ChainCatable(_)
-  }
-
-  def chainCat[T](catables: ChainCatable[T]*): Generator[Chain[T]] =
-    catables.foldLeft(one(Chain.nil): Generator[Chain[T]]) { (acc, catable) =>
-      acc.flatMap { prefix =>
-        catable.elems.map(prefix ++ _)
-      }
-    }
 }

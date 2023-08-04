@@ -1,12 +1,16 @@
 package test.com.github.distcompiler.dcal
 
 import java.time.Duration
+import cats.data.Chain
 
-import utest.*
-import chungus.{Generator, Checker}
+import utest.{TestSuite, test, Tests}
+import chungus.{Generator, Checker, assert, assertMatch, recording}
 
 import com.github.distcompiler.dcal.{DCalAST, Scoping}
+import com.github.distcompiler.dcal.transform.Transform
 import com.github.distcompiler.dcal.parsing.{SourceLocation, Ps, PsK}
+
+import Scoping.ScopingError
 
 object ScopingTests extends TestSuite {
   import DCalAST.*
@@ -27,8 +31,12 @@ object ScopingTests extends TestSuite {
   private given dummyLoc(using src: DummyLocSrc): SourceLocation =
     src.getDummyLoc()
 
-  private given strGen: Generator[String] = chooseAny(List("foo", "bar", "ping"/*, "pong", "blamo"*/))
-  private given numGen: Generator[BigInt] = chooseAny(List(BigInt(0), BigInt(10), BigInt(123456789)))
+  // limit string literals, because unlike other AST strings they don't matter
+  private given strLiteralGen: Generator[Expression.StringLiteral] =
+    one(Expression.StringLiteral("string"))
+
+  private given strGen: Generator[String] = chooseAny(List("foo", "bar", "ping"))
+  private given numGen: Generator[BigInt] = one(BigInt(1)) // doesn't matter here
 
   private given psGen[T](using gen: Generator[T])(using DummyLocSrc): Generator[Ps[T]] = gen.map(Ps(_))
 
@@ -44,6 +52,33 @@ object ScopingTests extends TestSuite {
       definitions = defns,
     )
 
+  def findAllReferents(module: Module): Set[PsK[Scoping.Referent]] = {
+    import Scoping.Referent
+
+    given strEmpty: Transform[String, Chain[PsK[Referent]]] = _ => Chain.empty
+    given bigIntEmpty: Transform[BigInt, Chain[PsK[Referent]]] = _ => Chain.empty
+
+    given otherPs[T](using trans: Transform[T, Chain[PsK[Referent]]]): Transform[Ps[T], Chain[PsK[Referent]]] with {
+      override def apply(from: Ps[T]): Chain[PsK[Referent]] = trans(from.value)
+    }
+
+    given findOpCall: Transform[Ps[Expression.OpCall], Chain[PsK[Referent]]] with {
+      override def apply(from: Ps[Expression.OpCall]): Chain[PsK[Referent]] = Chain.one(from.toPsK.up)
+    }
+
+    given findStatementCall: Transform[Ps[Statement.Call], Chain[PsK[Referent]]] with {
+      override def apply(from: Ps[Statement.Call]): Chain[PsK[Referent]] = Chain.one(from.toPsK.up)
+    }
+
+    given findBindingCall: Transform[Ps[Binding.Call], Chain[PsK[Referent]]] with {
+      override def apply(from: Ps[Binding.Call]): Chain[PsK[Referent]] = Chain.one(from.toPsK.up)
+    }
+
+    Transform[Module, Chain[PsK[Referent]]](module)
+      .iterator
+      .toSet
+  }
+
   def generalChecks(): Unit = {
     given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
     // idea: all idents must refer to _something_, and _one_ thing
@@ -55,35 +90,80 @@ object ScopingTests extends TestSuite {
     anyOf[Module].checkWith {
       import Checker.*
       timeLimited(maxDuration = Duration.ofMinutes(1), printRoundExample = false) {
-        transform[Module, Scoping.ScopingInfo] { module =>
+        exists[Module](_.definitions.size >= 2)
+        && transform[Module, (Module, Scoping.ScopingInfo)] { module =>
           val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
-          info
+          (module, info)
         } {
-          exists[Scoping.ScopingInfo](_.errors.size >= 3)
-          && exists[Scoping.ScopingInfo](_.referencePairs.size >= 3)
-          && forall[Scoping.ScopingInfo] { (info: Scoping.ScopingInfo) =>
-            val errors = info.errors.toList
-            val referencePairs = info.referencePairs.toList
+          exists[(Module, Scoping.ScopingInfo)](_._2.errors.size >= 2)
+          && exists[(Module, Scoping.ScopingInfo)](_._2.referencePairs.size >= 2)
+          && forall[(Module, Scoping.ScopingInfo)] {
+            case (module, info) =>
+              val errors = info.errors.toList
+              val referencePairs = info.referencePairs.toList
+              recording(errors) {
+                recording(referencePairs) {
+                  // all errors must be unique
+                  recording(errors.toSet) {
+                    assert(errors.size == errors.toSet.size)
+                  }
+                  // all referents must refer to exactly one thing
+                  // e.g they must form a set of unique identifiers; no duplicates
+                  val referents = referencePairs.map(_._1)
+                  val referentSet = referents.toSet
+                  recording(referents) {
+                    recording(referentSet) {
+                      assert(referents.size == referentSet.size)
+                    }
+                  }
+                  // all references in general must be unique
+                  recording(referencePairs.toSet) {
+                    assert(referencePairs.size == referencePairs.toSet.size)
+                  }
+                  
+                  referencePairs.foreach {
+                    case (from, to) =>
+                      recording((from, to)) {
+                        assertMatch((from, to)) {
+                          case (PsK(Expression.OpCall(_, arguments), _), PsK(Definition(_, params, _), _)) if arguments.size == params.size =>
+                          case (PsK(Expression.OpCall(Right(Ps(Path.Name(name1))), Nil), _), PsK(Statement.Let(Ps(name2), _), _)) if name1 == name2 =>
+                          case (PsK(Expression.OpCall(Right(Ps(Path.Name(name1))), Nil), _), PsK(Statement.Var(Ps(name2), _), _)) if name1 == name2 =>
+                          //case (PsK(Expression.OpCall(Right(Ps(Path.Name(name1))), Nil), _), PsK(name2: String, _)) if name1 == name2 =>
+                          case (PsK(Binding.Call(_, arguments), _), PsK(Definition(name, params, _), _)) if arguments.size == params.size =>
+                          case (PsK(Statement.Call(Ps(Binding.Call(_, arguments))), _), PsK(Definition(_, params, _), _)) if arguments.size == params.size =>
+                        }
+                      }
+                  }
 
-            // all errors must be unique
-            assert(errors.size == errors.toSet.size)
-            // all referents must refer to exactly one thing
-            val referents = referencePairs.map(_._1)
-            assert(referents.size == referents.toSet.size)
-            // all references in general must be unique
-            assert(referencePairs.size == referencePairs.toSet.size)
-            
-            referencePairs.foreach {
-              case (from, to) =>
-                assertMatch((from, to)) {
-                  case (PsK(Expression.OpCall(_, arguments), _), PsK(Definition(_, params, _), _)) if arguments.size == params.size =>
-                  case (PsK(Expression.OpCall(_, Nil), _), PsK(Statement.Let(_, _), _)) =>
-                  case (PsK(Expression.OpCall(_, Nil), _), PsK(Statement.Var(_, _), _)) =>
-                  case (PsK(Expression.OpCall(_, Nil), _), PsK(_: String, _)) =>
-                  case (PsK(Binding.Call(_, arguments), _), PsK(Definition(_, params, _), _)) if arguments.size == params.size =>
-                  case (PsK(Statement.Call(Ps(Binding.Call(_, arguments))), _), PsK(Definition(_, params, _), _)) if arguments.size == params.size =>
+                  recording(referentSet) {
+                    errors.foreach {
+                      case ScopingError.Redefinition(first, second) => 
+                      case ScopingError.UndefinedReference(ref) =>
+                        recording(ref) {
+                          assert(!referentSet.contains(ref))
+                        }
+                      case ScopingError.ArityMismatch(ref, defn) =>
+                        recording(ref) {
+                          assert(!referentSet.contains(ref))
+                        }
+                      case ScopingError.KindMismatch(ref, defn) =>
+                        recording(ref) {
+                          assert(!referentSet.contains(ref))
+                        }
+                    }
+                  }
+
+                  // if no errors, all referents must be accounted for
+                  if(errors.isEmpty) {
+                    val allReferents = findAllReferents(module)
+                    recording(allReferents) {
+                      recording(referentSet) {
+                        assert(allReferents == referentSet)
+                      }
+                    }
+                  }
                 }
-            }
+              }
           }
         }
       }

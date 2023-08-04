@@ -3,7 +3,8 @@ package com.github.distcompiler.dcal
 import cats.derived.*
 import cats.data.{EitherT, WriterT, Chain}
 import cats.{Eval, Monoid}
-import cats.implicits.given
+import cats.syntax.all.given
+import cats.instances.all.{given Ordering[?]}
 
 import parsing.{Ps, PsK}
 import transform.Transform
@@ -14,11 +15,14 @@ object Scoping {
   enum ScopingError {
     case Redefinition(first: PsK[Def], second: PsK[Def])
     case UndefinedReference(ref: PsK[Referent])
+    case ArityMismatch(ref: PsK[Referent], defn: PsK[Def])
+    case KindMismatch(ref: PsK[Referent], defn: PsK[Def])
   }
 
   type Def =
     Definition
-    | String
+    | Import
+    | DefParam
     | Statement.Let
     | Statement.Var
 
@@ -118,7 +122,11 @@ object Scoping {
   def scopeDefinition(defn: Ps[Definition])(using ScopingContext): Scoping[Unit] = {
     val Ps(Definition(name, arguments, body)) = defn
 
-    val argDefs: Map[String, Ps[Def]] = arguments.iterator.map(ps => ps.value -> ps.up).toMap
+    val argDefs: Map[String, Ps[Def]] = arguments.iterator
+      .map {
+        case ps @ Ps(DefParam.Name(name)) => name -> ps.up
+      }
+      .toMap
 
     arguments
       .groupBy(_.value)
@@ -157,8 +165,14 @@ object Scoping {
         _ <- ctx.lookup(path.value) match {
           case None =>
             Scoping.error(ScopingError.UndefinedReference(from.toPsK.up))
-          case Some(defn) =>
-            Scoping.tellRef(from.toPsK.up -> defn.toPsK.up)
+          case Some(defn @ Ps(Definition(_, params, _))) =>
+            if(params.size != arguments.size) {
+              Scoping.error(ScopingError.ArityMismatch(from.toPsK.up, defn.toPsK.up))
+            } else {
+              Scoping.tellRef(from.toPsK.up -> defn.toPsK.up)
+            }
+          case Some(otherDef) =>
+            Scoping.error(ScopingError.KindMismatch(from.toPsK.up, otherDef.toPsK.up))
         }
         _ <- arguments.traverse_(scopeExpression)
       } yield ()

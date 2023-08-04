@@ -1,10 +1,21 @@
 package com.github.distcompiler.dcal
 
+import cats.derived.*
+import cats.Order
 import parsing.{Ps, SourceLocation}
 
 object DCalAST {
-  final case class Module(name: Ps[String], imports: List[Ps[String]], definitions: List[Ps[Definition]])
-  final case class Definition(name: Ps[String], params: List[Ps[String]], body: Ps[Statement.Block])
+  enum Import derives Order {
+    case Name(name: String)
+  }
+
+  final case class Module(name: Ps[String], imports: List[Ps[Import]], definitions: List[Ps[Definition]])
+
+  enum DefParam derives Order {
+    case Name(name: String)
+  }
+
+  final case class Definition(name: Ps[String], params: List[Ps[DefParam]], body: Ps[Statement.Block])
 
   enum Path {
     case Name(name: String)
