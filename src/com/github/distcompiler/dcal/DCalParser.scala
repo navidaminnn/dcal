@@ -4,7 +4,7 @@ import parsing.{Ps, SourceLocation}
 import cats.data.NonEmptyChain
 
 import com.github.distcompiler.dcal.DCalAST.*
-import com.github.distcompiler.dcal.DCalTokenizer.*
+import com.github.distcompiler.dcal.DCalTokenizer.TokenizerError
 import com.github.distcompiler.dcal.parsing.InputOps
 import InputOps.LazyListInput
 import cats.data.NonEmptyChainImpl.Type

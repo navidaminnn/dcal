@@ -60,7 +60,7 @@ object DCalAST {
 
     case IntLiteral(value: BigInt)
     case StringLiteral(value: String)
-    case OpCall(path: Either[Ps[DCalTokenizer.BinaryOperator], Ps[Path]], arguments: List[Ps[Expression]])
+    case OpCall(path: Either[Ps[BinaryOperator], Ps[Path]], arguments: List[Ps[Expression]])
     case SetConstructor(members: List[Ps[Expression]])
   }
 }

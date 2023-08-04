@@ -3,7 +3,7 @@ package test.com.github.distcompiler.dcal
 import utest.{TestSuite, Tests, test}
 import chungus.*
 
-import com.github.distcompiler.dcal.DCalTokenizer
+import com.github.distcompiler.dcal.{DCalTokenizer, Token}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
 import scala.concurrent.duration.FiniteDuration
 
@@ -98,7 +98,9 @@ object DCalTokenizerTests extends TestSuite {
               assert(reparsedTokens == expectedtokens)
             } catch {
               case err =>
-                pprint(s"$tokensOrSpace ==> |$strForm")
+                pprint.tokenize(tokensOrSpace).foreach(print)
+                print(s" ==> |$strForm")
+                println()
                 throw err
             }
           }

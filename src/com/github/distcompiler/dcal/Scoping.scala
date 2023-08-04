@@ -31,13 +31,13 @@ object Scoping {
     | Statement.Call
     | Binding.Call
 
-  final case class ScopingContext(defs: Map[String | DCalTokenizer.BinaryOperator, Ps[Def]]) {
+  final case class ScopingContext(defs: Map[String | BinaryOperator, Ps[Def]]) {
     def withDefs(defs: Map[String, Ps[Def]]): ScopingContext =
       copy(defs = this.defs ++ defs)
 
-    def lookup(name: Path | DCalTokenizer.BinaryOperator): Option[Ps[Def]] =
+    def lookup(name: Path | BinaryOperator): Option[Ps[Def]] =
       name match {
-        case op: DCalTokenizer.BinaryOperator => defs.get(op)
+        case op: BinaryOperator => defs.get(op)
         case Path.Name(name) => defs.get(name)
         case _ => None // TODO: actually implement this part
       }

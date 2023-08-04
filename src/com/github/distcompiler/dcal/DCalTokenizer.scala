@@ -5,50 +5,6 @@ import parsing.{Ps, SourceLocation}
 import cats.data.NonEmptyChain
 
 object DCalTokenizer {
-  enum Token{
-    case IntLiteral(value: BigInt)
-    case StringLiteral(value: String)
-    case Name(name: String)
-    case Keyword(keyword: DCalTokenizer.Keyword)
-    case Punctuation(punctuation: DCalTokenizer.Punctuation)
-    case BinaryOperator(operator: DCalTokenizer.BinaryOperator)
-  }
-
-  transparent trait Meta { self: Product =>
-    def name: String = productPrefix
-  }
-
-  enum Keyword extends Meta {
-    case call
-    case await
-    case `if`
-    case `else`
-    case `var`
-    case `let`
-    case `def`
-    case `import`
-    case `module`
-  }
-
-  enum Punctuation extends Meta {
-    case `,`
-    case `(`
-    case `)`
-    case `[`
-    case `]`
-    case `{`
-    case `}`
-    case `:=`
-    case `||`
-    case `.`
-  }
-
-  enum BinaryOperator extends Meta {
-    case `\\in`
-    case `\\notin`
-    case `=`
-  }
-
   enum TokenizerError {
     case ExpectedAbstract(category: String, actualChar: Char)
     case ExpectedExact(expectedChar: Char, actualChar: Char)

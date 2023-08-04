@@ -6,12 +6,11 @@ import java.time.Duration
 
 import utest.{TestSuite, Tests, test}
 import chungus.*
-import com.github.distcompiler.dcal.{DCalAST, DCalTokenizer, DCalParser}
+import com.github.distcompiler.dcal.{DCalAST, DCalTokenizer, DCalParser, Token, Punctuation, Keyword, BinaryOperator}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
 
 object DCalParserTests extends TestSuite {
   import DCalAST.*
-  import DCalTokenizer.*
   import Generator.*
 
   private type GC[T] = Generator[Chain[T]]
