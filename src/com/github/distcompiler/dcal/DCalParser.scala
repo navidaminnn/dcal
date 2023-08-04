@@ -22,25 +22,24 @@ object DCalParser {
   private type Elem = Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]
   private type Error = NonEmptyChain[ParserError]
   private type Input = parsing.InputOps.LazyListInput[Elem]
-  private given parsing.ErrorOps.SingleErrorOps[Elem, Input, ParserError] with {
+  private given parsing.ErrorOps[Elem, Input, Error] with {
     private def tokErrOr(elem: Elem)(fn: Ps[Token] => ParserError): ParserError =
       elem match {
         case Left(errors) => ParserError.FromTokenizer(errors)
         case Right(actualTok) => fn(actualTok)
       }
 
-    override def expectedEOF(input: Input, actualElem: Elem): ParserError =
-      tokErrOr(actualElem) { actualTok =>
-        ParserError.ExpectedAbstract(category = "EOF", actualTok = actualTok)
+    override def expectedEOF(input: Input, actualElem: Elem): Error =
+      NonEmptyChain.one {
+        tokErrOr(actualElem) { actualTok =>
+          ParserError.ExpectedAbstract(category = "EOF", actualTok = actualTok)
+        }
       }
 
-    override def unexpectedEOF(input: Input): ParserError =
-      ParserError.UnexpectedEOF(input.prevSourceLocation)
+    override def unexpectedEOF(input: Input): Error =
+      NonEmptyChain.one(ParserError.UnexpectedEOF(input.prevSourceLocation))
   }
   given inputOps: parsing.InputOps[Elem, Input] with {
-    override def getIndex(input: LazyListInput[Either[Type[Ps[TokenizerError]], Ps[Token]]]): Int =
-      input.prevSourceLocation.offsetStart
-
     override def getPrevSourceLocation(input: LazyListInput[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]]): SourceLocation =
       input.prevSourceLocation
 

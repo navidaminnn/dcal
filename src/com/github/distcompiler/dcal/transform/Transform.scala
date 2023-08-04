@@ -2,7 +2,6 @@ package com.github.distcompiler.dcal.transform
 
 import cats.kernel.Monoid
 import cats.Comonad
-import cats.Id
 
 @FunctionalInterface
 trait Transform[A, B] {

@@ -1,11 +1,11 @@
 package com.github.distcompiler.dcal.parsing
 
 import scala.annotation.targetName
-import cats.Eval
+import cats.{Eval, Semigroup}
 import cats.data.Chain
-import cats.Now
+import cats.syntax.all.given
 
-abstract class Parser[Elem, Input, Error, +T](using inputOps: InputOps[Elem, Input])(using errorOps: ErrorOps[Elem, Input, Error])(using ops: Parser.Ops[Elem, Input, Error]) { self =>
+abstract class Parser[Elem, Input, Error: Semigroup, +T](using inputOps: InputOps[Elem, Input])(using ops: Parser.Ops[Elem, Input, Error]) { self =>
   import Parser.*
   import ops.*
 
@@ -91,19 +91,21 @@ abstract class Parser[Elem, Input, Error, +T](using inputOps: InputOps[Elem, Inp
               result
             case Result.Ok(value, nextInput, progressIdx, backtrackedOpt) =>
               // second op succeeded with no progress --> merge first op info (if we kept it) and second op info
-              Result.Ok(value, nextInput, progressIdx, (firstBacktrackedOpt.toList ++ backtrackedOpt.toList).reduceOption(errorOps.combine))
+              Result.Ok(value, nextInput, progressIdx, firstBacktrackedOpt
+                .flatMap(err1 => backtrackedOpt.map(err1 `combine` _).orElse(Some(err1)))
+                .orElse(backtrackedOpt))
             case result @ Result.Backtrack(_, progressIdx) if progressIdx != firstProgressIdx =>
               // second op backtracked after progress --> keep only second op backtrack info
               result
             case Result.Backtrack(error, progressIdx) =>
               // second op backtracked with no progress --> merge first op info (if we kept it) and second op info
-              Result.Backtrack((firstBacktrackedOpt.toList ++ List(error)).reduce(errorOps.combine), progressIdx)
+              Result.Backtrack(firstBacktrackedOpt.map(_ `combine` error).getOrElse(error), progressIdx)
             case result @ Result.Fatal(_, progressIdx) if progressIdx != firstProgressIdx =>
               // second op fatal with progress --> not our problem, forward
               result
             case Result.Fatal(error, progressIdx) =>
               // second op fatal with no progress --> merge our error info, still same place
-              Result.Fatal((firstBacktrackedOpt.toList ++ List(error)).reduce(errorOps.combine), progressIdx)
+              Result.Fatal(firstBacktrackedOpt.map(_ `combine` error).getOrElse(error), progressIdx)
           }
         case Result.Backtrack(error, progressIdx) => Eval.now(Result.Backtrack(error, progressIdx))
         case Result.Fatal(error, progressIdx) => Eval.now(Result.Fatal(error, progressIdx))
@@ -145,19 +147,19 @@ abstract class Parser[Elem, Input, Error, +T](using inputOps: InputOps[Elem, Inp
               Result.Ok(value, nextInput, progressIdx, None)
             case Result.Ok(value, nextInput, progressIdx, backtrackedOpt) =>
               // rhs succeeds with no progress --> good, but keep old error for display because we haven't moved yet
-              Result.Ok(value, nextInput, progressIdx, (backtrackedOpt.toList ++ List(error)).reduceOption(errorOps.combine))
+              Result.Ok(value, nextInput, progressIdx, backtrackedOpt.map(_ `combine` error).orElse(Some(error)))
             case Result.Backtrack(error2, progressIdx) if progressIdx != origProgressIdx =>
               // rhs backtracking after progress --> give up (but record both errors)
-              Result.Fatal(errorOps.combine(error, error2), progressIdx)
+              Result.Fatal(error.combine(error2), progressIdx)
             case Result.Backtrack(error2, progressIdx) =>
               // backtrack with no progress --> try again (recording both errors)
-              Result.Backtrack(errorOps.combine(error, error2), progressIdx)
+              Result.Backtrack(error.combine(error2), progressIdx)
             case result @ Result.Fatal(_, progressIdx) if progressIdx != origProgressIdx =>
               // rhs fatal after progress --> forward with no changes, our backtracking info is irrelevant
               result
             case Result.Fatal(error2, progressIdx) =>
               // rhs fatal with no progress --> still same position, add our error info
-              Result.Fatal(errorOps.combine(error, error2), progressIdx)
+              Result.Fatal(error.combine(error2), progressIdx)
           }
         case Result.Fatal(error, progressIdx) => Eval.now(Result.Fatal(error, progressIdx))
       }
@@ -215,8 +217,8 @@ object Parser {
     infix def ~[B](b: B): A ~ B = new ~(a, b)
   }
 
-  final class Ops[Elem, Input, Error](using inputOps: InputOps[Elem, Input])(using errorOps: ErrorOps[Elem, Input, Error]) {
-    given Ops[Elem, Input, Error] = this // need this or the fields will try to allocate a new ops
+  final class Ops[Elem, Input, Error: Semigroup](using inputOps: InputOps[Elem, Input])(using errorOps: ErrorOps[Elem, Input, Error]) {
+    given Ops[Elem, Input, Error] = this // need this or we'll allocate too many new ops, including recursively
     import Parser.Result
     type P[T] = Parser[Elem, Input, Error, T]
     object P {
@@ -310,7 +312,7 @@ object Parser {
   }
 
   object Ops {
-    def apply[Elem, Input, Error](using inputOps: InputOps[Elem, Input])(using errorOps: ErrorOps[Elem, Input, Error]): Ops[Elem, Input, Error] =
+    def apply[Elem, Input, Error: Semigroup](using inputOps: InputOps[Elem, Input])(using errorOps: ErrorOps[Elem, Input, Error]): Ops[Elem, Input, Error] =
       new Ops
   }
 

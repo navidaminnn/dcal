@@ -14,12 +14,16 @@ object DCalTokenizer {
   private type Elem = Char
   private type Error = NonEmptyChain[Ps[TokenizerError]]
   private type Input = parsing.InputOps.LazyListInput[Char]
-  private given parsing.ErrorOps.SingleErrorOps[Elem, Input, Ps[TokenizerError]] with {
-    override def expectedEOF(input: Input, actualElem: Elem): Ps[TokenizerError] =
-      Ps(TokenizerError.ExpectedAbstract(category = "EOF", actualChar = actualElem))(using input.prevSourceLocation.shiftRight)
+  private given parsing.ErrorOps[Elem, Input, Error] with {
+    override def expectedEOF(input: Input, actualElem: Elem): Error =
+      NonEmptyChain.one {
+        Ps(TokenizerError.ExpectedAbstract(category = "EOF", actualChar = actualElem))(using input.prevSourceLocation.shiftRight)
+      }
 
-    override def unexpectedEOF(input: Input): Ps[TokenizerError] =
-      Ps(TokenizerError.UnexpectedEOF)(using input.prevSourceLocation.shiftRight)
+    override def unexpectedEOF(input: Input): Error =
+      NonEmptyChain.one {
+        Ps(TokenizerError.UnexpectedEOF)(using input.prevSourceLocation.shiftRight)
+      }
   }
   private val ops = parsing.Parser.Ops[Elem, Input, Error]
   import ops.*

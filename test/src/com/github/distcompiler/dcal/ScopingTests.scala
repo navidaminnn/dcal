@@ -79,14 +79,12 @@ object ScopingTests extends TestSuite {
       .toSet
   }
 
+  // TODO: generate well-scoped modules and check them
+  // TODO: and generate otherwise well-scoped modules with one scoping error inserted 
+
   def generalChecks(): Unit = {
     given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
-    // idea: all idents must refer to _something_, and _one_ thing
-    // idea: all references have the right arity
-    // idea: no recorded references may also be reference errors
-    // idea: (more difficult) all well-scoped progs (need to generate) must be well-scoped
 
-    // more generally, some reference errors must exist, and some references must exist (TODO: implement existence assertions, and maybe counting checks)
     anyOf[Module].checkWith {
       import Checker.*
       timeLimited(maxDuration = Duration.ofMinutes(1), printRoundExample = false) {
