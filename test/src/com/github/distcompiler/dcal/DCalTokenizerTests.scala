@@ -1,5 +1,8 @@
 package test.com.github.distcompiler.dcal
 
+import cats.syntax.all.given
+import cats.instances.string
+
 import utest.{TestSuite, Tests, test}
 import chungus.*
 
@@ -16,9 +19,9 @@ object DCalTokenizerTests extends TestSuite {
   val tokenGen =
     locally {
       given anyInt: Generator[BigInt] = one(BigInt(0)) | one(BigInt(10)) | one(BigInt(123456789)) 
-      val anyNameChar: Generator[Char] = (chooseAny('0' to '9') | chooseAny("_abcXYZ"))
+      val anyNameChar: Generator[Char] = (chooseAny(('0' to '9').toList) | chooseAny("_abcXYZ".toList))
       val anyNameChars: Generator[String] = listOf(anyNameChar).map(_.mkString)
-      val anyStringChar: Generator[Char] = anyNameChar | chooseAny("\"\n\t\\")
+      val anyStringChar: Generator[Char] = anyNameChar | chooseAny("\"\n\t\\".toList)
       val anyStringChars: Generator[String] = listOf(anyStringChar).map(_.mkString)
 
       given Generator[Token.Name] =

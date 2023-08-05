@@ -4,7 +4,7 @@ import java.time.Duration
 import cats.data.Chain
 
 import utest.{TestSuite, test, Tests}
-import chungus.{Generator, Checker, assert, assertMatch, recording}
+import chungus.{Generator, Checker, assert, assertMatch, recording, Counters}
 
 import com.github.distcompiler.dcal.{DCalAST, Scoping}
 import com.github.distcompiler.dcal.transform.Transform
@@ -35,7 +35,6 @@ object ScopingTests extends TestSuite {
   private given strLiteralGen: Generator[Expression.StringLiteral] =
     one(Expression.StringLiteral("string"))
 
-  private given strGen: Generator[String] = chooseAny(List("foo", "bar", "ping"))
   private given numGen: Generator[BigInt] = one(BigInt(1)) // doesn't matter here
 
   private given psGen[T](using gen: Generator[T])(using DummyLocSrc): Generator[Ps[T]] = gen.map(Ps(_))
@@ -43,7 +42,7 @@ object ScopingTests extends TestSuite {
   private given limitedList[T](using gen: Generator[T]): Generator[List[T]] =
     listOf(gen, limit = 3)
 
-  private given modGen(using DummyLocSrc): Generator[Module] =
+  private given modGen(using DummyLocSrc)(using Generator[Ps[Definition]]): Generator[Module] =
     for {
       defns <- listOf(anyOf[Ps[Definition]], limit = 3)
     } yield Module(
@@ -82,10 +81,8 @@ object ScopingTests extends TestSuite {
   // TODO: generate well-scoped modules and check them
   // TODO: and generate otherwise well-scoped modules with one scoping error inserted 
 
-  def generalChecks(): Unit = {
-    given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
-
-    anyOf[Module].checkWith {
+  def generalChecks(requiredReferences: Int, requiredErrors: Int)(moduleGen: Generator[Module]): Unit = {
+    moduleGen.checkWith {
       import Checker.*
       timeLimited(maxDuration = Duration.ofMinutes(1), printRoundExample = false) {
         exists[Module](_.definitions.size >= 2)
@@ -93,8 +90,8 @@ object ScopingTests extends TestSuite {
           val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
           (module, info)
         } {
-          exists[(Module, Scoping.ScopingInfo)](_._2.errors.size >= 2)
-          && exists[(Module, Scoping.ScopingInfo)](_._2.referencePairs.size >= 2)
+          exists[(Module, Scoping.ScopingInfo)](_._2.errors.size >= requiredErrors)
+          && exists[(Module, Scoping.ScopingInfo)](_._2.referencePairs.size >= requiredReferences)
           && forall[(Module, Scoping.ScopingInfo)] {
             case (module, info) =>
               val errors = info.errors.toList
@@ -169,6 +166,59 @@ object ScopingTests extends TestSuite {
   }
 
   def tests = Tests {
-    test("generalChecks") - generalChecks()
+    test("generalChecks") {
+      // test("any") {
+      //   generalChecks(minReferences = 2, minErrors = 2) {
+      //     given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+      //     given strGen: Generator[String] = chooseAny(List("foo", "bar", "ping"))
+      //     anyOf[Module]
+      //   }
+      // }
+      test("lots of names") {
+        // simplify state space by avoiding generating too many extraneous exprs and stmts
+        // this should be mostly names and defs
+        generalChecks(requiredReferences = 3, requiredErrors = 3) {
+          given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+
+          // more names to choose from
+          given strGen: Generator[String] = chooseAny(('a' to 'd').map(_.toString).toList)
+
+          object ExprKey extends Counters.Key[Expression]
+          object StmtKey extends Counters.Key[Statement]
+          object BlockKey extends Counters.Key[Statement.Block]
+          object BindingKey extends Counters.Key[Binding]
+
+          // don't pay for defn block
+          given defnGen: Generator[Definition] =
+            for {
+              name <- anyOf[Ps[String]]
+              params <- listOf(anyOf[Ps[DefParam]], limit = 3)
+              bodyStmts <- listOf(anyOf[Ps[Statement]], limit = 3)
+            } yield Definition(name, params, Ps(Statement.Block(bodyStmts)))
+
+          given bindingGen: Generator[Binding] =
+            lzy {
+              anyOf[Binding.Value]
+              | rateLimit(key = BindingKey, limit = 0)(Generator.anySum[Binding])
+            }
+
+          given stmtGen: Generator[Statement] =
+            lzy {
+              Generator.anyProduct[Statement.Let]
+              | Generator.anyProduct[Statement.Var]
+              | rateLimit(key = StmtKey, limit = 0)(Generator.anyProduct[Statement.Block].up)
+              | rateLimit(key = StmtKey, limit = 0)(Generator.anySum[Statement])
+            }
+
+          given exprGen: Generator[Expression] =
+            lzy {
+              anyOf[Expression.OpCall]
+              | rateLimit(key = ExprKey, limit = 0)(Generator.anySum[Expression])
+            }
+
+          anyOf[Module]
+        }
+      }
+    }
   }  
 }
