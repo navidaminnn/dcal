@@ -6,7 +6,7 @@ import cats.instances.string
 import utest.{TestSuite, Tests, test}
 import chungus.*
 
-import com.github.distcompiler.dcal.{DCalTokenizer, Token}
+import com.github.distcompiler.dcal.{DCalTokenizer, Token, Keyword}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
 import scala.concurrent.duration.FiniteDuration
 
@@ -19,10 +19,17 @@ object DCalTokenizerTests extends TestSuite {
   val tokenGen =
     locally {
       given anyInt: Generator[BigInt] = one(BigInt(0)) | one(BigInt(10)) | one(BigInt(123456789)) 
-      val anyNameChar: Generator[Char] = (chooseAny(('0' to '9').toList) | chooseAny("_abcXYZ".toList))
-      val anyNameChars: Generator[String] = listOf(anyNameChar).map(_.mkString)
-      val anyStringChar: Generator[Char] = anyNameChar | chooseAny("\"\n\t\\".toList)
-      val anyStringChars: Generator[String] = listOf(anyStringChar).map(_.mkString)
+      val anyNameChar: Generator[Char] =
+        chooseAny(List('0', '9'))
+        | chooseAny("_aifX".toList) // conveniently include letters needed for the 'if' keyword
+      val anyNameChars: Generator[String] =
+        listOf(anyNameChar, limit = 3)
+          .map(_.mkString)
+          .filter(name => !Keyword.values.iterator.map(_.name).exists(name.contains))
+      val anyStringChar: Generator[Char] =
+        anyNameChar
+        | chooseAny("\"\n\t\\".toList)
+      val anyStringChars: Generator[String] = listOf(anyStringChar, limit = 3).map(_.mkString)
 
       given Generator[Token.Name] =
         anyNameChars
@@ -81,34 +88,34 @@ object DCalTokenizerTests extends TestSuite {
     }
 
   def toStringAndBack(): Unit = {
-    listOf(tokenGen | anyOf[Whitespace])
+    // if this is false some of our checks will be vacuous
+    assert(Keyword.values.exists(_.name.size <= 2))
+
+    listOf(tokenGen | anyOf[Whitespace], limit = 2)
       .filter(adjacentPairRules)
-      .checkWith {
-        import Checker.*
-        import java.time.Duration
+      .toChecker
+      .exists(_.size >= 2)
+      .exists(_.exists {
+        case Token.Name(name) if Keyword.stringSet(name) => true
+        case _ => false
+      })
+      .exists(_.exists {
+        case Token.StringLiteral(value) if value.size >= 3 => true
+        case _ => false
+      })
+      .forall { tokensOrSpace =>
+        val strForm = renderSeq(tokensOrSpace)
+        val reparsedTokens = DCalTokenizer(strForm, path = "<dummy>").toList
+        val expectedtokens = tokensOrSpace
+          .collect { case tok: Token => tok }
+          .map(Ps(_))
+          .map(Right(_))
 
-        timeLimited(maxDuration = Duration.ofMinutes(1)) {
-          exists[List[Token | Whitespace]](_.size >= 5)
-          && forall { tokensOrSpace =>
-            val strForm = renderSeq(tokensOrSpace)
-            try {
-              val reparsedTokens = DCalTokenizer(strForm, path = "<dummy>").toList
-              val expectedtokens = tokensOrSpace
-                .collect { case tok: Token => tok }
-                .map(Ps(_))
-                .map(Right(_))
-
-              assert(reparsedTokens == expectedtokens)
-            } catch {
-              case err =>
-                pprint.tokenize(tokensOrSpace).foreach(print)
-                print(s" ==> |$strForm")
-                println()
-                throw err
-            }
-          }
+        recording(strForm) {
+          assert(reparsedTokens == expectedtokens)
         }
       }
+      .run()
   }
 
   def tests = Tests {

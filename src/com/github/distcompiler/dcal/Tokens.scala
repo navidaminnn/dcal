@@ -1,5 +1,7 @@
 package com.github.distcompiler.dcal
 
+import java.awt.RenderingHints.Key
+
 enum Token {
   case IntLiteral(value: BigInt)
   case StringLiteral(value: String)
@@ -24,6 +26,11 @@ enum Keyword extends Token.Meta {
   case `def`
   case `import`
   case `module`
+}
+
+object Keyword {
+  val stringSet: Set[String] =
+    Keyword.values.iterator.map(_.name).toSet
 }
 
 enum Punctuation extends Token.Meta {

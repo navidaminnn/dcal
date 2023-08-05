@@ -210,23 +210,22 @@ object DCalParserTests extends TestSuite {
       toks <- renderModule(module).force
     } yield (module, toks.toList)
   }
+
+  def toTokensAndBack(): Unit = {
+    astTokPairs
+      .toChecker
+      .exists {
+        case (expectedModule, _) => expectedModule.definitions.size >= 2
+      }
+      .forall {
+        case (expectedModule, tokens) =>
+          val result = DCalParser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")
+          assert(result == Right(Ps(expectedModule)))
+      }
+      .run()
+  }
   
   def tests = Tests {
-    test("to tokens and back") {
-      astTokPairs.checkWith {
-        import Checker.*
-        timeLimited(maxDuration = Duration.ofMinutes(1), printRoundExample = false) {
-          exists[(Module, List[Token])] {
-            case (expectedModule, _) =>
-              expectedModule.definitions.size >= 2
-          }
-          && forall {
-            case (expectedModule, tokens) =>
-              val result = DCalParser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")
-              assert(result == Right(Ps(expectedModule)))
-          }
-        }
-      }
-    }
+    test("to tokens and back") - toTokensAndBack()
   }
 }

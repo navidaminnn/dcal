@@ -6,83 +6,199 @@ import scala.annotation.targetName
 import fansi.Str
 
 sealed trait Checker[T] { self =>
-  def apply(gen: Generator[T]): Unit
+  import Checker.*
+  type Self <: Checker[T]
+
+  private[chungus] def streamChecker: StreamChecker[T]
+  private[chungus] def replaceStreamChecker(streamChecker: StreamChecker[T]): Self
+
+  final def transform[U](transFn: T => U)(checkerFn: TransformChecker[U] => TransformChecker[U]): Self =
+    replaceStreamChecker {
+      StreamChecker.transform(transFn, checkerFn(TransformChecker(StreamChecker.empty)).streamChecker)
+    }
+
+  final def exists(pred: T => Boolean): Self =
+    replaceStreamChecker {
+      StreamChecker.combine(streamChecker, StreamChecker.exists(pred))
+    }
+
+  final def forall(fn: T => Unit): Self =
+    replaceStreamChecker {
+      StreamChecker.combine(streamChecker, StreamChecker.forall(fn))
+    }
 }
 
 object Checker {
-  final case class Example[T](value: T, budget: Int)
+  def fromGenerator[T](gen: Generator[T]): RootChecker[T] =
+    RootChecker(
+      gen = gen,
+      streamChecker = StreamChecker.empty,
+      printExamples = true,
+      allowedLevelsWithNoExamples = 2,
+      disableANSI = false,
+    )
 
-  final case class PosInfo(fullName: String, lineNum: Int)
-  object PosInfo {
-    inline given posInfo(using fullName: sourcecode.FullName.Machine, line: sourcecode.Line): PosInfo =
-      PosInfo(fullName = fullName.value, lineNum = line.value)
-  }
+  final case class RootChecker[T] private[chungus] (gen: Generator[T], streamChecker: StreamChecker[T],
+                                                    printExamples: Boolean,
+                                                    allowedLevelsWithNoExamples: Int,
+                                                    disableANSI: Boolean) extends Checker[T] {
+    type Self = RootChecker[T]
 
-  enum StreamChecker[T] {
-    case Forall(fn: T => Unit, posInfo: PosInfo)
-    case Exists(pred: T => Boolean, posInfo: PosInfo)
-    case And(left: StreamChecker[T], right: StreamChecker[T])
-    case Transform[T, U](fn: T => U, innerChecker: StreamChecker[U]) extends StreamChecker[T]
+    override def replaceStreamChecker(streamChecker: StreamChecker[T]): RootChecker[T] =
+      copy(streamChecker = streamChecker)
 
-    def &&(other: StreamChecker[T]): StreamChecker[T] =
-      And(this, other)
+    def withPrintExamples(printExamples: Boolean): RootChecker[T] =
+      copy(printExamples = printExamples)
 
-    def apply(data: Iterator[Example[T]]): Unit = {
-      def impl[T](self: StreamChecker[T]): Option[Example[T]] => Unit =
-        self match {
-          case Forall(fn, posInfo) =>
-            {
-              case None =>
-              case Some(Example(value, _)) =>
-                fn(value)
-            }
-          case Exists(pred, posInfo) =>
-            var count = 0
-            {
-              case None =>
-                Predef.assert(count > 0, s"no examples found for ${posInfo.fullName}:${posInfo.lineNum}")
-              case Some(Example(value, _)) =>
-                if(pred(value)) {
-                  count += 1
-                }
-            }
-          case And(left, right) =>
-            val leftFn = impl(left)
-            val rightFn = impl(right)
-            { exampleOpt =>
-              leftFn(exampleOpt)
-              rightFn(exampleOpt)
-            }
-          case Transform(fn, innerChecker) =>
-            val innerFn = impl(innerChecker)
-            { exampleOpt =>
-              innerFn {
-                exampleOpt.map {
-                  case Example(value, budget) => Example(fn(value), budget)
-                }
-              }
-            }
+    def withAllowedLevelsWithNoExamples(allowedLevelsWithNoExamples: Int): RootChecker[T] =
+      copy(allowedLevelsWithNoExamples = allowedLevelsWithNoExamples)
+
+    def withDisableANSI(disableANSI: Boolean): RootChecker[T] =
+      copy(disableANSI = disableANSI)
+
+    def run(): Unit = {
+      val startTime = Instant.now()
+
+      // state space analytics
+      var countExplored = 0
+      var countExploredSinceLast = 0
+      var consecutiveEmptyLevelsSinceLast = 0
+      var lastExample: Option[T] = None
+      var roundStart = Instant.now()
+      var lastInterimReport = roundStart
+
+      extension (str: fansi.Str) def checkANSI: String =
+        if(disableANSI) {
+          str.plainText
+        } else {
+          str.render
         }
-      
-      val check = impl(this)
-      data.map(Some(_)).foreach(check)
-      check(None) // check at end
+
+      def printExample(forcePrint: Boolean = false): Unit =
+        if(lastExample.nonEmpty && (printExamples || forcePrint)) {
+          print("  printing latest example: ")
+          pprint.tokenize(lastExample.get, indent = 2)
+            .map(_.checkANSI)
+            .foreach(print)
+          println()
+        }
+
+      var depth = 0
+      try {
+        Iterator.unfold(()) { _ =>
+          if(depth > 0) {
+            if(countExploredSinceLast == 0) {
+              consecutiveEmptyLevelsSinceLast += 1
+            } else {
+              consecutiveEmptyLevelsSinceLast = 0
+            }
+
+            println(s"explored depth ${depth - 1}: took ${humanDuration(Duration.between(roundStart, Instant.now()))} and covered $countExplored states so far ($countExploredSinceLast since last msg)")
+            countExploredSinceLast = 0
+            printExample()
+          }
+          Predef.assert(consecutiveEmptyLevelsSinceLast < allowedLevelsWithNoExamples,
+            s"""went $consecutiveEmptyLevelsSinceLast levels without finding any examples.
+              |Very suspicious! Your generator might have run out of examples.
+              |allowedLevelsWithNoExamples = $allowedLevelsWithNoExamples; change this if you need more permissive behavior""".stripMargin)
+          
+          if(!streamChecker.isSatisfied) {
+            val depthToGen = depth
+            depth += 1
+            roundStart = Instant.now()
+            lastInterimReport = roundStart
+            Some(gen.computeResultsForDepth(depth = depthToGen), ())
+          } else {
+            None
+          }
+        }
+        .flatten
+        .tapEach { _ =>
+          if(countExploredSinceLast % 1000 == 0) {
+            val now = Instant.now()
+            if(Duration.between(lastInterimReport, now).toSeconds() > 30) {
+              lastInterimReport = now
+              println(s"  ... still exploring depth ${depth-1} after ${humanDuration(Duration.between(roundStart, now))}. found $countExploredSinceLast examples this level.")
+              printExample()
+            }
+          }
+        }
+        .flatten
+        .tapEach(example => lastExample = Some(example))
+        .tapEach(streamChecker.check)
+        .foreach { _ =>
+          countExplored += 1
+          countExploredSinceLast += 1
+        }
+          
+        Predef.assert(countExplored > 0, s"checked no values - that's usually bad")
+        println {
+          fansi.Color.Green(">>successful checking").checkANSI
+          ++ s" after ${humanDuration(Duration.between(startTime, Instant.now()))}, after exploring $countExplored states."
+        }
+      } catch {
+        case err =>
+          println {
+            fansi.Color.Red("!!found error").checkANSI
+            ++ s" after ${humanDuration(Duration.between(startTime, Instant.now()))}, exploring $countExplored states."
+          }
+          printExample(forcePrint = true)
+          throw err
+      }
     }
   }
 
-  def forall[T](fn: T => Unit)(using posInfo: PosInfo): StreamChecker[T] =
-    StreamChecker.Forall(fn, posInfo)
+  final case class TransformChecker[T] private[chungus] (streamChecker: StreamChecker[T]) extends Checker[T] {
+    type Self = TransformChecker[T]
 
-  def exists[T](pred: T => Boolean)(using posInfo: PosInfo): StreamChecker[T] =
-    StreamChecker.Exists(pred, posInfo)
+    override def replaceStreamChecker(streamChecker: StreamChecker[T]): TransformChecker[T] =
+      copy(streamChecker = streamChecker)
+  }
 
-  def transform[T, U](fn: T => U)(innerChecker: StreamChecker[U]): StreamChecker[T] =
-    StreamChecker.Transform(fn, innerChecker)
+  trait StreamChecker[T] {
+    def check(value: T): Unit
+    def isSatisfied: Boolean
+  }
 
-  def apply[T](fn: Generator[T] => Unit): Checker[T] =
-    new Checker[T] {
-      override def apply(gen: Generator[T]): Unit = fn(gen)
-    }
+  object StreamChecker {
+    def empty[T]: StreamChecker[T] =
+      new StreamChecker[T] {
+        override def check(value: T): Unit = ()
+        override def isSatisfied: Boolean = true
+      }
+
+    def forall[T](fn: T => Unit): StreamChecker[T] =
+      new StreamChecker[T] {
+        override def check(value: T): Unit = fn(value)
+        override def isSatisfied: Boolean = true
+      }
+
+    def exists[T](pred: T => Boolean): StreamChecker[T] =
+      new StreamChecker[T] {
+        var isSatisfied = false
+        override def check(value: T): Unit = {
+          if(pred(value)) {
+            isSatisfied = true
+          }
+        }
+      }
+
+    def combine[T](left: StreamChecker[T], right: StreamChecker[T]): StreamChecker[T] =
+      new StreamChecker[T] {
+        override def check(value: T): Unit = {
+          left.check(value)
+          right.check(value)
+        }
+        override def isSatisfied: Boolean =
+          left.isSatisfied && right.isSatisfied
+      }
+
+    def transform[T, U](transFn: T => U, innerChecker: StreamChecker[U]): StreamChecker[T] =
+      new StreamChecker[T] {
+        override def check(value: T): Unit = innerChecker.check(transFn(value))
+        override def isSatisfied: Boolean = innerChecker.isSatisfied
+      }
+  }
 
   private def humanDuration(duration: Duration): String = {
     val builder = mutable.StringBuilder()
@@ -116,65 +232,4 @@ object Checker {
     assert(builder.nonEmpty)
     builder.result()
   }
-
-  def timeLimited[T](maxDuration: Duration, printRoundExample: Boolean = true)(streamChecker: StreamChecker[T]): Checker[T] =
-    Checker { gen =>
-      val startTime = Instant.now()
-
-      // state space analytics
-      var countExplored = 0
-      var countExploredSinceLast = 0
-      var lastExample: Option[Example[T]] = None
-      var roundStart = Instant.now()
-
-      var roundNum = 0
-      try {
-        streamChecker {
-          Iterator.continually {
-            if(roundNum > 0) {
-              println(s"explored round ${roundNum - 1}: took ${humanDuration(Duration.between(roundStart, Instant.now()))} and covered $countExplored states so far ($countExploredSinceLast since last msg)")
-              countExploredSinceLast = 0
-              if(lastExample.nonEmpty && printRoundExample) {
-                print("  printing last example from round: ")
-                pprint.tokenize(lastExample.get, initialOffset = 2).foreach(print)
-                println()
-              }
-            }
-            
-            val roundToGen = roundNum
-            roundNum += 1
-            roundStart = Instant.now()
-            gen.computeResultsForRound(round = roundToGen)
-          }
-          .flatten
-          .takeWhile { _ =>
-            // don't call now() too often. every 1000 might be a good balance of accuracy and rate reduction
-            if(countExplored % 1000 == 0) {
-              Instant.now().isBefore(startTime.plus(maxDuration))
-            } else {
-              true
-            }
-          }
-          .flatten
-          .map(Example(_, roundNum))
-          .tapEach { example =>
-            lastExample = Some(example)
-            countExplored += 1
-            countExploredSinceLast += 1
-          }
-        }
-          
-        Predef.assert(countExplored > 0, s"checked no values - that's usually bad")
-        println(fansi.Color.Green(">>successful checking") ++ s" after ${humanDuration(Duration.between(startTime, Instant.now()))}, after exploring $countExplored states")
-      } catch {
-        case err =>
-          println(fansi.Color.Red("!!found error") ++ s" after ${humanDuration(Duration.between(startTime, Instant.now()))}, exploring $countExplored states")
-          if(lastExample.nonEmpty) {
-            print("  printing last example considered: ")
-            pprint.tokenize(lastExample.get, initialOffset = 2).foreach(print)
-            println()
-          }
-          throw err
-      }
-    }
 }

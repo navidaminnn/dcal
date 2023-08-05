@@ -23,6 +23,7 @@ enum Generator[T] {
   case Selection(values: Chain[T])
   case Force(gen: Generator[T])
   case Pay(gen: Generator[T])
+  case Cheapen(gen: Generator[T])
   case Lazy(genFn: () => Generator[T])
   case IncrementCount(key: Counters.Key[T], gen: Generator[T])
   case Disjunction(left: Generator[T], right: Generator[T])
@@ -58,18 +59,14 @@ enum Generator[T] {
   def flatMap[U](fn: T => Generator[U]): Generator[U] =
     this match {
       case Empty => Empty.up
-      case ReadCounters => FlatMap(this, fn)
       case Singleton(value) => fn(value)
       case Selection(values) =>
         values.iterator
           .map(fn)
           .reduce(_ | _)
-      case Force(_) | Lazy(_) => FlatMap(this, fn)
-      case Pay(gen) => Pay(gen.flatMap(fn))
-      case IncrementCount(_, _) => FlatMap(this, fn)
       case Disjunction(left, right) =>
         left.flatMap(fn) | right.flatMap(fn)
-      case FlatMap(_, _) => FlatMap(this, fn)
+      case _ => FlatMap(this, fn)
     }
 
   def force: Generator[T] =
@@ -84,31 +81,32 @@ enum Generator[T] {
       case (Singleton(left), Selection(rights)) => Selection(left +: rights)
       case (Selection(lefts), Singleton(right)) => Selection(lefts :+ right)
       case (Pay(genL), Pay(genR)) => Pay(genL | genR)
+      case (Cheapen(genL), Cheapen(genR)) => Cheapen(genL | genR)
       case _ => Disjunction(this.up, other.up)
     }
 
-  def checkWith(checker: Checker[T]): Unit =
-    checker(this)
+  def toChecker: Checker.RootChecker[T] =
+    Checker.fromGenerator(this)
 
-  def computeResultsForRound(round: Int): Iterator[Option[T]] = {
+  def computeResultsForDepth(depth: Int): Iterator[Option[T]] = {
     enum Step[+T] {
       case Done
-      case Progress(value: T, counters: Counters, nextStep: Eval[Step[T]])
+      case Progress(value: T, maxLevelReached: Int, counters: Counters, nextStep: Eval[Step[T]])
     }
 
-    def impl[T](self: Generator[T], counters: Counters): Eval[Step[T]] = {
+    def impl[T](self: Generator[T], level: Int, counters: Counters)(using maxLevel: Int): Eval[Step[T]] = {
       self match {
         case Empty => Eval.now(Step.Done)
         case ReadCounters =>
-          Eval.now(Step.Progress(counters, counters, Eval.now(Step.Done)))
+          Eval.now(Step.Progress(counters, level, counters, Eval.now(Step.Done)))
         case Singleton(value) =>
-          Eval.now(Step.Progress(value, counters, Eval.now(Step.Done)))
+          Eval.now(Step.Progress(value, level, counters, Eval.now(Step.Done)))
         case Selection(values) =>
           def perpetuate(values: Chain[T]): Eval[Step[T]] =
             values.uncons match {
               case None => Eval.now(Step.Done)
               case Some(value, restValues) =>
-                Eval.now(Step.Progress(value, counters, Eval.defer(perpetuate(restValues))))
+                Eval.now(Step.Progress(value, level, counters, Eval.defer(perpetuate(restValues))))
             }
 
           perpetuate(values)
@@ -116,58 +114,64 @@ enum Generator[T] {
           def perpetuate(step: Eval[Step[T]]): Eval[Step[T]] =
             step.map {
               case Step.Done => Step.Done
-              case Step.Progress(valueOpt, countersToReset, nextStep) =>
-                Step.Progress(valueOpt, countersToReset.resetBudget(counters.budget), perpetuate(nextStep))
+              case Step.Progress(value, _, counters, nextStep) =>
+                Step.Progress(value, level, counters, perpetuate(nextStep))
             }
 
-          perpetuate(impl(gen, counters.resetBudget(Int.MaxValue)))
+          perpetuate(impl(gen, level, counters)(using Int.MaxValue))
         case Pay(gen) =>
-          if(counters.budget == 0) {
+          if(level >= maxLevel) {
             Eval.now(Step.Done)
           } else {
-            Eval.defer(impl(gen, counters.payOne))
+            Eval.defer(impl(gen, level + 1, counters))
           }
+        case Cheapen(gen) =>
+          Eval.defer(impl(gen, level - 1, counters))
         case Lazy(genFn) =>
-          Eval.defer(impl(genFn(), counters))
+          Eval.defer(impl(genFn(), level, counters))
         case IncrementCount(key, gen) =>
-          Eval.defer(impl(gen, counters.countOne(key)))
+          Eval.defer(impl(gen, level, counters.countOne(key)))
         case Disjunction(left, right) =>
           def attachRight(step: Eval[Step[T]]): Eval[Step[T]] =
             step.flatMap {
               case Step.Done =>
-                Eval.defer(impl(right, counters))
-              case Step.Progress(value, counters, nextStep) =>
-                Eval.now(Step.Progress(value, counters, attachRight(nextStep)))
+                Eval.defer(impl(right, level, counters))
+              case Step.Progress(value, maxLevelReached, counters, nextStep) =>
+                Eval.now(Step.Progress(value, maxLevelReached, counters, attachRight(nextStep)))
             }
 
-          attachRight(Eval.defer(impl(left, counters)))
+          attachRight(Eval.defer(impl(left, level, counters)))
         case fm: FlatMap[tt, T] =>
           val self = fm.self
           val fn = fm.fn
           def perpetuateOuter(step: Eval[Step[tt]]): Eval[Step[T]] =
             step.flatMap {
               case Step.Done => Eval.now(Step.Done)
-              case Step.Progress(value, counters, nextStep) =>
+              case Step.Progress(value, maxLevelReached1, counters, nextStep) =>
                 def perpetuateInner(step: Eval[Step[T]]): Eval[Step[T]] =
                   step.flatMap {
                     case Step.Done =>
                       perpetuateOuter(nextStep)
-                    case Step.Progress(value, counters, nextStep) =>
-                      Eval.now(Step.Progress(value, counters, perpetuateInner(nextStep)))
+                    case Step.Progress(value, maxLevelReached2, counters, nextStep) =>
+                      Eval.now(Step.Progress(value, math.max(maxLevelReached1, maxLevelReached2), counters, perpetuateInner(nextStep)))
                   }
 
-                perpetuateInner(Eval.defer(impl(fn(value), counters)))
+                perpetuateInner(Eval.defer(impl(fn(value), level, counters)))
             }
 
-          perpetuateOuter(Eval.defer(impl(self, counters)))
+          perpetuateOuter(Eval.defer(impl(self, level, counters)))
       }
     }
 
-    Iterator.unfold(impl(this, Counters(budget = round))) { nextStep =>
+    Iterator.unfold(impl(this, 0, Counters.init)(using depth)) { nextStep =>
       nextStep.value match {
         case Step.Done => None
-        case Step.Progress(value, counters, nextStep) =>
-          Some((if(counters.budget == 0) Some(value) else None, nextStep))
+        case Step.Progress(value, maxLevelReached, counters, nextStep) =>
+          if(maxLevelReached == depth) {
+            Some((Some(value), nextStep))
+          } else {
+            Some((None, nextStep))
+          }
       }
     }
   }
@@ -195,6 +199,9 @@ object Generator {
   def one[T](value: T): Generator[T] =
     costOne(free_!(value))
 
+  def cheapen_![T](gen: Generator[T]): Generator[T] =
+    Generator.Cheapen(gen)
+
   def free_![T](value: T): Generator[T] =
     Generator.Singleton(value)
 
@@ -211,21 +218,27 @@ object Generator {
   def chooseAny[T, F[_] : Foldable](ft: F[T]): Generator[T] =
     ft.foldMap(one)
 
-  def unfold[T](init: Generator[T], limit: Int = Int.MaxValue)(grow: T => Generator[T]): Generator[T] = {
+  def unfold[T](init: T, limit: Int = Int.MaxValue)(grow: T => Generator[T]): Generator[T] = {
     require(limit >= 0)
-    init.flatMap { init =>
-      if(limit == 0) {
-        free_!(init)
+    def impl(prev: T, level: Int): Generator[T] =
+      if(level >= limit) {
+        none.up
       } else {
-        free_!(init)
-        | unfold(lzy(costOne(grow(init))), limit = limit - 1)(grow)
+        free_!(prev)
+        | costOne {
+          grow(prev).flatMap { curr =>
+            free_!(curr)
+            | impl(curr, level + 1)
+          }
+        }
       }
-    }
+
+    impl(init, 0)
   }
 
   def listOf[T](generator: Generator[T], limit: Int = Int.MaxValue): Generator[List[T]] =
-    unfold(one(Nil), limit = limit) { tail =>
-      generator.map(_ :: tail)
+    unfold(Nil, limit = limit) { tail =>
+      cheapen_!(generator).map(_ :: tail)
     }
 
   def count[T](key: Counters.Key[T])(gen: Generator[T]): Generator[T] =
