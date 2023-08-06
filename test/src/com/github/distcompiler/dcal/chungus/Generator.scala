@@ -4,10 +4,8 @@ import scala.annotation.targetName
 import scala.util.Try
 
 import cats.data.Chain
-import cats.{Semigroup, StackSafeMonad, Eval, Monoid}
+import cats.{Semigroup, Alternative, Eval, Monoid, Foldable, Applicative, MonoidK}
 import cats.implicits.given
-import cats.Foldable
-import scala.reflect.ClassTag
 
 enum Generator[T] {
   import Generator.*
@@ -17,268 +15,243 @@ enum Generator[T] {
     case _ =>
   }
 
-  case Empty extends Generator[Nothing]
-  case ReadCounters extends Generator[Counters]
+  case Empty[T]() extends Generator[T]
   case Singleton(value: T)
   case Selection(values: Chain[T])
   case Force(gen: Generator[T])
-  case Pay(gen: Generator[T])
-  case Cheapen(gen: Generator[T])
-  case Lazy(genFn: () => Generator[T])
-  case IncrementCount(key: Counters.Key[T], gen: Generator[T])
+  case FreeLazy(genFn: () => Generator[T])
+  case Pay(genFn: () => Generator[T])
+  //case IncrementCount(key: Counters.Key[T], gen: Generator[T])
+  case Filter(self: Generator[T], pred: T => Boolean)
   case Disjunction(left: Generator[T], right: Generator[T])
-  case FlatMap[T, U](self: Generator[T], fn: T => Generator[U]) extends Generator[U]
-
-  def isDefinitelyEmpty: Boolean =
-    this match {
-      case Empty => true
-      case _ => false
-    }
+  case Ap[T, U](transform: Generator[T => U], self: Generator[T]) extends Generator[U]
 
   def up[U >: T]: Generator[U] =
-    this.asInstanceOf[Generator[U]]
+    this.map(identity)
 
-  def map[U](fn: T => U): Generator[U] =
-    this.flatMap(value => free_!(fn(value)))
+  def filter(pred: T => Boolean): Generator[T] =
+    Filter(this, pred)
 
-  def filter(fn: T => Boolean): Generator[T] =
-    this.flatMap { value =>
-      if(fn(value)) {
-        free_!(value)
+  def filterF(pred: Generator[T => Boolean]): Generator[T] =
+    this.map2(pred) { (value, pred) =>
+      if(pred(value)) {
+        Some(value)
       } else {
-        none.up
+        None
       }
     }
+      .filter(_.nonEmpty)
+      .map(_.get)
 
   def ++(using semigroup: Semigroup[T])(other: Generator[T]): Generator[T] =
-    for {
-      left <- this
-      right <- other
-    } yield semigroup.combine(left, right)
-
-  def flatMap[U](fn: T => Generator[U]): Generator[U] =
-    this match {
-      case Empty => Empty.up
-      case Singleton(value) => fn(value)
-      case Selection(values) =>
-        values.iterator
-          .map(fn)
-          .reduce(_ | _)
-      case Disjunction(left, right) =>
-        left.flatMap(fn) | right.flatMap(fn)
-      case _ => FlatMap(this, fn)
-    }
-
-  def force: Generator[T] =
-    Force(this)
+    this.map2(other)(_ `combine` _)
   
   @targetName("or")
   def |[U](other: Generator[U]): Generator[T | U] =
-    (this, other) match {
-      case (Empty, _) => other
-      case (_, Empty) => this
-      case (Singleton(left), Singleton(right)) => Selection(Chain(left, right))
-      case (Singleton(left), Selection(rights)) => Selection(left +: rights)
-      case (Selection(lefts), Singleton(right)) => Selection(lefts :+ right)
-      case (Pay(genL), Pay(genR)) => Pay(genL | genR)
-      case (Cheapen(genL), Cheapen(genR)) => Cheapen(genL | genR)
-      case _ => Disjunction(this.up, other.up)
-    }
+    this.up.combineK(other.up)
+    // (this, other) match {
+    //   case (Empty, _) => other
+    //   case (_, Empty) => this
+    //   case (Singleton(left), Singleton(right)) => Selection(Chain(left, right))
+    //   case (Singleton(left), Selection(rights)) => Selection(left +: rights)
+    //   case (Selection(lefts), Singleton(right)) => Selection(lefts :+ right)
+    //   case (Pay(genL), Pay(genR)) => Pay(genL | genR)
+    //   case (Cheapen(genL), Cheapen(genR)) => Cheapen(genL | genR)
+    //   case _ => Disjunction(this.up, other.up)
+    // }
 
   def toChecker: Checker.RootChecker[T] =
     Checker.fromGenerator(this)
 
-  def computeResultsForDepth(depth: Int): Iterator[Option[T]] = {
-    enum Step[+T] {
-      case Done
-      case Progress(value: T, maxLevelReached: Int, counters: Counters, nextStep: Eval[Step[T]])
-    }
+  def examplesIterator: Iterator[Example[T]] = {
+    var haveLeftovers = false
 
-    def impl[T](self: Generator[T], level: Int, counters: Counters)(using maxLevel: Int): Eval[Step[T]] = {
+    final case class Ex[+T](value: T, maxDepth: Int, counters: Counters)
+
+    def impl[T](self: Generator[T], counters: Counters, depth: Int, depthCap: Int): Iterator[Ex[T]] =
       self match {
-        case Empty => Eval.now(Step.Done)
-        case ReadCounters =>
-          Eval.now(Step.Progress(counters, level, counters, Eval.now(Step.Done)))
+        case Empty() =>
+          Iterator.empty
         case Singleton(value) =>
-          Eval.now(Step.Progress(value, level, counters, Eval.now(Step.Done)))
+          Iterator.single(Ex(value, maxDepth = depth, counters = counters ))
         case Selection(values) =>
-          def perpetuate(values: Chain[T]): Eval[Step[T]] =
-            values.uncons match {
-              case None => Eval.now(Step.Done)
-              case Some(value, restValues) =>
-                Eval.now(Step.Progress(value, level, counters, Eval.defer(perpetuate(restValues))))
-            }
-
-          perpetuate(values)
+          values
+            .iterator
+            .map(Ex(_, maxDepth = depth, counters = counters ))
         case Force(gen) =>
-          def perpetuate(step: Eval[Step[T]]): Eval[Step[T]] =
-            step.map {
-              case Step.Done => Step.Done
-              case Step.Progress(value, _, counters, nextStep) =>
-                Step.Progress(value, level, counters, perpetuate(nextStep))
+          impl(gen, counters, 0, Int.MaxValue)
+            .map {
+              case Ex(value, _, counters) =>
+                Ex(value, maxDepth = depth, counters = counters)
             }
-
-          perpetuate(impl(gen, level, counters)(using Int.MaxValue))
-        case Pay(gen) =>
-          if(level >= maxLevel) {
-            Eval.now(Step.Done)
+        case FreeLazy(genFn) =>
+          impl(genFn(), counters, depth, depthCap)
+        case Pay(genFn) =>
+          if(depth == depthCap) {
+            haveLeftovers = true
+            Iterator.empty
           } else {
-            Eval.defer(impl(gen, level + 1, counters))
+            impl(genFn(), counters, depth + 1, depthCap)
           }
-        case Cheapen(gen) =>
-          Eval.defer(impl(gen, level - 1, counters))
-        case Lazy(genFn) =>
-          Eval.defer(impl(genFn(), level, counters))
-        case IncrementCount(key, gen) =>
-          Eval.defer(impl(gen, level, counters.countOne(key)))
+        case Filter(self, pred) =>
+          impl(self, counters, depth, depthCap)
+            .filter {
+              case Ex(value, _, _) => pred(value)
+            }
         case Disjunction(left, right) =>
-          def attachRight(step: Eval[Step[T]]): Eval[Step[T]] =
-            step.flatMap {
-              case Step.Done =>
-                Eval.defer(impl(right, level, counters))
-              case Step.Progress(value, maxLevelReached, counters, nextStep) =>
-                Eval.now(Step.Progress(value, maxLevelReached, counters, attachRight(nextStep)))
-            }
-
-          attachRight(Eval.defer(impl(left, level, counters)))
-        case fm: FlatMap[tt, T] =>
-          val self = fm.self
-          val fn = fm.fn
-          def perpetuateOuter(step: Eval[Step[tt]]): Eval[Step[T]] =
-            step.flatMap {
-              case Step.Done => Eval.now(Step.Done)
-              case Step.Progress(value, maxLevelReached1, counters, nextStep) =>
-                def perpetuateInner(step: Eval[Step[T]]): Eval[Step[T]] =
-                  step.flatMap {
-                    case Step.Done =>
-                      perpetuateOuter(nextStep)
-                    case Step.Progress(value, maxLevelReached2, counters, nextStep) =>
-                      Eval.now(Step.Progress(value, math.max(maxLevelReached1, maxLevelReached2), counters, perpetuateInner(nextStep)))
-                  }
-
-                perpetuateInner(Eval.defer(impl(fn(value), level, counters)))
-            }
-
-          perpetuateOuter(Eval.defer(impl(self, level, counters)))
-      }
-    }
-
-    Iterator.unfold(impl(this, 0, Counters.init)(using depth)) { nextStep =>
-      nextStep.value match {
-        case Step.Done => None
-        case Step.Progress(value, maxLevelReached, counters, nextStep) =>
-          if(maxLevelReached == depth) {
-            Some((Some(value), nextStep))
-          } else {
-            Some((None, nextStep))
+          val leftIter = impl(left, counters, depth, depthCap).buffered
+          val rightIter = impl(right, counters, depth, depthCap).buffered
+          
+          // try to see smaller before bigger
+          new Iterator[Ex[T]] {
+            override def hasNext: Boolean = leftIter.hasNext || rightIter.hasNext
+            override def next(): Ex[T] =
+              if(leftIter.hasNext && rightIter.hasNext) {
+                if(leftIter.head.maxDepth <= rightIter.head.maxDepth) {
+                  leftIter.next()
+                } else {
+                  rightIter.next()
+                }
+              } else if(leftIter.hasNext) {
+                leftIter.next()
+              } else {
+                rightIter.next()
+              }
           }
+        case Ap(transform, self) =>
+          impl(self, counters, depth, depthCap)
+            .flatMap {
+              case Ex(value, maxDepth1, counters) =>
+                impl(transform, counters, depth, depthCap)
+                  .map {
+                    case Ex(fn, maxDepth2, counters) =>
+                      Ex(fn(value), maxDepth1 `max` maxDepth2, counters) 
+                  }
+            }
       }
-    }
+      
+    Iterator.from(0)
+      .map { depthCap =>
+        if(depthCap == 0 || haveLeftovers) {
+          haveLeftovers = false
+          impl(this, counters = Counters.init, depth = 0, depthCap = depthCap)
+            .filter(_.maxDepth == depthCap)
+            .map {
+              case Ex(value, maxDepth, counters) =>
+                Example(value, maxDepth)
+            }
+            .some
+        } else {
+          None
+        }
+      }
+      .takeWhile(_.nonEmpty)
+      .flatMap(_.iterator.flatten)
   }
 }
 
 object Generator {
-  given generatorMonad: StackSafeMonad[Generator] with {
-    override def pure[A](x: A): Generator[A] = free_!(x)
+  import Generator.*
 
-    override def flatMap[A, B](fa: Generator[A])(f: A => Generator[B]): Generator[B] = fa.flatMap(f)
+  final case class Example[T](value: T, maxDepth: Int)
+
+  given generatorAlternative: Alternative[Generator] with {
+    override def empty[A]: Generator[A] = Empty()
+
+    override def pure[A](x: A): Generator[A] = Singleton(x)
+
+    override def ap[A, B](ff: Generator[A => B])(fa: Generator[A]): Generator[B] =
+      Ap(ff, fa)
+
+    override def combineK[A](x: Generator[A], y: Generator[A]): Generator[A] =
+      (x, y) match {
+        case (Empty(), right) => right
+        case (left, Empty()) => left
+        case (Singleton(leftV), Singleton(rightV)) => Selection(Chain(leftV, rightV))
+        case (Singleton(leftV), Selection(rightVs)) => Selection(leftV +: rightVs)
+        case (Selection(leftVs), Singleton(rightV)) => Selection(leftVs :+ rightV)
+        case (Selection(leftVs), Selection(rightVs)) => Selection(leftVs ++ rightVs)
+        case (left, right) => Disjunction(left, right)
+      }
   }
 
-  given generatorMonoid[T]: Monoid[Generator[T]] with {
-    override def empty: Generator[T] = none.up
+  def empty[T]: Generator[T] = Empty()
 
-    override def combine(x: Generator[T], y: Generator[T]): Generator[T] = x | y
+  def pure[T](value: T): Generator[T] = value.pure
+
+  def force_![T](gen: Generator[T]): Generator[T] = Force(gen)
+
+  def freeLzy_![T](gen: =>Generator[T]): Generator[T] = {
+    lazy val lzyGen = gen
+    FreeLazy(() => lzyGen)
   }
-
-  def none: Generator[Nothing] =
-    Generator.Empty
-
-  def readCounters: Generator[Counters] =
-    Generator.ReadCounters
-
-  def one[T](value: T): Generator[T] =
-    costOne(free_!(value))
-
-  def cheapen_![T](gen: Generator[T]): Generator[T] =
-    Generator.Cheapen(gen)
-
-  def free_![T](value: T): Generator[T] =
-    Generator.Singleton(value)
-
-  def costOne[T](gen: Generator[T]): Generator[T] =
-    Generator.Pay(gen)
 
   def lzy[T](gen: =>Generator[T]): Generator[T] = {
     lazy val lzyGen = gen
-    Generator.Lazy(() => gen)
+    Pay(() => lzyGen)
   }
 
   def anyOf[T](using gen: =>Generator[T]): Generator[T] = lzy(gen)
 
-  def chooseAny[T, F[_] : Foldable](ft: F[T]): Generator[T] =
-    ft.foldMap(one)
+  def anyFromSeq[T](seq: Seq[T]): Generator[T] =
+    Selection(Chain.fromSeq(seq))
 
-  def unfold[T](init: T, limit: Int = Int.MaxValue)(grow: T => Generator[T]): Generator[T] = {
-    require(limit >= 0)
-    def impl(prev: T, level: Int): Generator[T] =
-      if(level >= limit) {
-        none.up
-      } else {
-        free_!(prev)
-        | costOne {
-          grow(prev).flatMap { curr =>
-            free_!(curr)
-            | impl(curr, level + 1)
-          }
-        }
+  def unfold[T](levelFn: Int => Option[Generator[T]]): Generator[T] = {
+    def impl(level: Int): Generator[T] =
+      levelFn(level) match {
+        case None => Empty()
+        case Some(gen) =>
+          gen
+          | lzy(impl(level + 1))
       }
 
-    impl(init, 0)
+    impl(0)
   }
 
-  def listOf[T](generator: Generator[T], limit: Int = Int.MaxValue): Generator[List[T]] =
-    unfold(Nil, limit = limit) { tail =>
-      cheapen_!(generator).map(_ :: tail)
+  def listOf[T](gen: Generator[T], limit: Int = Int.MaxValue): Generator[List[T]] = {
+    require(limit >= 0)
+    unfold {
+      case idx if idx <= limit =>
+        Some(Applicative[Generator].replicateA(idx, gen))
+      case _ => None
     }
+  }
 
-  def count[T](key: Counters.Key[T])(gen: Generator[T]): Generator[T] =
-    Generator.IncrementCount(key, gen)
+  given anyListOf[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen)
 
-  def rateLimit[T](key: Counters.Key[T], limit: Int)(gen: Generator[T]): Generator[T] =
-    readCounters.flatMap { counters =>
-      if(counters.read(key) < limit) {
-        count(key)(gen)
-      } else {
-        none.up
-      }
-    }
+  // def count[T](key: Counters.Key[T])(gen: Generator[T]): Generator[T] =
+  //   Generator.IncrementCount(key, gen)
 
-  given anyProductEmptyTuple: Generator[EmptyTuple] = free_!(EmptyTuple)
+  // def rateLimit[T](key: Counters.Key[T], limit: Int)(gen: Generator[T]): Generator[T] =
+  //   readCounters.flatMap { counters =>
+  //     if(counters.read(key) < limit) {
+  //       count(key)(gen).flatMap(_ => lzy(rateLimit(key, limit = limit)(gen)))
+  //     } else {
+  //       none.up
+  //     }
+  //   }
+
+  given anyProductEmptyTuple: Generator[EmptyTuple] = EmptyTuple.pure
   given anyProductTupleCons[T, Rest <: Tuple](using tGen: =>Generator[T], restGen: =>Generator[Rest]): Generator[T *: Rest] =
-    for {
-      t <- lzy(tGen)
-      rest <- lzy(restGen)
-    } yield t *: rest
+    Applicative[Generator].map2(freeLzy_!(tGen), freeLzy_!(restGen))(_ *: _)
 
   given anyProduct[T](using mirror: deriving.Mirror.ProductOf[T])(using mirror.MirroredElemTypes <:< NonEmptyTuple)(using genParts: =>Generator[mirror.MirroredElemTypes]): Generator[T] =
-    lzy { 
-      costOne(genParts)
-        .map { tuple =>
-          Try(mirror.fromTuple(tuple))
+    lzy {
+      genParts
+        .map { parts =>
+          try {
+            Some(mirror.fromTuple(parts))
+          } catch {
+            case _: IllegalArgumentException =>
+              None
+          }
         }
-        .flatMap { result =>
-          result
-            .map(value => free_!(value))
-            .recover {
-              case _: IllegalArgumentException =>
-                none.up
-            }
-            .get
-        }
+        .filter(_.nonEmpty)
+        .map(_.get)
     }
 
   given anyEmptyProduct[T](using mirror: deriving.Mirror.ProductOf[T])(using EmptyTuple =:= mirror.MirroredElemTypes): Generator[T] =
-    one(mirror.fromTuple(EmptyTuple))
+    mirror.fromTuple(EmptyTuple).pure
 
   given anySumTuple1[T](using gen: Generator[T]): Tuple1[Generator[T]] =
     Tuple1(gen)
@@ -289,10 +262,8 @@ object Generator {
     lzy {
       partGens
         .productIterator
-        .foldLeft(none.up: Generator[T]) { (acc, gen) =>
-          acc | gen.asInstanceOf[Generator[T]]
-        }
+        .map(_.asInstanceOf[Generator[T]])
+        .reduceOption(_ `combineK` _)
+        .getOrElse(Empty())
     }
-
-  given anyListOf[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen)
 }

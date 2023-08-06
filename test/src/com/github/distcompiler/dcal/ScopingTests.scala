@@ -2,6 +2,8 @@ package test.com.github.distcompiler.dcal
 
 import java.time.Duration
 import cats.data.Chain
+import cats.Applicative
+import cats.syntax.all.given
 
 import utest.{TestSuite, test, Tests}
 import chungus.{Generator, Checker, assert, assertMatch, recording, Counters}
@@ -33,9 +35,9 @@ object ScopingTests extends TestSuite {
 
   // limit string literals, because unlike other AST strings they don't matter
   private given strLiteralGen: Generator[Expression.StringLiteral] =
-    one(Expression.StringLiteral("string"))
+    pure(Expression.StringLiteral("string"))
 
-  private given numGen: Generator[BigInt] = one(BigInt(1)) // doesn't matter here
+  private given numGen: Generator[BigInt] = pure(BigInt(1)) // doesn't matter here
 
   private given psGen[T](using gen: Generator[T])(using DummyLocSrc): Generator[Ps[T]] = gen.map(Ps(_))
 
@@ -43,13 +45,13 @@ object ScopingTests extends TestSuite {
     listOf(gen, limit = 3)
 
   private given modGen(using DummyLocSrc)(using Generator[List[Ps[Definition]]]): Generator[Module] =
-    for {
-      defns <- anyOf[List[Ps[Definition]]]
-    } yield Module(
-      name = Ps("my_module"),
-      imports = Nil,
-      definitions = defns,
-    )
+    anyOf[List[Ps[Definition]]].map { defns =>
+      Module(
+        name = Ps("my_module"),
+        imports = Nil,
+        definitions = defns,
+      )
+    }
 
   def findAllReferents(module: Module): Set[PsK[Scoping.Referent]] = {
     import Scoping.Referent
@@ -84,6 +86,7 @@ object ScopingTests extends TestSuite {
   def generalChecks(requiredReferences: Int, requiredErrors: Int, requiredDefinitions: Int)(moduleGen: Generator[Module]): Unit = {
     moduleGen
       .toChecker
+      .withPrintExamples(printExamples = false)
       .exists(_.definitions.size >= requiredDefinitions)
       .transform { module =>
         val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
@@ -168,7 +171,7 @@ object ScopingTests extends TestSuite {
   // this should be mostly names and defs
   final class NameTargetedGens(definitionCount: Int)(using DummyLocSrc) {
     // names to choose from
-    given strGen: Generator[String] = chooseAny(('a' to 'c').map(_.toString).toList)
+    given strGen: Generator[String] = anyFromSeq(('a' to 'c').map(_.toString))
 
     object ExprKey extends Counters.Key[Expression]
     object StmtKey extends Counters.Key[Statement]
@@ -179,16 +182,21 @@ object ScopingTests extends TestSuite {
 
     // don't pay for defn block
     given defnGen: Generator[Definition] =
-      for {
-        name <- anyOf[Ps[String]]
-        params <- listOf(anyOf[Ps[DefParam]], limit = 3)
-        bodyStmts <- listOf(anyOf[Ps[Statement]], limit = 3)
-      } yield Definition(name, params, Ps(Statement.Block(bodyStmts)))
+      Applicative[Generator].product(
+        anyOf[Ps[String]],
+        Applicative[Generator].product(
+          listOf(anyOf[Ps[DefParam]], limit = 3),
+          listOf(anyOf[Ps[Statement]], limit = 3),
+        )
+      ).map {
+        case (name, (params, bodyStmts)) =>
+          Definition(name, params, Ps(Statement.Block(bodyStmts)))
+      }
 
     given bindingGen: Generator[Binding] =
       lzy {
         anyOf[Binding.Value]
-        | rateLimit(key = BindingKey, limit = 1)(Generator.anySum[Binding])
+        //| rateLimit(key = BindingKey, limit = 1)(Generator.anySum[Binding])
       }
       .up
 
@@ -197,28 +205,31 @@ object ScopingTests extends TestSuite {
         Generator.anyProduct[Statement.Let]
         | Generator.anyProduct[Statement.Var]
         | Generator.anyProduct[Statement.Call]
-        | rateLimit(key = StmtKey, limit = 1)(Generator.anySum[Statement])
+        //| rateLimit(key = StmtKey, limit = 1)(Generator.anySum[Statement])
       }
       .up
 
     given exprGen: Generator[Expression] =
       lzy {
-        one(Expression.StringLiteral("<value>"))
+        pure(Expression.StringLiteral("<value>"))
         | anyOf[Expression.OpCall]
-        | rateLimit(key = ExprKey, limit = 1)(Generator.anySum[Expression])
+        //| rateLimit(key = ExprKey, limit = 1)(Generator.anySum[Expression])
       }
       .up
   }
 
   def tests = Tests {
     test("generalChecks") {
-      // test("any") {
-      //   generalChecks(minReferences = 2, minErrors = 2) {
-      //     given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
-      //     given strGen: Generator[String] = chooseAny(List("foo", "bar", "ping"))
-      //     anyOf[Module]
-      //   }
-      // }
+      test("untargeted") {
+        generalChecks(requiredReferences = 1, requiredErrors = 1, requiredDefinitions = 1) {
+          given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+          // very short lists or we're going to take forever
+          given limitedList[T](using gen: Generator[T]): Generator[List[T]] =
+            listOf(gen, limit = 2)
+          given strGen: Generator[String] = anyFromSeq(List("foo", "bar", "ping"))
+          anyOf[Module]
+        }
+      }
       test("1 definition") {
         generalChecks(requiredReferences = 3, requiredErrors = 3, requiredDefinitions = 1) {
           given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
@@ -228,15 +239,15 @@ object ScopingTests extends TestSuite {
           anyOf[Module]
         }
       }
-      // test("3 definitions") {
-      //   generalChecks(requiredReferences = 3, requiredErrors = 3, requiredDefinitions = 1) {
-      //     given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+      test("3 definitions") {
+        generalChecks(requiredReferences = 2, requiredErrors = 2, requiredDefinitions = 3) {
+          given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
 
-      //     val gens = new NameTargetedGens(definitionCount = 3)
-      //     import gens.given
-      //     anyOf[Module]
-      //   }
-      // }
+          val gens = new NameTargetedGens(definitionCount = 3)
+          import gens.given
+          anyOf[Module]
+        }
+      }
     }
   }  
 }

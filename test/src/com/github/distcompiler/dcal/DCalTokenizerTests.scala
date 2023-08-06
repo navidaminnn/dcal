@@ -1,14 +1,12 @@
 package test.com.github.distcompiler.dcal
 
 import cats.syntax.all.given
-import cats.instances.string
 
 import utest.{TestSuite, Tests, test}
 import chungus.*
 
 import com.github.distcompiler.dcal.{DCalTokenizer, Token, Keyword}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
-import scala.concurrent.duration.FiniteDuration
 
 object DCalTokenizerTests extends TestSuite {
   import DCalTokenizer.*
@@ -18,17 +16,17 @@ object DCalTokenizerTests extends TestSuite {
   
   val tokenGen =
     locally {
-      given anyInt: Generator[BigInt] = one(BigInt(0)) | one(BigInt(10)) | one(BigInt(123456789)) 
+      given anyInt: Generator[BigInt] = pure(BigInt(0)) | pure(BigInt(10)) | pure(BigInt(123456789))
       val anyNameChar: Generator[Char] =
-        chooseAny(List('0', '9'))
-        | chooseAny("_aifX".toList) // conveniently include letters needed for the 'if' keyword
+        anyFromSeq(List('0', '9'))
+        | anyFromSeq("_aifX") // conveniently include letters needed for the 'if' keyword
       val anyNameChars: Generator[String] =
         listOf(anyNameChar, limit = 3)
           .map(_.mkString)
           .filter(name => !Keyword.values.iterator.map(_.name).exists(name.contains))
       val anyStringChar: Generator[Char] =
         anyNameChar
-        | chooseAny("\"\n\t\\".toList)
+        | anyFromSeq("\"\n\t\\")
       val anyStringChars: Generator[String] = listOf(anyStringChar, limit = 3).map(_.mkString)
 
       given Generator[Token.Name] =

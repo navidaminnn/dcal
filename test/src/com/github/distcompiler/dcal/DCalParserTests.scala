@@ -16,18 +16,30 @@ object DCalParserTests extends TestSuite {
   private type GC[T] = Generator[Chain[T]]
 
   private def tok(tok: Token): GC[Token] =
-    one(Chain.one(tok))
+    pure(Chain.one(tok))
 
   private def toks(toks: Token*): GC[Token] =
-    one(Chain.fromSeq(toks))
+    pure(Chain.fromSeq(toks))
 
   private given dummyLoc: SourceLocation = SourceLocation("dummy", offsetStart = -1, offsetEnd = -1)
 
   // use single token strings / bigints because the parser is insensitive to the values
-  private given strGen: Generator[String] = one("foo")
-  private given numGen: Generator[BigInt] = one(BigInt(1))
+  private given strGen: Generator[String] = pure("foo")
+  private given numGen: Generator[BigInt] = pure(BigInt(1))
 
   private given psGen[T](using gen: Generator[T]): Generator[Ps[T]] = gen.map(Ps(_))
+
+  // object StmtKey extends Counters.Key[Statement]
+  // private given stmtGen: Generator[Statement] =
+  //   rateLimit(StmtKey, limit = 3)(Generator.anySum)
+
+  // object ExprKey extends Counters.Key[Expression]
+  // private given exprGen: Generator[Expression] =
+  //   rateLimit(ExprKey, limit = 3)(Generator.anySum)
+
+  // object BindingKey extends Counters.Key[Binding]
+  // private given genBinding: Generator[Binding] =
+  //   rateLimit(BindingKey, limit = 3)(Generator.anySum)
 
   // if we focus on generating lists that are too long we'll never get very deep. length <= 3 seems good here.
   private given limitedListOf[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen, limit = 3)
@@ -42,11 +54,11 @@ object DCalParserTests extends TestSuite {
 
   private def renderImports(imports: List[Ps[Import]]): GC[Token] =
     imports match {
-      case Nil => one(Chain.nil)
+      case Nil => pure(Chain.nil)
       case imports =>
         tok(Token.Keyword(Keyword.`import`))
         ++ renderCommaSep(imports) {
-          case Ps(Import.Name(name)) => one(Chain.one(Token.Name(name)))
+          case Ps(Import.Name(name)) => pure(Chain.one(Token.Name(name)))
         }
     }
 
@@ -100,7 +112,7 @@ object DCalParserTests extends TestSuite {
                 tok(Token.Punctuation(Punctuation.`(`))
                 ++ renderCommaSep(arguments)(expr => renderExpression(expr.value))
                 ++ tok(Token.Punctuation(Punctuation.`)`))
-              } else one(Chain.empty))
+              } else pure(Chain.empty))
           }
         case Expression.SetConstructor(members) =>
           tok(Token.Punctuation(Punctuation.`{`))
@@ -116,7 +128,7 @@ object DCalParserTests extends TestSuite {
         (if(needEquals) {
           tok(Token.BinaryOperator(BinaryOperator.`=`))
         } else {
-          one(Chain.empty)
+          pure(Chain.empty)
         })
         ++ renderExpression(expr.value)
       case Binding.Selection(binding) =>
@@ -126,7 +138,7 @@ object DCalParserTests extends TestSuite {
         (if(needEquals) {
           tok(Token.BinaryOperator(BinaryOperator.`=`))
         } else {
-          one(Chain.empty)
+          pure(Chain.empty)
         })
         ++ tok(Token.Keyword(Keyword.`call`))
         ++ renderPath(path.value)
@@ -167,7 +179,7 @@ object DCalParserTests extends TestSuite {
         ++ tok(Token.Punctuation(Punctuation.`)`))
         ++ renderStatement(thenBlock.value)
         ++ (elseBlockOpt match {
-          case None => one(Chain.empty)
+          case None => pure(Chain.empty)
           case Some(Ps(elseBlock)) =>
             tok(Token.Keyword(Keyword.`else`))
             ++ renderStatement(elseBlock)
@@ -203,24 +215,29 @@ object DCalParserTests extends TestSuite {
     ++ renderDefinitions(definitions)
   }
 
-  private def astTokPairs: Generator[(Module, List[Token])] = {
-    for {
-      module <- anyOf[Module]
-      // don't pay for rendering; limited combos come from module
-      toks <- renderModule(module).force
-    } yield (module, toks.toList)
-  }
-
   def toTokensAndBack(): Unit = {
-    astTokPairs
+    // TODO: the existence condition isn't strong enough; we should be sure to see e.g. some expressions! 
+    anyOf[Module]
       .toChecker
-      .exists {
-        case (expectedModule, _) => expectedModule.definitions.size >= 2
-      }
-      .forall {
-        case (expectedModule, tokens) =>
-          val result = DCalParser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")
-          assert(result == Right(Ps(expectedModule)))
+      .transform { module =>
+        // get tokens
+        (module, renderModule(module).examplesIterator.map(_.value).toList)
+      } { checker =>
+        checker
+          .exists {
+            case (expectedModule, _) => expectedModule.definitions.size >= 2
+          }
+          .forall {
+            case (expectedModule, tokenss) =>
+              tokenss.foreach { tokens =>
+                recording(tokens) {
+                  val result = DCalParser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")
+                  recording(result) {
+                    assert(result == Right(Ps(expectedModule)))
+                  }
+                }
+              }
+          }
       }
       .run()
   }
