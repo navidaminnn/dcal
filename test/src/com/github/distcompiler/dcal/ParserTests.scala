@@ -6,11 +6,11 @@ import java.time.Duration
 
 import utest.{TestSuite, Tests, test}
 import chungus.*
-import com.github.distcompiler.dcal.{DCalAST, DCalTokenizer, DCalParser, Token, Punctuation, Keyword, BinaryOperator}
+import com.github.distcompiler.dcal.{AST, Tokenizer, Parser, Token, Punctuation, Keyword, BinaryOperator}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
 
-object DCalParserTests extends TestSuite {
-  import DCalAST.*
+object ParserTests extends TestSuite {
+  import AST.*
   import Generator.*
 
   private given dummyLoc: SourceLocation = SourceLocation("dummy", offsetStart = -1, offsetEnd = -1)
@@ -232,7 +232,7 @@ object DCalParserTests extends TestSuite {
             case (expectedModule, tokenss) =>
               tokenss.foreach { tokens =>
                 recording(tokens) {
-                  val result = DCalParser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")
+                  val result = Parser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")
                   recording(result) {
                     assert(result == Right(Ps(expectedModule)))
                   }

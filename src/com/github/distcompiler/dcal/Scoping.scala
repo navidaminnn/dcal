@@ -10,7 +10,7 @@ import parsing.{Ps, PsK}
 import transform.Transform
 
 object Scoping {
-  import DCalAST.*
+  import AST.*
 
   enum ScopingError {
     case Redefinition(first: PsK[Def], second: PsK[Def])

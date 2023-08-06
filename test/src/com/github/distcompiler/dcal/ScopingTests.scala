@@ -8,14 +8,14 @@ import cats.syntax.all.given
 import utest.{TestSuite, test, Tests}
 import chungus.{Generator, Checker, assert, assertMatch, recording, Counters}
 
-import com.github.distcompiler.dcal.{DCalAST, Scoping}
+import com.github.distcompiler.dcal.{AST, Scoping}
 import com.github.distcompiler.dcal.transform.Transform
 import com.github.distcompiler.dcal.parsing.{SourceLocation, Ps, PsK}
 
 import Scoping.ScopingError
 
 object ScopingTests extends TestSuite {
-  import DCalAST.*
+  import AST.*
   import Generator.*
 
   trait DummyLocSrc {

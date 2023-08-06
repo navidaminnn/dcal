@@ -4,7 +4,7 @@ import cats.derived.*
 import cats.Order
 import parsing.{Ps, SourceLocation}
 
-object DCalAST {
+object AST {
   enum Import derives Order {
     case Name(name: String)
   }

@@ -4,13 +4,7 @@ import parsing.{Ps, SourceLocation}
 
 import cats.data.NonEmptyChain
 
-object DCalTokenizer {
-  enum TokenizerError {
-    case ExpectedAbstract(category: String, actualChar: Char)
-    case ExpectedExact(expectedChar: Char, actualChar: Char)
-    case UnexpectedEOF
-  }
-
+object Tokenizer {
   private type Elem = Char
   private type Error = NonEmptyChain[Ps[TokenizerError]]
   private type Input = parsing.InputOps.LazyListInput[Char]

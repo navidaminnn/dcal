@@ -5,11 +5,11 @@ import cats.syntax.all.given
 import utest.{TestSuite, Tests, test}
 import chungus.*
 
-import com.github.distcompiler.dcal.{DCalTokenizer, Token, Keyword}
+import com.github.distcompiler.dcal.{Tokenizer, Token, Keyword}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
 
-object DCalTokenizerTests extends TestSuite {
-  import DCalTokenizer.*
+object TokenizerTests extends TestSuite {
+  import Tokenizer.*
   import Generator.*
 
   private given dummyLoc: SourceLocation = SourceLocation(path = "<dummy>", offsetStart = -1, offsetEnd = -1)
@@ -103,7 +103,7 @@ object DCalTokenizerTests extends TestSuite {
       })
       .forall { tokensOrSpace =>
         val strForm = renderSeq(tokensOrSpace)
-        val reparsedTokens = DCalTokenizer(strForm, path = "<dummy>").toList
+        val reparsedTokens = Tokenizer(strForm, path = "<dummy>").toList
         val expectedtokens = tokensOrSpace
           .collect { case tok: Token => tok }
           .map(Ps(_))

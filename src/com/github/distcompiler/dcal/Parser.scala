@@ -3,22 +3,12 @@ package com.github.distcompiler.dcal
 import parsing.{Ps, SourceLocation}
 import cats.data.NonEmptyChain
 
-import com.github.distcompiler.dcal.DCalAST.*
-import com.github.distcompiler.dcal.DCalTokenizer.TokenizerError
+import com.github.distcompiler.dcal.AST.*
 import com.github.distcompiler.dcal.parsing.InputOps
 import InputOps.LazyListInput
 import cats.data.NonEmptyChainImpl.Type
 
-object DCalParser {
-  enum ParserError {
-    case FromTokenizer(errors: NonEmptyChain[Ps[TokenizerError]])
-    case UnexpectedEOF(sourceLocation: SourceLocation)
-    case ExpectedAbstract(category: String, actualTok: Ps[Token])
-    case ExpectedKeyword(expectedKeyword: Keyword, actualTok: Ps[Token])
-    case ExpectedPunctuation(expectedPunctuation: Punctuation, actualTok: Ps[Token])
-    case ExpectedBinaryOperator(expectedOperator: BinaryOperator, actualTok: Ps[Token])
-  }
-
+object Parser {
   private type Elem = Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]
   private type Error = NonEmptyChain[ParserError]
   private type Input = parsing.InputOps.LazyListInput[Elem]
@@ -105,51 +95,51 @@ object DCalParser {
       case tok => Left(err(ParserError.ExpectedAbstract(category = "name", actualTok = tok)))
     }
 
-  private def defParam: P[Ps[DCalAST.DefParam]] =
-    ps(name.map(DCalAST.DefParam.Name(_)))
+  private def defParam: P[Ps[AST.DefParam]] =
+    ps(name.map(AST.DefParam.Name(_)))
 
-  private def definition: P[Ps[DCalAST.Definition]] =
+  private def definition: P[Ps[AST.Definition]] =
     capturingPosition {
       kw(Keyword.`def`) ~> ps(name)
       ~ (pn(Punctuation.`(`) ~> repsep(defParam, pn(Punctuation.`,`)) <~ pn(Punctuation.`)`))
       ~ block
     }.mapPositioned {
       case name ~ params ~ body =>
-        Ps(DCalAST.Definition(
+        Ps(AST.Definition(
           name = name,
           params = params.toList,
           body = body,
         ))
     }
 
-  private def intLiteral: P[Ps[DCalAST.Expression]] =
+  private def intLiteral: P[Ps[AST.Expression]] =
     anyTok.constrain {
       case tok @ Ps(Token.IntLiteral(num)) =>
-        Right(Ps(DCalAST.Expression.IntLiteral(num))(using tok.sourceLocation))
+        Right(Ps(AST.Expression.IntLiteral(num))(using tok.sourceLocation))
       case tok =>
         Left(err(ParserError.ExpectedAbstract(category = "integer literal", actualTok = tok)))
     }
 
-  private def stringLiteral: P[Ps[DCalAST.Expression]] =
+  private def stringLiteral: P[Ps[AST.Expression]] =
     anyTok.constrain {
       case tok @ Ps(Token.StringLiteral(str)) =>
-        Right(Ps(DCalAST.Expression.StringLiteral(str))(using tok.sourceLocation))
+        Right(Ps(AST.Expression.StringLiteral(str))(using tok.sourceLocation))
       case tok =>
         Left(err(ParserError.ExpectedAbstract(category = "string literal", actualTok = tok)))
     }
 
-  private def setConstructorExpr: P[Ps[DCalAST.Expression.SetConstructor]] =
+  private def setConstructorExpr: P[Ps[AST.Expression.SetConstructor]] =
     capturingPosition(pn(Punctuation.`{`) ~> repsep(expression, pn(Punctuation.`,`)) <~ pn(Punctuation.`}`))
-      .mapPositioned(members => Ps(DCalAST.Expression.SetConstructor(members.toList)))
+      .mapPositioned(members => Ps(AST.Expression.SetConstructor(members.toList)))
 
-  private def opCallExpr: P[Ps[DCalAST.Expression.OpCall]] =
+  private def opCallExpr: P[Ps[AST.Expression.OpCall]] =
     capturingPosition(path ~ opt(pn(Punctuation.`(`) ~> rep1sep(expression, pn(Punctuation.`,`)) <~ pn(Punctuation.`)`)))
       .mapPositioned {
         case name ~ arguments =>
-          Ps(DCalAST.Expression.OpCall(Right(name), arguments.map(_.toList).getOrElse(Nil)))
+          Ps(AST.Expression.OpCall(Right(name), arguments.map(_.toList).getOrElse(Nil)))
       }
 
-  private def exprBase: P[Ps[DCalAST.Expression]] =
+  private def exprBase: P[Ps[AST.Expression]] =
     (intLiteral
     | stringLiteral
     | opCallExpr
@@ -157,62 +147,62 @@ object DCalParser {
     | (pn(Punctuation.`(`) ~> expression <~ pn(Punctuation.`)`))).map(_.up)
 
   // TODO: precedence
-  private def binOpExpr: P[Ps[DCalAST.Expression]] =
+  private def binOpExpr: P[Ps[AST.Expression]] =
     capturingPosition(exprBase ~ opt(ps(BinaryOperator.values.iterator.map(op).reduce(_ | _)) ~ exprBase)).mapPositioned {
       case lhs ~ None => lhs
       case lhs ~ Some(op ~ rhs) =>
-        Ps(DCalAST.Expression.OpCall(Left(Ps(op.value.operator)(using op.sourceLocation)), List(lhs, rhs)))
+        Ps(AST.Expression.OpCall(Left(Ps(op.value.operator)(using op.sourceLocation)), List(lhs, rhs)))
     }
   
-  private lazy val expression: P[Ps[DCalAST.Expression]] =
+  private lazy val expression: P[Ps[AST.Expression]] =
     binOpExpr
 
-  private def await: P[Ps[DCalAST.Statement.Await]] =
+  private def await: P[Ps[AST.Statement.Await]] =
     capturingPosition(kw(Keyword.`await`) ~> expression)
-      .mapPositioned(expr => Ps(DCalAST.Statement.Await(expr)))
+      .mapPositioned(expr => Ps(AST.Statement.Await(expr)))
 
-  private def path: P[Ps[DCalAST.Path]] = locally {
-    def impl(prefix: Ps[DCalAST.Path]): P[Ps[DCalAST.Path]] = {
+  private def path: P[Ps[AST.Path]] = locally {
+    def impl(prefix: Ps[AST.Path]): P[Ps[AST.Path]] = {
       val additions =
         capturingPosition(pn(Punctuation.`[`) ~> expression <~ pn(Punctuation.`]`))
-          .mapPositioned(idx => Ps(DCalAST.Path.Index(prefix, idx)))
+          .mapPositioned(idx => Ps(AST.Path.Index(prefix, idx)))
         | capturingPosition(pn(Punctuation.`.`) ~> name)
-          .mapPositioned(proj => Ps(DCalAST.Path.Project(prefix, proj)))
+          .mapPositioned(proj => Ps(AST.Path.Project(prefix, proj)))
 
       additions.flatMap(impl) | trivial(prefix)
     }
 
     capturingPosition(name)
-      .mapPositioned(n => Ps(DCalAST.Path.Name(n)))
+      .mapPositioned(n => Ps(AST.Path.Name(n)))
       .peek
       .flatMap(impl)
   }
 
-  private def assignPair: P[Ps[DCalAST.AssignPair]] =
+  private def assignPair: P[Ps[AST.AssignPair]] =
     capturingPosition(path ~? (pn(Punctuation.`:=`) ~> expression))
       .mapPositioned {
-        case lhs ~ rhs => Ps(DCalAST.AssignPair(lhs, rhs))
+        case lhs ~ rhs => Ps(AST.AssignPair(lhs, rhs))
       }
 
-  private def assignment: P[Ps[DCalAST.Statement.Assignment]] =
+  private def assignment: P[Ps[AST.Statement.Assignment]] =
     capturingPosition(rep1sep(assignPair, pn(Punctuation.`||`)))
-      .mapPositioned(pairs => Ps(DCalAST.Statement.Assignment(pairs.toList)))
+      .mapPositioned(pairs => Ps(AST.Statement.Assignment(pairs.toList)))
 
-  private def call: P[Ps[DCalAST.Binding.Call]] =
+  private def call: P[Ps[AST.Binding.Call]] =
     capturingPosition(kw(Keyword.`call`) ~> path ~ (pn(Punctuation.`(`) ~> repsep(expression, pn(Punctuation.`,`)) <~ pn(Punctuation.`)`)))
       .mapPositioned {
-        case path ~ arguments => Ps(DCalAST.Binding.Call(path, arguments.toList))
+        case path ~ arguments => Ps(AST.Binding.Call(path, arguments.toList))
       }
 
-  private lazy val binding: P[Ps[DCalAST.Binding]] =
+  private lazy val binding: P[Ps[AST.Binding]] =
     ((rep1(capturingPosition(op(BinaryOperator.`\\in`))).left | capturingPosition(op(BinaryOperator.`=`)).right) ~ (expression.left | call.right))
       .map {
         case signifier ~ valuePart =>
-          def decorate(inner: Option[SourceLocation] => Ps[DCalAST.Binding]): Ps[DCalAST.Binding] =
+          def decorate(inner: Option[SourceLocation] => Ps[AST.Binding]): Ps[AST.Binding] =
             signifier match {
               case Left(selects) =>
                 selects.iterator.foldRight(inner(None)) { (select, inner) =>
-                  Ps(DCalAST.Binding.Selection(inner))(using select._2)
+                  Ps(AST.Binding.Selection(inner))(using select._2)
                 }
               case Right(equals) => inner(Some(equals._2))
             }
@@ -220,25 +210,25 @@ object DCalParser {
           decorate { posOpt =>
             valuePart match {
               case Left(expr) =>
-                Ps(DCalAST.Binding.Value(expr))(using posOpt.getOrElse(expr.sourceLocation))
+                Ps(AST.Binding.Value(expr))(using posOpt.getOrElse(expr.sourceLocation))
               case Right(call) => call.up
             }
           }
       }
 
-  private def letStmt: P[Ps[DCalAST.Statement.Let]] =
+  private def letStmt: P[Ps[AST.Statement.Let]] =
     capturingPosition(kw(Keyword.`let`) ~> ps(name) ~ binding)
       .mapPositioned {
-        case name ~ binding => Ps(DCalAST.Statement.Let(name, binding))
+        case name ~ binding => Ps(AST.Statement.Let(name, binding))
       }
 
-  private def varStmt: P[Ps[DCalAST.Statement.Var]] =
+  private def varStmt: P[Ps[AST.Statement.Var]] =
     capturingPosition(kw(Keyword.`var`) ~> ps(name) ~ binding)
       .mapPositioned {
-        case name ~ binding => Ps(DCalAST.Statement.Var(name, binding))
+        case name ~ binding => Ps(AST.Statement.Var(name, binding))
       }
 
-  private def ifStmt: P[Ps[DCalAST.Statement.If]] =
+  private def ifStmt: P[Ps[AST.Statement.If]] =
     capturingPosition {
       (kw(Keyword.`if`) ~> pn(Punctuation.`(`) ~> expression <~ pn(Punctuation.`)`))
       ~ block
@@ -246,17 +236,17 @@ object DCalParser {
     }
       .mapPositioned {
         case condition ~ thenBlock ~ elseBlockOpt =>
-          Ps(DCalAST.Statement.If(condition, thenBlock, elseBlockOpt))
+          Ps(AST.Statement.If(condition, thenBlock, elseBlockOpt))
       }
 
-  private def callStmt: P[Ps[DCalAST.Statement.Call]] =
+  private def callStmt: P[Ps[AST.Statement.Call]] =
     capturingPosition(kw(Keyword.`call`) ~> path ~ (pn(Punctuation.`(`) ~> repsep(expression, pn(Punctuation.`,`)) <~ pn(Punctuation.`)`)))
       .mapPositioned {
         case path ~ arguments =>
-          Ps(DCalAST.Statement.Call(Ps(DCalAST.Binding.Call(path, arguments.toList))))
+          Ps(AST.Statement.Call(Ps(AST.Binding.Call(path, arguments.toList))))
       }
 
-  private lazy val statement: P[Ps[DCalAST.Statement]] =
+  private lazy val statement: P[Ps[AST.Statement]] =
     (await
     | assignment
     | letStmt
@@ -265,27 +255,27 @@ object DCalParser {
     | callStmt
     | block).map(_.up)
 
-  private lazy val block: P[Ps[DCalAST.Statement.Block]] =
+  private lazy val block: P[Ps[AST.Statement.Block]] =
     capturingPosition(pn(Punctuation.`{`) ~> rep(statement) <~ pn(Punctuation.`}`))
-      .mapPositioned(stmts => Ps(DCalAST.Statement.Block(stmts.toList)))
+      .mapPositioned(stmts => Ps(AST.Statement.Block(stmts.toList)))
 
-  private def `import`: P[Ps[DCalAST.Import]] =
-    ps(name.map(DCalAST.Import.Name(_)))
+  private def `import`: P[Ps[AST.Import]] =
+    ps(name.map(AST.Import.Name(_)))
 
-  private def imports: P[List[Ps[DCalAST.Import]]] =
+  private def imports: P[List[Ps[AST.Import]]] =
     kw(Keyword.`import`) ~> rep1sep(`import`, pn(Punctuation.`,`)).map(_.toList)
 
-  private def module: P[Ps[DCalAST.Module]] =
+  private def module: P[Ps[AST.Module]] =
     capturingPosition(kw(Keyword.`module`) ~> ps(name) ~ opt(imports) ~ rep(definition)).mapPositioned {
       case name ~ importsOpt ~ definitions =>
-        Ps(DCalAST.Module(
+        Ps(AST.Module(
           name = name,
           imports = importsOpt.getOrElse(Nil),
           definitions = definitions.toList,
         ))
     }
 
-  def apply(tokens: Iterator[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]], path: String, offsetStart: Int = 0): Either[NonEmptyChain[ParserError], Ps[DCalAST.Module]] = {
+  def apply(tokens: Iterator[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]], path: String, offsetStart: Int = 0): Either[NonEmptyChain[ParserError], Ps[AST.Module]] = {
     val result = phrase(module).parse(parsing.InputOps.LazyListInput(
       path = path,
       offsetStart = offsetStart,
