@@ -13,14 +13,6 @@ object DCalParserTests extends TestSuite {
   import DCalAST.*
   import Generator.*
 
-  private type GC[T] = Generator[Chain[T]]
-
-  private def tok(tok: Token): GC[Token] =
-    pure(Chain.one(tok))
-
-  private def toks(toks: Token*): GC[Token] =
-    pure(Chain.fromSeq(toks))
-
   private given dummyLoc: SourceLocation = SourceLocation("dummy", offsetStart = -1, offsetEnd = -1)
 
   // use single token strings / bigints because the parser is insensitive to the values
@@ -43,6 +35,14 @@ object DCalParserTests extends TestSuite {
 
   // if we focus on generating lists that are too long we'll never get very deep. length <= 3 seems good here.
   private given limitedListOf[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen, limit = 3)
+
+  private type GC[T] = Generator[Chain[T]]
+
+  private def tok(tok: Token): GC[Token] =
+    pure(Chain.one(tok))
+
+  private def toks(toks: Token*): GC[Token] =
+    pure(Chain.fromSeq(toks))
 
   private def renderSepBy[T,U](seq: Seq[T])(sep: Chain[U])(fn: T => Generator[Chain[U]]): GC[U] =
     Chain.fromSeq(seq)
@@ -215,17 +215,18 @@ object DCalParserTests extends TestSuite {
     ++ renderDefinitions(definitions)
   }
 
-  def toTokensAndBack(): Unit = {
-    // TODO: the existence condition isn't strong enough; we should be sure to see e.g. some expressions! 
-    anyOf[Module]
+  def toTokensAndBack(genModule: Generator[Module]): Unit = {
+    // TODO: are sure that minimum token count is a good representation of getting enough combos?
+    genModule
       .toChecker
+      .withPrintExamples(printExamples = false)
       .transform { module =>
-        // get tokens
+        // get all possible arrangements of tokens representing this module
         (module, renderModule(module).examplesIterator.map(_.value).toList)
       } { checker =>
         checker
           .exists {
-            case (expectedModule, _) => expectedModule.definitions.size >= 2
+            case (_, tokenss) => tokenss.exists(_.size >= 50)
           }
           .forall {
             case (expectedModule, tokenss) =>
@@ -243,6 +244,12 @@ object DCalParserTests extends TestSuite {
   }
   
   def tests = Tests {
-    test("to tokens and back") - toTokensAndBack()
+    test("to tokens and back (fully general)") - toTokensAndBack(anyOf[Module])
+    test("to tokens and back (focus on one definition)") - toTokensAndBack {
+      given anyDefns: Generator[List[Ps[Definition]]] =
+        listOf(anyOf[Ps[Definition]], limit = 1)
+
+      anyOf[Module]
+    }
   }
 }

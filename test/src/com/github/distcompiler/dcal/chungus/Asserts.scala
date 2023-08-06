@@ -45,9 +45,9 @@ private def buildAssertMsg(msg: String)(using AssertCtx): String = {
 private inline def throwAssertionError(msg: String)(using AssertCtx): Nothing =
   throw AssertionError(buildAssertMsg(msg))
 
-inline def assert(inline condition: Boolean)(using ctx: AssertCtx = AssertCtx.Empty): Unit =
+inline def assert(condition: Boolean)(using ctx: AssertCtx = AssertCtx.Empty): Unit =
   if(!condition) {
-    throwAssertionError(s"${codeOf(condition)} should have been true")
+    throwAssertionError(s"boolean assertion failed")
   }
 
 inline def assertMatch[T](inline value: T)(inline fn: PartialFunction[T, Unit])(using ctx: AssertCtx = AssertCtx.Empty): Unit =

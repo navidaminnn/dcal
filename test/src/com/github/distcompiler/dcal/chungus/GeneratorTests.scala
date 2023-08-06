@@ -41,7 +41,7 @@ object GeneratorTests extends TestSuite {
     }
     test("costly disjunction A") {
       val gen = lzy(lzy(pure(1)) | lzy(pure(2)))
-      val actualRounds = gen.depthsUpTo(2)
+      val actualRounds = gen.depthsUpTo(4)
       recording(actualRounds) {
         assert(actualRounds == List(
           Example(value = 1, maxDepth = 2),
@@ -97,16 +97,16 @@ object GeneratorTests extends TestSuite {
           Example(
             value = Branch(
               value = 42,
-              left = Branch(value = 42, left = Empty, right = Empty),
-              right = Empty,
+              left = Empty,
+              right = Branch(value = 42, left = Empty, right = Empty),
             ),
             maxDepth = 2,
           ),
           Example(
             value = Branch(
               value = 42,
-              left = Empty,
-              right = Branch(value = 42, left = Empty, right = Empty),
+              left = Branch(value = 42, left = Empty, right = Empty),
+              right = Empty,
             ),
             maxDepth = 2,
           ),
@@ -133,16 +133,16 @@ object GeneratorTests extends TestSuite {
           Example(
             value = Branch(
               value = 42,
-              left = Branch(value = 42, left = Empty, right = Empty),
-              right = Empty,
+              left = Empty,
+              right = Branch(value = 42, left = Empty, right = Empty),
             ),
             maxDepth = 6,
           ),
           Example(
             value = Branch(
               value = 42,
-              left = Empty,
-              right = Branch(value = 42, left = Empty, right = Empty),
+              left = Branch(value = 42, left = Empty, right = Empty),
+              right = Empty,
             ),
             maxDepth = 6,
           ),

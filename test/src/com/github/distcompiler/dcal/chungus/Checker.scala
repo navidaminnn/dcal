@@ -94,7 +94,7 @@ object Checker {
           .map {
             case example @ Example(value, depth) =>
               if(depth > maxDepth) {
-                println(s"reached depth $depth: took ${humanDuration(Duration.between(roundStart, Instant.now()))} and covered $countExplored states so far ($countExploredSinceLast since last msg)")
+                println(s"reached depth $depth: took ${humanDuration(Duration.between(roundStart, Instant.now()))} and covered ${humanNum(countExplored)} states so far (${humanNum(countExploredSinceLast)} since last msg)")
                 countExploredSinceLast = 0
                 printExample()
                 roundStart = Instant.now()
@@ -117,7 +117,7 @@ object Checker {
               val now = Instant.now()
               if(Duration.between(lastInterimReport, now).toSeconds() > 30) {
                 lastInterimReport = now
-                println(s"  ... still exploring after ${humanDuration(Duration.between(roundStart, now))}. found $countExploredSinceLast examples this level.")
+                println(s"  ... still exploring after ${humanDuration(Duration.between(roundStart, now))}. found ${humanNum(countExploredSinceLast)} examples this level.")
                 printExample()
               }
             }
@@ -136,14 +136,14 @@ object Checker {
 
         println {
           fansi.Color.Green(">>successful checking").checkANSI
-          ++ s" after ${humanDuration(Duration.between(startTime, Instant.now()))}, after exploring $countExplored states."
+          ++ s" after ${humanDuration(Duration.between(startTime, Instant.now()))}, after exploring ${humanNum(countExplored)} states."
         }
         printExample()
       } catch {
         case err =>
           println {
             fansi.Color.Red("!!found error").checkANSI
-            ++ s" after ${humanDuration(Duration.between(startTime, Instant.now()))}, exploring $countExplored states."
+            ++ s" after ${humanDuration(Duration.between(startTime, Instant.now()))}, exploring ${humanNum(countExplored)} states."
           }
           printExample(forcePrint = true)
           throw err
@@ -210,6 +210,15 @@ object Checker {
         override def check(example: Example[T]): Unit = innerChecker.check(Example(transFn(example.value), example.maxDepth))
         override def isSatisfied: Boolean = innerChecker.isSatisfied
       }
+  }
+
+  private def humanNum(num: Int): String = {
+    val str = num.toString()
+    val incompletePrefix = str.take(str.size % 3)
+    str
+      .drop(str.size % 3)
+      .grouped(3)
+      .mkString(if(incompletePrefix.nonEmpty) s"$incompletePrefix," else "", ",", "")
   }
 
   private def humanDuration(duration: Duration): String = {

@@ -3,7 +3,7 @@ package test.com.github.distcompiler.dcal.chungus
 import scala.annotation.targetName
 import scala.util.Try
 
-import cats.data.Chain
+import cats.data.{Chain, Ior}
 import cats.{Semigroup, Alternative, Eval, Monoid, Foldable, Applicative, MonoidK}
 import cats.implicits.given
 
@@ -64,89 +64,123 @@ enum Generator[T] {
     Checker.fromGenerator(this)
 
   def examplesIterator: Iterator[Example[T]] = {
-    var haveLeftovers = false
+    final case class Ex[+T](value: T, counters: Counters)
 
-    final case class Ex[+T](value: T, maxDepth: Int, counters: Counters)
+    extension [A](self: LazyList[A]) def zipIorLazyLists[B](other: LazyList[B]): LazyList[Ior[A, B]] =
+      (self, other) match {
+        case (selfHead #:: selfTail, otherHead #:: otherTail) =>
+          Ior.Both(selfHead, otherHead) #:: (selfTail `zipIorLazyLists` otherTail)
+        case (LazyList(), other) =>
+          other.map(Ior.Right(_))
+        case (self, LazyList()) =>
+          self.map(Ior.Left(_))
+      }
 
-    def impl[T](self: Generator[T], counters: Counters, depth: Int, depthCap: Int): Iterator[Ex[T]] =
+    extension [A](self: Iterator[A]) def zipIorIterators[B](other: Iterator[B]): Iterator[Ior[A, B]] =
+      new Iterator[Ior[A, B]] {
+        override def hasNext: Boolean = self.hasNext || other.hasNext
+        override def next(): Ior[A, B] =
+          if(self.hasNext && other.hasNext) {
+            Ior.Both(self.next(), other.next())
+          } else if(self.hasNext) {
+            Ior.Left(self.next())
+          } else {
+            Ior.Right(other.next())
+          }
+      }
+
+    def impl[T](self: Generator[T], counters: Counters): LazyList[() => Iterator[Ex[T]]] =
       self match {
         case Empty() =>
-          Iterator.empty
+          LazyList.empty
         case Singleton(value) =>
-          Iterator.single(Ex(value, maxDepth = depth, counters = counters ))
+          (() => Iterator.single(Ex(value, counters = counters))) #:: LazyList.empty
         case Selection(values) =>
-          values
+          (() => values
             .iterator
-            .map(Ex(_, maxDepth = depth, counters = counters ))
+            .map(Ex(_, counters = counters)))
+          #:: LazyList.empty
         case Force(gen) =>
-          impl(gen, counters, 0, Int.MaxValue)
-            .map {
-              case Ex(value, _, counters) =>
-                Ex(value, maxDepth = depth, counters = counters)
-            }
+          (() => impl(gen, counters).flatMap(_.apply()).iterator) #:: LazyList.empty
         case FreeLazy(genFn) =>
-          impl(genFn(), counters, depth, depthCap)
+          impl(genFn(), counters)
         case Pay(genFn) =>
-          if(depth == depthCap) {
-            haveLeftovers = true
-            Iterator.empty
-          } else {
-            impl(genFn(), counters, depth + 1, depthCap)
-          }
+          (() => Iterator.empty) #:: impl(genFn(), counters)
         case Filter(self, pred) =>
-          impl(self, counters, depth, depthCap)
-            .filter {
-              case Ex(value, _, _) => pred(value)
+          impl(self, counters)
+            .map { iterFn =>
+              () => iterFn().filter {
+                case Ex(value, _) => pred(value)
+              }
             }
         case Disjunction(left, right) =>
-          val leftIter = impl(left, counters, depth, depthCap).buffered
-          val rightIter = impl(right, counters, depth, depthCap).buffered
-          
-          // try to see smaller before bigger
-          new Iterator[Ex[T]] {
-            override def hasNext: Boolean = leftIter.hasNext || rightIter.hasNext
-            override def next(): Ex[T] =
-              if(leftIter.hasNext && rightIter.hasNext) {
-                if(leftIter.head.maxDepth <= rightIter.head.maxDepth) {
-                  leftIter.next()
-                } else {
-                  rightIter.next()
-                }
-              } else if(leftIter.hasNext) {
-                leftIter.next()
-              } else {
-                rightIter.next()
-              }
+          (impl(left, counters) `zipIorLazyLists` impl(right, counters)).map {
+            case Ior.Left(leftIterFn) => leftIterFn
+            case Ior.Right(rightIterFn) => rightIterFn
+            case Ior.Both(leftIterFn, rightIterFn) =>
+              () => leftIterFn() ++ rightIterFn()
           }
-        case Ap(transform, self) =>
-          impl(self, counters, depth, depthCap)
-            .flatMap {
-              case Ex(value, maxDepth1, counters) =>
-                impl(transform, counters, depth, depthCap)
-                  .map {
-                    case Ex(fn, maxDepth2, counters) =>
-                      Ex(fn(value), maxDepth1 `max` maxDepth2, counters) 
+        case ap: Ap[tt, T] =>
+          val selfIterFns = impl(ap.self, counters)
+          val transIterFns = impl(ap.transform, counters)
+
+          def incSelf(selfIter: Iterator[Ex[tt]], depth: Int): Iterator[Iterator[Ex[T]]] =
+            selfIter.flatMap {
+              case Ex(value, counters) =>
+                transIterFns
+                  .iterator
+                  .take(depth + 1)
+                  .map { transIterFn =>
+                    transIterFn().map {
+                      case Ex(transform, counters) =>
+                        Ex(transform(value), counters) 
+                    }
                   }
+            }
+
+          def incTrans(transIter: Iterator[Ex[tt => T]], depth: Int): Iterator[Iterator[Ex[T]]] =
+            transIter.flatMap {
+              case Ex(transform, counters) =>
+                selfIterFns
+                  .iterator
+                  .take(depth + 1)
+                  .map { selfIterFn =>
+                    selfIterFn().map {
+                      case Ex(value, counters) =>
+                        Ex(transform(value), counters) 
+                    }
+                  }
+            }
+
+          (selfIterFns `zipIorLazyLists` transIterFns)
+            .zipWithIndex
+            .map {
+              case (Ior.Left(selfIterFn), depth) =>
+                () => incSelf(selfIterFn(), depth).flatten
+              case (Ior.Right(transIterFn), depth) =>
+                () => incTrans(transIterFn(), depth).flatten
+              case (Ior.Both(selfIterFn, transIterFn), depth) =>
+                { () =>
+                  (incSelf(selfIterFn(), depth) `zipIorIterators` incTrans(transIterFn(), depth - 1))
+                    .flatMap {
+                      case Ior.Both(selfIter, otherIter) => selfIter ++ otherIter
+                      case Ior.Left(selfIter) => selfIter
+                      case Ior.Right(otherIter) => otherIter
+                    }
+                }
             }
       }
       
-    Iterator.from(0)
-      .map { depthCap =>
-        if(depthCap == 0 || haveLeftovers) {
-          haveLeftovers = false
-          impl(this, counters = Counters.init, depth = 0, depthCap = depthCap)
-            .filter(_.maxDepth == depthCap)
-            .map {
-              case Ex(value, maxDepth, counters) =>
-                Example(value, maxDepth)
-            }
-            .some
-        } else {
-          None
-        }
+    impl(this, counters = Counters.init)
+      .iterator
+      .zipWithIndex
+      .flatMap {
+        case (iterFn, depth) =>
+          iterFn().map {
+            case Ex(value, counters) =>
+              Example(value, maxDepth = depth)
+          }
       }
-      .takeWhile(_.nonEmpty)
-      .flatMap(_.iterator.flatten)
   }
 }
 
