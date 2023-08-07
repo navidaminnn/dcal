@@ -9,16 +9,11 @@ import cats.implicits.given
 
 enum Generator[T] {
   import Generator.*
-  this match {
-    case Selection(values) =>
-      assert(values.nonEmpty)
-    case _ =>
-  }
 
   case Empty[T]() extends Generator[T]
   case Singleton(value: T)
   case Selection(values: Chain[T])
-  case Force(gen: Generator[T])
+  case Log(gen: Generator[T], label: String)
   case FreeLazy(genFn: () => Generator[T])
   case Pay(genFn: () => Generator[T])
   //case IncrementCount(key: Counters.Key[T], gen: Generator[T])
@@ -31,6 +26,9 @@ enum Generator[T] {
 
   def filter(pred: T => Boolean): Generator[T] =
     Filter(this, pred)
+
+  def log(label: String): Generator[T] =
+    Log(this, label)
 
   def filterF(pred: Generator[T => Boolean]): Generator[T] =
     this.map2(pred) { (value, pred) =>
@@ -63,7 +61,7 @@ enum Generator[T] {
   def toChecker: Checker.RootChecker[T] =
     Checker.fromGenerator(this)
 
-  def examplesIterator: Iterator[Example[T]] = {
+  def examplesIterator: Iterator[Example[Option[T]]] = {
     final case class Ex[+T](value: T, counters: Counters)
 
     extension [A](self: LazyList[A]) def zipIorLazyLists[B](other: LazyList[B]): LazyList[Ior[A, B]] =
@@ -100,8 +98,21 @@ enum Generator[T] {
             .iterator
             .map(Ex(_, counters = counters)))
           #:: LazyList.empty
-        case Force(gen) =>
-          (() => impl(gen, counters).flatMap(_.apply()).iterator) #:: LazyList.empty
+        case Log(gen, label) =>
+          impl(gen, counters)
+            .zipWithIndex
+            .map {
+              case (iterFn, depth) =>
+                { () =>
+                  println(s"! instantiate $label @ depth $depth")
+                  iterFn()
+                    .tapEach {
+                      case Ex(value, _) =>
+                        println(s"  $label @ depth $depth found ")
+                        pprint.pprintln(value)
+                    }
+                }
+            }
         case FreeLazy(genFn) =>
           impl(genFn(), counters)
         case Pay(genFn) =>
@@ -178,8 +189,9 @@ enum Generator[T] {
         case (iterFn, depth) =>
           iterFn().map {
             case Ex(value, counters) =>
-              Example(value, maxDepth = depth)
+              Example(Some(value), maxDepth = depth)
           }
+          ++ Iterator.single(Example(None, maxDepth = depth))
       }
   }
 }
@@ -187,7 +199,10 @@ enum Generator[T] {
 object Generator {
   import Generator.*
 
-  final case class Example[T](value: T, maxDepth: Int)
+  final case class Example[T](value: T, maxDepth: Int) {
+    def flatten[U](using ev: T <:< Option[U]): Option[Example[U]] =
+      ev(value).map(Example(_, maxDepth))
+  }
 
   given generatorAlternative: Alternative[Generator] with {
     override def empty[A]: Generator[A] = Empty()
@@ -209,11 +224,11 @@ object Generator {
       }
   }
 
+  given generatorMonoid[T]: Monoid[Generator[T]] = generatorAlternative.algebra
+
   def empty[T]: Generator[T] = Empty()
 
   def pure[T](value: T): Generator[T] = value.pure
-
-  def force_![T](gen: Generator[T]): Generator[T] = Force(gen)
 
   def freeLzy_![T](gen: =>Generator[T]): Generator[T] = {
     lazy val lzyGen = gen
@@ -225,31 +240,56 @@ object Generator {
     Pay(() => lzyGen)
   }
 
+  extension [T](inline gen: Generator[T]) inline def dumpCode_! : Generator[T] =
+    ${ DumpCode.impl('gen) }
+
+  type TupleExcluding[T, Tpl <: Tuple] <: Tuple = Tpl match {
+    case (T *: tl) => tl
+    case (hd *: tl) => hd *: TupleExcluding[T, tl]
+  }
+
+  final class AnySumOfShape[Top, Tpl <: Tuple] {
+    def excluding[TT]: AnySumOfShape[Top, TupleExcluding[Generator[TT], Tpl]] = new AnySumOfShape
+
+    def summon(using partGens: =>SummonTuple.ST[Tpl]): Generator[Top] =
+      lzy {
+        partGens
+          .value
+          .productIterator
+          .map(_.asInstanceOf[Generator[Top]])
+          .reduceOption(_ `combineK` _)
+          .getOrElse(Empty())
+      }
+  }
+
+  def anySumOfShape[T](using mirror: deriving.Mirror.SumOf[T]): AnySumOfShape[T, Tuple.Map[mirror.MirroredElemTypes, Generator]] =
+    new AnySumOfShape
+
   def anyOf[T](using gen: =>Generator[T]): Generator[T] = lzy(gen)
 
   def anyFromSeq[T](seq: Seq[T]): Generator[T] =
     Selection(Chain.fromSeq(seq))
 
-  def unfold[T](levelFn: Int => Option[Generator[T]]): Generator[T] = {
-    def impl(level: Int): Generator[T] =
-      levelFn(level) match {
-        case None => Empty()
-        case Some(gen) =>
-          gen
-          | lzy(impl(level + 1))
+  def unfold[T](init: Generator[T], limit: Int = Int.MaxValue)(fn: Generator[T] => Generator[T]): Generator[T] = {
+    require(limit >= 0)
+    def impl(gen: Generator[T], level: Int): Generator[T] =
+      if(level <= limit) {
+        gen
+        | lzy(impl(fn(gen), level = level + 1))
+      } else {
+        empty
       }
 
-    impl(0)
+    impl(init, level = 0)
   }
 
   def listOf[T](gen: Generator[T], limit: Int = Int.MaxValue): Generator[List[T]] = {
     require(limit >= 0)
-    unfold {
-      case idx if idx <= limit =>
-        Some(Applicative[Generator].replicateA(idx, gen))
-      case _ => None
-    }
+    unfold(Nil.pure, limit = limit)(consOf(gen, _))
   }
+
+  def consOf[T](genHd: Generator[T], genTl: Generator[List[T]]): Generator[List[T]] =
+    (genHd, genTl).mapN(_ :: _)
 
   given anyListOf[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen)
 
@@ -265,13 +305,18 @@ object Generator {
   //     }
   //   }
 
-  given anyProductEmptyTuple: Generator[EmptyTuple] = EmptyTuple.pure
-  given anyProductTupleCons[T, Rest <: Tuple](using tGen: =>Generator[T], restGen: =>Generator[Rest]): Generator[T *: Rest] =
-    Applicative[Generator].map2(freeLzy_!(tGen), freeLzy_!(restGen))(_ *: _)
+  private def tupleMapN[T <: Tuple](genTpl: Tuple.Map[T, Generator]): Generator[T] =
+    genTpl
+      .productIterator
+      .asInstanceOf[Iterator[Generator[?]]]
+      .foldRight(pure(EmptyTuple): Generator[? <: Tuple]) { (gen, tplGen) =>
+        Applicative[Generator].map2(gen, tplGen)(_ *: _)
+      }
+      .asInstanceOf[Generator[T]]
 
-  given anyProduct[T](using mirror: deriving.Mirror.ProductOf[T])(using mirror.MirroredElemTypes <:< NonEmptyTuple)(using genParts: =>Generator[mirror.MirroredElemTypes]): Generator[T] =
+  given anyProduct[T](using mirror: deriving.Mirror.ProductOf[T])(using mirror.MirroredElemLabels <:< NonEmptyTuple)(using elemGens: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, Generator]]): Generator[T] =
     lzy {
-      genParts
+      tupleMapN(elemGens.value)
         .map { parts =>
           try {
             Some(mirror.fromTuple(parts))
@@ -287,14 +332,10 @@ object Generator {
   given anyEmptyProduct[T](using mirror: deriving.Mirror.ProductOf[T])(using EmptyTuple =:= mirror.MirroredElemTypes): Generator[T] =
     mirror.fromTuple(EmptyTuple).pure
 
-  given anySumTuple1[T](using gen: Generator[T]): Tuple1[Generator[T]] =
-    Tuple1(gen)
-  given anySumTupleCons[T, Rest <: Tuple](using ev: Tuple.InverseMap[Rest, Generator] <:< Tuple)(using tGen: Generator[T], rest: Rest): (Generator[T] *: Rest) =
-    tGen *: rest
-
-  given anySum[T](using mirror: deriving.Mirror.SumOf[T])(using partGens: =>Tuple.Map[mirror.MirroredElemTypes, Generator]): Generator[T] =
+  given anySum[T](using mirror: deriving.Mirror.SumOf[T])(using partGens: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, Generator]]): Generator[T] =
     lzy {
       partGens
+        .value
         .productIterator
         .map(_.asInstanceOf[Generator[T]])
         .reduceOption(_ `combineK` _)

@@ -218,36 +218,109 @@ object ScopingTests extends TestSuite {
       .up
   }
 
+  final case class ValidNames(names: List[String]) {
+    def add(name: String): ValidNames =
+      if(names.contains(name)) {
+        this
+      } else {
+        copy(names = name :: names)
+      }
+  }
+
+  object ValidNames {
+    def empty: ValidNames = ValidNames(names = Nil)
+  }
+
+  class CorrectlyScopedGens(using DummyLocSrc) {
+    val allNames = List("foo", "bar", "ping")
+
+    given strGen: Generator[String] = anyFromSeq(allNames)
+
+    given correctlyScopedOpCall(using validNames: ValidNames): Generator[Expression.OpCall] =
+      (anyFromSeq(validNames.names)/*, anyOf[List[Ps[Expression]]]*/).map { (name/*, args*/) =>
+        Expression.OpCall(Right(Ps(Path.Name(name))), Nil)
+      }
+    
+    given correctlyScopedStmts(using validNames: ValidNames): Generator[List[Ps[Statement]]] =
+      lzy {
+        locally[Generator[List[Ps[Statement]]]] {
+          allNames.foldMap { name =>
+            val letGen = anyOf[Ps[Binding]].map(binding => Ps(Statement.Let(Ps(name), binding)))
+            locally {
+              given ValidNames = validNames.add(name)
+              consOf(letGen, listOf(anyOf[Ps[Statement]], limit = 2))
+            }
+          }
+        }
+        | listOf(
+            anySumOfShape[Statement]
+              .excluding[Statement.Let]
+              .excluding[Statement.Var]
+              .summon
+              .map(Ps(_)),
+            limit = 2,
+          )
+      }
+  }
+
   def tests = Tests {
-    test("generalChecks") {
-      test("untargeted") {
-        generalChecks(requiredReferences = 1, requiredErrors = 1, requiredDefinitions = 1) {
-          given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
-          // very short lists or we're going to take forever
-          given limitedList[T](using gen: Generator[T]): Generator[List[T]] =
-            listOf(gen, limit = 2)
-          given strGen: Generator[String] = anyFromSeq(List("foo", "bar", "ping"))
-          anyOf[Module]
-        }
-      }
-      test("1 definition") {
-        generalChecks(requiredReferences = 3, requiredErrors = 3, requiredDefinitions = 1) {
-          given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+    // test("generalChecks") {
+    //   test("untargeted") {
+    //     generalChecks(requiredReferences = 1, requiredErrors = 1, requiredDefinitions = 1) {
+    //       given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+    //       // very short lists or we're going to take forever
+    //       given limitedList[T](using gen: Generator[T]): Generator[List[T]] =
+    //         listOf(gen, limit = 2)
+    //       given strGen: Generator[String] = anyFromSeq(List("foo", "bar", "ping"))
+    //       anyOf[Module]
+    //     }
+    //   }
+    //   test("1 definition") {
+    //     generalChecks(requiredReferences = 3, requiredErrors = 3, requiredDefinitions = 1) {
+    //       given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
 
-          val gens = new NameTargetedGens(definitionCount = 1)
-          import gens.given
-          anyOf[Module]
-        }
-      }
-      test("3 definitions") {
-        generalChecks(requiredReferences = 2, requiredErrors = 2, requiredDefinitions = 3) {
-          given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+    //       val gens = new NameTargetedGens(definitionCount = 1)
+    //       import gens.given
+    //       anyOf[Module]
+    //     }
+    //   }
+    //   test("3 definitions") {
+    //     generalChecks(requiredReferences = 2, requiredErrors = 2, requiredDefinitions = 3) {
+    //       given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
 
-          val gens = new NameTargetedGens(definitionCount = 3)
-          import gens.given
-          anyOf[Module]
+    //       val gens = new NameTargetedGens(definitionCount = 3)
+    //       import gens.given
+    //       anyOf[Module]
+    //     }
+    //   }
+    // }
+    test("correct scoping") {
+      given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+      val gens = new CorrectlyScopedGens
+      given ValidNames = ValidNames.empty
+
+      import gens.given
+      anyOf[Module]
+        .toChecker
+        .withPrintExamples(printExamples = false)
+        .transform { module =>
+          val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
+          (module, info)
+        } { checker =>
+          checker
+            .exists(_._2.referencePairs.size >= 2)
+            .forall {
+              case (module, info) =>
+                val referencePairs = info.referencePairs.toList
+                val errors = info.errors.toList
+                recording(referencePairs) {
+                  recording(errors) {
+                    assert(errors.isEmpty)
+                  }
+                }
+            }
         }
-      }
+        .run()
     }
   }  
 }

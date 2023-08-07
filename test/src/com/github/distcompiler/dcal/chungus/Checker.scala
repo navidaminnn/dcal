@@ -92,7 +92,7 @@ object Checker {
         gen
           .examplesIterator
           .map {
-            case example @ Example(value, depth) =>
+            case example @ Example(_, depth) =>
               if(depth > maxDepth) {
                 println(s"reached depth $depth: took ${humanDuration(Duration.between(roundStart, Instant.now()))} and covered ${humanNum(countExplored)} states so far (${humanNum(countExploredSinceLast)} since last msg)")
                 countExploredSinceLast = 0
@@ -126,6 +126,7 @@ object Checker {
               println(s"  ! found all we were looking for. finishing level...")
             }
           }
+          .flatMap(_.flatten)
           .foreach { example =>
             lastExample = Some(example)
             countExplored += 1
@@ -218,7 +219,7 @@ object Checker {
     str
       .drop(str.size % 3)
       .grouped(3)
-      .mkString(if(incompletePrefix.nonEmpty) s"$incompletePrefix," else "", ",", "")
+      .mkString(if(incompletePrefix.nonEmpty && str.size > 3) s"$incompletePrefix," else incompletePrefix, ",", "")
   }
 
   private def humanDuration(duration: Duration): String = {

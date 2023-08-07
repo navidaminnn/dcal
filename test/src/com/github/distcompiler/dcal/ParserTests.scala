@@ -222,7 +222,11 @@ object ParserTests extends TestSuite {
       .withPrintExamples(printExamples = false)
       .transform { module =>
         // get all possible arrangements of tokens representing this module
-        (module, renderModule(module).examplesIterator.map(_.value).toList)
+        (module, renderModule(module)
+          .examplesIterator
+          .flatMap(_.flatten)
+          .map(_.value.toList)
+          .toList)
       } { checker =>
         checker
           .exists {
@@ -232,7 +236,13 @@ object ParserTests extends TestSuite {
             case (expectedModule, tokenss) =>
               tokenss.foreach { tokens =>
                 recording(tokens) {
-                  val result = Parser(tokens.iterator.map(Ps(_)).map(Right(_)), path = "<dummy>")
+                  val result = Parser(
+                    tokens
+                      .iterator
+                      .map(Ps(_))
+                      .map(Right(_)),
+                    path = "<dummy>",
+                  )
                   recording(result) {
                     assert(result == Right(Ps(expectedModule)))
                   }

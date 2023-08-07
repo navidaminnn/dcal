@@ -15,6 +15,7 @@ object GeneratorTests extends TestSuite {
     self
       .examplesIterator
       .takeWhile(_.maxDepth <= n)
+      .flatMap(_.flatten)
       .toList
 
   def tests = Tests {
@@ -27,13 +28,6 @@ object GeneratorTests extends TestSuite {
     }
     test("single") {
       val gen = pure(1)
-      val actualRounds = gen.depthsUpTo(3)
-      recording(actualRounds) {
-        assert(actualRounds == List(Example(value = 1, maxDepth = 0)))
-      }
-    }
-    test("single (forced)") {
-      val gen = force_!(pure(1))
       val actualRounds = gen.depthsUpTo(3)
       recording(actualRounds) {
         assert(actualRounds == List(Example(value = 1, maxDepth = 0)))
