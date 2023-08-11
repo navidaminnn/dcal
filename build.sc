@@ -2,7 +2,13 @@ import mill._, scalalib._
 
 object dcal extends RootModule with ScalaModule {
   def scalaVersion = "3.3.0"
-  def scalacOptions = Seq("-source", "future", "-feature", "-deprecation"/*, "-Ysafe-init"*/)
+  def scalacOptions = Seq(
+    "-source", "future",
+    "-feature",
+    "-deprecation",
+    "-Werror",
+    "-language:strictEquality",
+  )
 
   def ivyDeps = Agg(
     ivy"com.lihaoyi::os-lib:0.9.1",
@@ -13,8 +19,7 @@ object dcal extends RootModule with ScalaModule {
     ivy"org.typelevel::kittens:3.0.0",
   )
 
-  object test extends ScalaTests {
-    def ivyDeps = Agg(ivy"com.lihaoyi::utest:0.8.1")
-    def testFramework = "utest.runner.Framework"
+  object test extends ScalaTests with TestModule.Munit {
+    def ivyDeps = Agg(ivy"org.scalameta::munit:1.0.0-M8")
   }
 }

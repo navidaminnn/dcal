@@ -2,13 +2,14 @@ package test.com.github.distcompiler.dcal
 
 import cats.syntax.all.given
 
-import utest.{TestSuite, Tests, test}
 import chungus.*
 
 import com.github.distcompiler.dcal.{Tokenizer, Token, Keyword}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
 
-object TokenizerTests extends TestSuite {
+class TokenizerTests extends munit.FunSuite {
+  override val munitTimeout = scala.concurrent.duration.Duration(1, scala.concurrent.duration.HOURS)
+
   import Tokenizer.*
   import Generator.*
 
@@ -18,8 +19,7 @@ object TokenizerTests extends TestSuite {
     locally {
       given anyInt: Generator[BigInt] = pure(BigInt(0)) | pure(BigInt(10)) | pure(BigInt(123456789))
       val anyNameChar: Generator[Char] =
-        anyFromSeq(List('0', '9'))
-        | anyFromSeq("_aifX") // conveniently include letters needed for the 'if' keyword
+        anyFromSeq("0_ifX") // conveniently include letters needed for the 'if' keyword
       val anyNameChars: Generator[String] =
         listOf(anyNameChar, limit = 3)
           .map(_.mkString)
@@ -48,13 +48,15 @@ object TokenizerTests extends TestSuite {
   }
 
   private def renderSeq(tokensOrSpace: List[Token | Whitespace]): String =
-    tokensOrSpace.iterator
+    tokensOrSpace
+      .iterator
       .flatMap[Char] {
         case ws: Whitespace => ws.productPrefix
         case Token.IntLiteral(value) => value.toString()
         case Token.StringLiteral(value) =>
           Iterator.single('"')
-          ++ value.iterator
+          ++ value
+            .iterator
             .flatMap {
               case '"' => "\\\""
               case '\n' => "\\n"
@@ -85,7 +87,7 @@ object TokenizerTests extends TestSuite {
       }
     }
 
-  def toStringAndBack(): Unit = {
+  test("to string and back") {
     // if this is false some of our checks will be vacuous
     assert(Keyword.values.exists(_.name.size <= 2))
 
@@ -94,7 +96,7 @@ object TokenizerTests extends TestSuite {
       .toChecker
       .exists(_.size >= 2)
       .exists(_.exists {
-        case Token.Name(name) if Keyword.stringSet(name) => true
+        case Token.Name(name) if name.size >= 3 => true
         case _ => false
       })
       .exists(_.exists {
@@ -109,14 +111,8 @@ object TokenizerTests extends TestSuite {
           .map(Ps(_))
           .map(Right(_))
 
-        recording(strForm) {
-          assert(reparsedTokens == expectedtokens)
-        }
+        assertEquals(reparsedTokens, expectedtokens)
       }
       .run()
-  }
-
-  def tests = Tests {
-    test("to string and back") - toStringAndBack()
   }
 }

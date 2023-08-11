@@ -2,7 +2,7 @@ package com.github.distcompiler.dcal
 
 import java.awt.RenderingHints.Key
 
-enum Token {
+enum Token derives CanEqual {
   case IntLiteral(value: BigInt)
   case StringLiteral(value: String)
   case Name(name: String)
@@ -16,7 +16,7 @@ object Token {
   }
 }
 
-enum Keyword extends Token.Meta {
+enum Keyword extends Token.Meta derives CanEqual {
   case call
   case await
   case `if`
@@ -33,7 +33,7 @@ object Keyword {
     Keyword.values.iterator.map(_.name).toSet
 }
 
-enum Punctuation extends Token.Meta {
+enum Punctuation extends Token.Meta derives CanEqual {
   case `,`
   case `(`
   case `)`
@@ -46,7 +46,7 @@ enum Punctuation extends Token.Meta {
   case `.`
 }
 
-enum BinaryOperator extends Token.Meta {
+enum BinaryOperator extends Token.Meta derives CanEqual {
   case `\\in`
   case `\\notin`
   case `=`

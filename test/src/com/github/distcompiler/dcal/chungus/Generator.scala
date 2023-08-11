@@ -2,10 +2,12 @@ package test.com.github.distcompiler.dcal.chungus
 
 import scala.annotation.targetName
 import scala.util.Try
+import scala.collection.mutable
 
 import cats.data.{Chain, Ior}
-import cats.{Semigroup, Alternative, Eval, Monoid, Foldable, Applicative, MonoidK}
+import cats.*
 import cats.implicits.given
+import cats.StackSafeMonad
 
 enum Generator[T] {
   import Generator.*
@@ -14,15 +16,11 @@ enum Generator[T] {
   case Singleton(value: T)
   case Selection(values: Chain[T])
   case Log(gen: Generator[T], label: String)
-  case FreeLazy(genFn: () => Generator[T])
   case Pay(genFn: () => Generator[T])
-  //case IncrementCount(key: Counters.Key[T], gen: Generator[T])
   case Filter(self: Generator[T], pred: T => Boolean)
   case Disjunction(left: Generator[T], right: Generator[T])
   case Ap[T, U](transform: Generator[T => U], self: Generator[T]) extends Generator[U]
-
-  def up[U >: T]: Generator[U] =
-    this.map(identity)
+  case AndThen[T, U](self: Generator[T], fn: T => Generator[U]) extends Generator[U]
 
   def filter(pred: T => Boolean): Generator[T] =
     Filter(this, pred)
@@ -41,12 +39,31 @@ enum Generator[T] {
       .filter(_.nonEmpty)
       .map(_.get)
 
+  def filterDistinct[U, F[_]](using T <:< F[U])(using Foldable[F]): Generator[T] =
+    this.filterDistinctBy(identity)
+
+  def filterDistinctBy[U, V, F[_]](using ev: T <:< F[U])(using Foldable[F])(fn: U => V): Generator[T] =
+    this.filter { collection =>
+      ev(collection).foldMap(u => Set(fn(u))).size == ev(collection).size
+    }
+
+  def force_! : Generator[T] =
+    anyFromSeq {
+      this.examplesIterator
+        .flatMap(_.flatten)
+        .map(_.value)
+        .toSeq
+    }
+
+  def andThen[U](fn: T => Generator[U]): Generator[U] =
+    AndThen(this, fn)
+
   def ++(using semigroup: Semigroup[T])(other: Generator[T]): Generator[T] =
     this.map2(other)(_ `combine` _)
   
   @targetName("or")
   def |[U](other: Generator[U]): Generator[T | U] =
-    this.up.combineK(other.up)
+    this.widen.combineK(other.widen)
     // (this, other) match {
     //   case (Empty, _) => other
     //   case (_, Empty) => this
@@ -62,8 +79,6 @@ enum Generator[T] {
     Checker.fromGenerator(this)
 
   def examplesIterator: Iterator[Example[Option[T]]] = {
-    final case class Ex[+T](value: T, counters: Counters)
-
     extension [A](self: LazyList[A]) def zipIorLazyLists[B](other: LazyList[B]): LazyList[Ior[A, B]] =
       (self, other) match {
         case (selfHead #:: selfTail, otherHead #:: otherTail) =>
@@ -87,92 +102,73 @@ enum Generator[T] {
           }
       }
 
-    def impl[T](self: Generator[T], counters: Counters): LazyList[() => Iterator[Ex[T]]] =
+    def impl[T](self: Generator[T]): EvalList[Eval[Iterator[T]]] =
       self match {
         case Empty() =>
-          LazyList.empty
+          EvalList.empty
         case Singleton(value) =>
-          (() => Iterator.single(Ex(value, counters = counters))) #:: LazyList.empty
+          EvalList.Cons(Eval.now(Eval.always(Iterator.single(value))), Eval.now(EvalList.empty))
         case Selection(values) =>
-          (() => values
-            .iterator
-            .map(Ex(_, counters = counters)))
-          #:: LazyList.empty
+          EvalList.Cons(Eval.now(Eval.always(values.iterator)), Eval.now(EvalList.empty))
         case Log(gen, label) =>
-          impl(gen, counters)
+          impl(gen)
             .zipWithIndex
             .map {
               case (iterFn, depth) =>
-                { () =>
+                iterFn.map { iter =>
                   println(s"! instantiate $label @ depth $depth")
-                  iterFn()
-                    .tapEach {
-                      case Ex(value, _) =>
-                        println(s"  $label @ depth $depth found ")
-                        pprint.pprintln(value)
-                    }
+                  iter.tapEach { value =>
+                    print(s"  $label @ depth $depth found ")
+                    pprint.pprintln(value)
+                  }
                 }
             }
-        case FreeLazy(genFn) =>
-          impl(genFn(), counters)
         case Pay(genFn) =>
-          (() => Iterator.empty) #:: impl(genFn(), counters)
+          EvalList.Cons(Eval.now(Eval.always(Iterator.empty)), Eval.later(impl(genFn())))
         case Filter(self, pred) =>
-          impl(self, counters)
-            .map { iterFn =>
-              () => iterFn().filter {
-                case Ex(value, _) => pred(value)
-              }
-            }
+          impl(self)
+            .map(iterFn => iterFn.map(_.filter(pred)))
         case Disjunction(left, right) =>
-          (impl(left, counters) `zipIorLazyLists` impl(right, counters)).map {
+          (impl(left) `zipIor` impl(right)).map {
             case Ior.Left(leftIterFn) => leftIterFn
             case Ior.Right(rightIterFn) => rightIterFn
             case Ior.Both(leftIterFn, rightIterFn) =>
-              () => leftIterFn() ++ rightIterFn()
+              leftIterFn.map2(rightIterFn)(_ ++ _)
           }
         case ap: Ap[tt, T] =>
-          val selfIterFns = impl(ap.self, counters)
-          val transIterFns = impl(ap.transform, counters)
+          val selfIterFns = impl(ap.self)
+          val transIterFns = impl(ap.transform)
 
-          def incSelf(selfIter: Iterator[Ex[tt]], depth: Int): Iterator[Iterator[Ex[T]]] =
-            selfIter.flatMap {
-              case Ex(value, counters) =>
-                transIterFns
-                  .iterator
-                  .take(depth + 1)
-                  .map { transIterFn =>
-                    transIterFn().map {
-                      case Ex(transform, counters) =>
-                        Ex(transform(value), counters) 
-                    }
-                  }
+          def incSelf(selfIter: Iterator[tt], depth: Int): Iterator[Iterator[T]] =
+            selfIter.flatMap { value =>
+              transIterFns
+                .iterator
+                .take(depth + 1)
+                .map { transIterFn =>
+                  transIterFn.value.map(_.apply(value))
+                }
             }
 
-          def incTrans(transIter: Iterator[Ex[tt => T]], depth: Int): Iterator[Iterator[Ex[T]]] =
-            transIter.flatMap {
-              case Ex(transform, counters) =>
-                selfIterFns
-                  .iterator
-                  .take(depth + 1)
-                  .map { selfIterFn =>
-                    selfIterFn().map {
-                      case Ex(value, counters) =>
-                        Ex(transform(value), counters) 
-                    }
-                  }
+          def incTrans(transIter: Iterator[tt => T], depth: Int): Iterator[Iterator[T]] =
+            transIter.flatMap { transform =>
+              selfIterFns
+                .iterator
+                .take(depth + 1)
+                .map { selfIterFn =>
+                  selfIterFn.value.map(transform)
+                }
             }
 
-          (selfIterFns `zipIorLazyLists` transIterFns)
+          (selfIterFns `zipIor` transIterFns)
             .zipWithIndex
             .map {
               case (Ior.Left(selfIterFn), depth) =>
-                () => incSelf(selfIterFn(), depth).flatten
+                Eval.always(incSelf(selfIterFn.value, depth).flatten)
               case (Ior.Right(transIterFn), depth) =>
-                () => incTrans(transIterFn(), depth).flatten
+                Eval.always(incTrans(transIterFn.value, depth).flatten)
               case (Ior.Both(selfIterFn, transIterFn), depth) =>
-                { () =>
-                  (incSelf(selfIterFn(), depth) `zipIorIterators` incTrans(transIterFn(), depth - 1))
+                Eval.always {
+                  (incSelf(selfIterFn.value, depth) `zipIorIterators` incTrans(transIterFn.value, depth - 1))
                     .flatMap {
                       case Ior.Both(selfIter, otherIter) => selfIter ++ otherIter
                       case Ior.Left(selfIter) => selfIter
@@ -180,16 +176,104 @@ enum Generator[T] {
                     }
                 }
             }
+        case andThen: AndThen[tt, T] =>
+          val self = andThen.self
+          val fn = andThen.fn
+          // TODO: don't accumulate all the vals from the current level all at once.
+          // we can safely assume we will always finish one layer before continuing (closed system, no-one can mess with this)
+          // so all we actually need to do is lazily build up the iter-producer for the next level while we're here
+          // e.g. build up a mutable list of depths with the iters unmaterialized
+
+          // compression strat:
+          // - iterate flatmap'd over current depth (don't do any all-at-once materialization)
+          // - if an element has a next-depth, then add it to a list buffer
+          // - list buffer is included in next round as extras
+          // - this will optimize away any next-round stuff if the flatmap has no next round.
+          // - if there is multi level stuff happening and it's tractable, then it's ok to hold a buffer of producers we can flat-iterate over
+
+          def weave(selfElems: EvalList[Eval[Iterator[tt]]], existingDepthList: EvalList[Eval[Iterator[T]]]): EvalList[Eval[Iterator[T]]] =
+            selfElems match {
+              case EvalList.Nil => existingDepthList
+              case selfElems @ (EvalList.Single(_) | EvalList.Cons(_, _)) =>
+                val (iterFn, deeperIterFns) =
+                  selfElems match {
+                    case EvalList.Single(value) => (value, Eval.now(EvalList.Nil))
+                    case EvalList.Cons(head, tail) => (head, tail)
+                  }
+
+                var nextIterBufferUsed = false
+                var reachedIdx = -1
+                val nextIterBuffer = mutable.ListBuffer.empty[Eval[EvalList[Eval[Iterator[T]]]]]
+
+                val (currentExistingIter, nextExistingDepthList) =
+                  existingDepthList match {
+                    case EvalList.Nil => (Eval.always(Iterator.empty), Eval.now(EvalList.Nil))
+                    case EvalList.Single(value) => (value.flatten, Eval.now(EvalList.Nil))
+                    case EvalList.Cons(head, tail) => (head.flatten, tail)
+                  }
+
+                val currentAdditionalIter =
+                  iterFn
+                    .flatMap { iterFn =>
+                      iterFn.map { iter =>
+                        iter
+                          .zipWithIndex
+                          .flatMap {
+                            case (value, idx) =>
+                              val result = impl(fn(value)) match {
+                                case EvalList.Nil => Iterator.empty
+                                case EvalList.Single(value) =>
+                                  value.flatten.value
+                                case EvalList.Cons(iter, nextIters) =>
+                                  // note: do not under any circumstance evaluate nextIters!
+                                  // doing that will make the assert below fail, because it breaks
+                                  // the invariant: we will always exhaust shallower iters before
+                                  // asking for deeper ones
+                                  if(reachedIdx < idx) {
+                                    assert(!nextIterBufferUsed)
+                                    nextIterBuffer += nextIters
+                                  }
+                                  iter.flatten.value
+                              }
+                              
+                              reachedIdx = idx `max` reachedIdx
+                              result
+                          }
+                      }
+                    }
+
+                EvalList.Cons(
+                  Eval.now(currentExistingIter.map2(currentAdditionalIter)(_ ++ _)),
+                  for {
+                    _ <- Eval.later { nextIterBufferUsed = true }
+                    tail <- nextIterBuffer
+                      .foldLeft(nextExistingDepthList)({ (acc, list) =>
+                        acc.map2(list) { (acc: EvalList[Eval[Iterator[T]]], list: EvalList[Eval[Iterator[T]]]) =>
+                          (acc `zipIor` list).map {
+                            case Ior.Both(left, right) => left.map2(right)(_ ++ _)
+                            case Ior.Left(iter) => iter
+                            case Ior.Right(iter) => iter
+                          }
+                        }
+                      })
+                      .map2(deeperIterFns) { (nextExistingDepthList, nextSelfElems) => 
+                        weave(nextSelfElems, nextExistingDepthList)
+                      }
+                      .memoize
+                  } yield tail,
+                )
+            }
+
+          weave(impl(self), EvalList.empty)
       }
       
-    impl(this, counters = Counters.init)
+    impl(this)
       .iterator
       .zipWithIndex
       .flatMap {
         case (iterFn, depth) =>
-          iterFn().map {
-            case Ex(value, counters) =>
-              Example(Some(value), maxDepth = depth)
+          iterFn.value.map { value =>
+            Example(Some(value), maxDepth = depth)
           }
           ++ Iterator.single(Example(None, maxDepth = depth))
       }
@@ -204,7 +288,7 @@ object Generator {
       ev(value).map(Example(_, maxDepth))
   }
 
-  given generatorAlternative: Alternative[Generator] with {
+  given alternative: Alternative[Generator] with {
     override def empty[A]: Generator[A] = Empty()
 
     override def pure[A](x: A): Generator[A] = Singleton(x)
@@ -224,16 +308,11 @@ object Generator {
       }
   }
 
-  given generatorMonoid[T]: Monoid[Generator[T]] = generatorAlternative.algebra
+  given monoid[T]: Monoid[Generator[T]] = alternative.algebra
 
   def empty[T]: Generator[T] = Empty()
 
   def pure[T](value: T): Generator[T] = value.pure
-
-  def freeLzy_![T](gen: =>Generator[T]): Generator[T] = {
-    lazy val lzyGen = gen
-    FreeLazy(() => lzyGen)
-  }
 
   def lzy[T](gen: =>Generator[T]): Generator[T] = {
     lazy val lzyGen = gen
@@ -270,22 +349,37 @@ object Generator {
   def anyFromSeq[T](seq: Seq[T]): Generator[T] =
     Selection(Chain.fromSeq(seq))
 
-  def unfold[T](init: Generator[T], limit: Int = Int.MaxValue)(fn: Generator[T] => Generator[T]): Generator[T] = {
+  // def unfold[T](init: Generator[T], limit: Int = Int.MaxValue)(fn: Generator[T] => Generator[T]): Generator[T] = {
+  //   require(limit >= 0)
+  //   def impl(gen: Generator[T], level: Int): Generator[T] =
+  //     if(level <= limit) {
+  //       gen
+  //       | lzy(impl(fn(gen), level = level + 1))
+  //     } else {
+  //       empty
+  //     }
+
+  //   impl(init, level = 0)
+  // }
+
+  def levelIdx(limit: Int = Int.MaxValue): Generator[Int] =
+    unfoldLevels(limit = limit)(pure)
+
+  def unfoldLevels[T](limit: Int = Int.MaxValue)(fn: Int => Generator[T]): Generator[T] = {
     require(limit >= 0)
-    def impl(gen: Generator[T], level: Int): Generator[T] =
+    def impl(level: Int): Generator[T] =
       if(level <= limit) {
-        gen
-        | lzy(impl(fn(gen), level = level + 1))
+        fn(level) | lzy(impl(level + 1))
       } else {
         empty
       }
 
-    impl(init, level = 0)
+    impl(level = 0)
   }
 
   def listOf[T](gen: Generator[T], limit: Int = Int.MaxValue): Generator[List[T]] = {
     require(limit >= 0)
-    unfold(Nil.pure, limit = limit)(consOf(gen, _))
+    unfoldLevels(limit = limit)(gen.replicateA)
   }
 
   def consOf[T](genHd: Generator[T], genTl: Generator[List[T]]): Generator[List[T]] =

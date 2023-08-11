@@ -135,6 +135,8 @@ object Checker {
             streamChecker.check(example)
           }
 
+        assert(streamChecker.isSatisfied, s"checking unsatisfied after exhausting all states")
+
         println {
           fansi.Color.Green(">>successful checking").checkANSI
           ++ s" after ${humanDuration(Duration.between(startTime, Instant.now()))}, after exploring ${humanNum(countExplored)} states."

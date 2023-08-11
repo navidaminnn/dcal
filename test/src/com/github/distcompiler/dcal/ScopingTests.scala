@@ -1,12 +1,12 @@
 package test.com.github.distcompiler.dcal
 
-import java.time.Duration
+import scala.collection.immutable.ListMap
+
 import cats.data.Chain
 import cats.Applicative
 import cats.syntax.all.given
 
-import utest.{TestSuite, test, Tests}
-import chungus.{Generator, Checker, assert, assertMatch, recording, Counters}
+import chungus.*
 
 import com.github.distcompiler.dcal.{AST, Scoping}
 import com.github.distcompiler.dcal.transform.Transform
@@ -14,7 +14,9 @@ import com.github.distcompiler.dcal.parsing.{SourceLocation, Ps, PsK}
 
 import Scoping.ScopingError
 
-object ScopingTests extends TestSuite {
+class ScopingTests extends munit.FunSuite {
+  override val munitTimeout = scala.concurrent.duration.Duration(1, scala.concurrent.duration.HOURS)
+
   import AST.*
   import Generator.*
 
@@ -99,68 +101,43 @@ object ScopingTests extends TestSuite {
             case (module, info) =>
               val errors = info.errors.toList
               val referencePairs = info.referencePairs.toList
-              recording(errors) {
-                recording(referencePairs) {
-                  // all errors must be unique
-                  recording(errors.toSet) {
-                    assert(errors.size == errors.toSet.size)
-                  }
-                  // all referents must refer to exactly one thing
-                  // e.g they must form a set of unique identifiers; no duplicates
-                  val referents = referencePairs.map(_._1)
-                  val referentSet = referents.toSet
-                  recording(referents) {
-                    recording(referentSet) {
-                      assert(referents.size == referentSet.size)
-                    }
-                  }
-                  // all references in general must be unique
-                  recording(referencePairs.toSet) {
-                    assert(referencePairs.size == referencePairs.toSet.size)
-                  }
-                  
-                  referencePairs.foreach {
-                    case (from, to) =>
-                      recording((from, to)) {
-                        assertMatch((from, to)) {
-                          case (PsK(Expression.OpCall(_, arguments), _), PsK(Definition(_, params, _), _)) if arguments.size == params.size =>
-                          case (PsK(Expression.OpCall(Right(Ps(Path.Name(name1))), Nil), _), PsK(Statement.Let(Ps(name2), _), _)) if name1 == name2 =>
-                          case (PsK(Expression.OpCall(Right(Ps(Path.Name(name1))), Nil), _), PsK(Statement.Var(Ps(name2), _), _)) if name1 == name2 =>
-                          //case (PsK(Expression.OpCall(Right(Ps(Path.Name(name1))), Nil), _), PsK(name2: String, _)) if name1 == name2 =>
-                          case (PsK(Binding.Call(_, arguments), _), PsK(Definition(name, params, _), _)) if arguments.size == params.size =>
-                          case (PsK(Statement.Call(Ps(Binding.Call(_, arguments))), _), PsK(Definition(_, params, _), _)) if arguments.size == params.size =>
-                        }
-                      }
-                  }
 
-                  recording(referentSet) {
-                    errors.foreach {
-                      case ScopingError.Redefinition(first, second) => 
-                      case ScopingError.UndefinedReference(ref) =>
-                        recording(ref) {
-                          assert(!referentSet.contains(ref))
-                        }
-                      case ScopingError.ArityMismatch(ref, defn) =>
-                        recording(ref) {
-                          assert(!referentSet.contains(ref))
-                        }
-                      case ScopingError.KindMismatch(ref, defn) =>
-                        recording(ref) {
-                          assert(!referentSet.contains(ref))
-                        }
-                    }
-                  }
+              assert(clue(errors).size == clue(errors.toSet).size, "all errors must be unique")
 
-                  // if no errors, all referents must be accounted for
-                  if(errors.isEmpty) {
-                    val allReferents = findAllReferents(module)
-                    recording(allReferents) {
-                      recording(referentSet) {
-                        assert(allReferents == referentSet)
-                      }
-                    }
-                  }
-                }
+              // all referents must refer to exactly one thing
+              // e.g they must form a set of unique identifiers; no duplicates
+              val referents = referencePairs.map(_._1)
+              val referentSet = referents.toSet
+              assert(clue(referents).size == clue(referentSet).size, "all referents must refer to exactly one thing")
+
+              // all references in general must be unique
+              assert(clue(referencePairs).size == clue(referencePairs.toSet).size, "all references must be unique")
+                 
+              referencePairs.foreach {
+                case (PsK(Expression.OpCall(_, arguments), _), PsK(Definition(_, params, _), _)) if arguments.size == params.size =>
+                case (PsK(Expression.OpCall(Right(Ps(Path.Name(name1))), Nil), _), PsK(Statement.Let(Ps(name2), _), _)) if name1 == name2 =>
+                case (PsK(Expression.OpCall(Right(Ps(Path.Name(name1))), Nil), _), PsK(Statement.Var(Ps(name2), _), _)) if name1 == name2 =>
+                //case (PsK(Expression.OpCall(Right(Ps(Path.Name(name1))), Nil), _), PsK(name2: String, _)) if name1 == name2 =>
+                case (PsK(Binding.Call(_, arguments), _), PsK(Definition(name, params, _), _)) if arguments.size == params.size =>
+                case (PsK(Statement.Call(Ps(Binding.Call(_, arguments))), _), PsK(Definition(_, params, _), _)) if arguments.size == params.size =>
+                case (from, to) =>
+                  fail("reference pair forms pattern I don't recognize", clues(from, to))
+              }
+
+              errors.foreach {
+                case ScopingError.Redefinition(first, second) => 
+                case ScopingError.UndefinedReference(ref) =>
+                  assert(!clue(referentSet).contains(clue(ref)))
+                case ScopingError.ArityMismatch(ref, defn) =>
+                  assert(!clue(referentSet).contains(clue(ref)))
+                case ScopingError.KindMismatch(ref, defn) =>
+                  assert(!clue(referentSet).contains(clue(ref)))
+              }
+
+              // if no errors, all referents must be accounted for
+              if(errors.isEmpty) {
+                val allReferents = findAllReferents(module)
+                assertEquals(allReferents, referentSet)
               }
           }
       }
@@ -172,10 +149,6 @@ object ScopingTests extends TestSuite {
   final class NameTargetedGens(definitionCount: Int)(using DummyLocSrc) {
     // names to choose from
     given strGen: Generator[String] = anyFromSeq(('a' to 'c').map(_.toString))
-
-    object ExprKey extends Counters.Key[Expression]
-    object StmtKey extends Counters.Key[Statement]
-    object BindingKey extends Counters.Key[Binding]
 
     given definitionsGen: Generator[List[Ps[Definition]]] =
       listOf(anyOf[Ps[Definition]], limit = definitionCount)
@@ -196,131 +169,227 @@ object ScopingTests extends TestSuite {
     given bindingGen: Generator[Binding] =
       lzy {
         anyOf[Binding.Value]
-        //| rateLimit(key = BindingKey, limit = 1)(Generator.anySum[Binding])
       }
-      .up
+      .widen
 
     given stmtGen: Generator[Statement] =
       lzy {
         Generator.anyProduct[Statement.Let]
         | Generator.anyProduct[Statement.Var]
         | Generator.anyProduct[Statement.Call]
-        //| rateLimit(key = StmtKey, limit = 1)(Generator.anySum[Statement])
       }
-      .up
+      .widen
 
     given exprGen: Generator[Expression] =
       lzy {
         pure(Expression.StringLiteral("<value>"))
         | anyOf[Expression.OpCall]
-        //| rateLimit(key = ExprKey, limit = 1)(Generator.anySum[Expression])
       }
-      .up
+      .widen
   }
 
-  final case class ValidNames(names: List[String]) {
-    def add(name: String): ValidNames =
-      if(names.contains(name)) {
-        this
-      } else {
-        copy(names = name :: names)
+  final case class ValidNames(info: ListMap[String, ValidNames.Info]) {
+    import ValidNames.*
+
+    def add(name: String, info: ValidNames.Info): ValidNames =
+      copy(info = this.info.updated(name, info))
+
+    def arity(name: String): Int =
+      info(name) match {
+        case Val => 0
+        case Def(arity) => arity
       }
+
+    def defNames: List[String] =
+      info
+        .iterator
+        .collect { 
+          case (name, Def(_)) => name
+        }
+        .toList
+
+    def valNames: List[String] =
+      info
+        .iterator
+        .collect {
+          case (name, Val) => name
+        }
+        .toList
   }
 
   object ValidNames {
-    def empty: ValidNames = ValidNames(names = Nil)
+    enum Info derives CanEqual {
+      case Def(arity: Int)
+      case Val
+    }
+    export Info.*
+
+    def empty: ValidNames = ValidNames(info = ListMap.empty)
   }
 
-  class CorrectlyScopedGens(using DummyLocSrc) {
+  class CorrectlyScopedGens(maxDefns: Int)(using DummyLocSrc) {
     val allNames = List("foo", "bar", "ping")
+
+    def definableName(using validNames: ValidNames): Generator[String] =
+      anyFromSeq(allNames)
+
+    def listOfDefinableNames(limit: Int, arityLimit: Int)(using validNames: ValidNames): Generator[List[(String, Int)]] =
+      listOf(definableName.product(levelIdx(limit = arityLimit)), limit = limit)
+        .filterDistinctBy(_._1)
 
     given strGen: Generator[String] = anyFromSeq(allNames)
 
     given correctlyScopedOpCall(using validNames: ValidNames): Generator[Expression.OpCall] =
-      (anyFromSeq(validNames.names)/*, anyOf[List[Ps[Expression]]]*/).map { (name/*, args*/) =>
-        Expression.OpCall(Right(Ps(Path.Name(name))), Nil)
+      (anyFromSeq(validNames.valNames), anyOf[List[Ps[Expression]]]).mapN { (name, args) =>
+        Expression.OpCall(Right(Ps(Path.Name(name))), args)
       }
-    
-    given correctlyScopedStmts(using validNames: ValidNames): Generator[List[Ps[Statement]]] =
-      lzy {
-        locally[Generator[List[Ps[Statement]]]] {
-          allNames.foldMap { name =>
-            val letGen = anyOf[Ps[Binding]].map(binding => Ps(Statement.Let(Ps(name), binding)))
-            locally {
-              given ValidNames = validNames.add(name)
-              consOf(letGen, listOf(anyOf[Ps[Statement]], limit = 2))
-            }
-          }
-        }
-        | listOf(
-            anySumOfShape[Statement]
-              .excluding[Statement.Let]
-              .excluding[Statement.Var]
-              .summon
-              .map(Ps(_)),
-            limit = 2,
-          )
-      }
-  }
 
-  def tests = Tests {
-    // test("generalChecks") {
-    //   test("untargeted") {
-    //     generalChecks(requiredReferences = 1, requiredErrors = 1, requiredDefinitions = 1) {
-    //       given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
-    //       // very short lists or we're going to take forever
-    //       given limitedList[T](using gen: Generator[T]): Generator[List[T]] =
-    //         listOf(gen, limit = 2)
-    //       given strGen: Generator[String] = anyFromSeq(List("foo", "bar", "ping"))
-    //       anyOf[Module]
-    //     }
-    //   }
-    //   test("1 definition") {
-    //     generalChecks(requiredReferences = 3, requiredErrors = 3, requiredDefinitions = 1) {
-    //       given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
-
-    //       val gens = new NameTargetedGens(definitionCount = 1)
-    //       import gens.given
-    //       anyOf[Module]
-    //     }
-    //   }
-    //   test("3 definitions") {
-    //     generalChecks(requiredReferences = 2, requiredErrors = 2, requiredDefinitions = 3) {
-    //       given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
-
-    //       val gens = new NameTargetedGens(definitionCount = 3)
-    //       import gens.given
-    //       anyOf[Module]
-    //     }
-    //   }
-    // }
-    test("correct scoping") {
-      given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
-      val gens = new CorrectlyScopedGens
-      given ValidNames = ValidNames.empty
-
-      import gens.given
-      anyOf[Module]
-        .toChecker
-        .withPrintExamples(printExamples = false)
-        .transform { module =>
-          val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
-          (module, info)
-        } { checker =>
-          checker
-            .exists(_._2.referencePairs.size >= 2)
-            .forall {
-              case (module, info) =>
-                val referencePairs = info.referencePairs.toList
-                val errors = info.errors.toList
-                recording(referencePairs) {
-                  recording(errors) {
-                    assert(errors.isEmpty)
+    given correctlyScopedDefns(using validNames: ValidNames): Generator[List[Ps[Definition]]] = {
+      val origValidNames = validNames
+      listOfDefinableNames(limit = maxDefns, arityLimit = 3)
+        .andThen { names =>
+          given validNames: ValidNames = names.foldLeft(origValidNames)((acc, pair) => acc.add(pair._1, info = ValidNames.Def(arity = pair._2)))
+          names.foldMapA {
+            case (name, arity) =>
+              val origValidNames = validNames
+              definableName
+                .replicateA(arity)
+                .filterDistinct
+                .andThen { params =>
+                  given validNames: ValidNames = params.foldLeft(origValidNames)(_.add(_, info = ValidNames.Val))
+                  anyOf[Ps[Statement.Block]].map { body =>
+                    List(Ps(Definition(Ps(name), params.map(name => Ps(DefParam.Name(name))), body)))
                   }
                 }
-            }
+          }
         }
-        .run()
     }
-  }  
+
+    given correctlyScopedBinding(using validNames: ValidNames): Generator[Ps[Binding.Call]] =
+      anyFromSeq(validNames.defNames).andThen { name =>
+        anyOf[Ps[Expression]].replicateA(validNames.arity(name)).map { args =>
+          Ps(Binding.Call(Ps(Path.Name(name)), args))
+        }
+      }
+
+    given correctlyScopedCall(using validNames: ValidNames): Generator[Ps[Statement.Call]] =
+      anyOf[Ps[Binding.Call]].map(binding => Ps(Statement.Call(binding)))
+
+    private def nonScopingStmt(using ValidNames): Generator[Ps[Statement]] =
+      anySumOfShape[Statement]
+        .excluding[Statement.Let]
+        .excluding[Statement.Var]
+        .summon
+        .map(Ps(_))
+
+    given correctlyScopedStmts(using validNames: ValidNames): Generator[List[Ps[Statement]]] = {
+      def impl(remaining: Int)(using validNames: ValidNames): Generator[List[Ps[Statement]]] =
+        if(remaining == 0) {
+          pure(Nil)
+        } else {
+          pure(Nil)
+          | lzy {
+            consOf(nonScopingStmt, impl(remaining = remaining - 1))
+            | allNames
+                .foldMap { name =>
+                  val binderGen =
+                    anyOf[Ps[Binding]].map(binding => Ps(Statement.Let(Ps(name), binding)))
+                    | anyOf[Ps[Binding]].map(binding => Ps(Statement.Var(Ps(name), binding)))
+
+                  locally {
+                    given ValidNames = validNames.add(name, info = ValidNames.Val)
+                    consOf(binderGen, impl(remaining = remaining - 1))
+                  }
+                }
+          }
+        }
+
+      impl(remaining = 2)
+    }
+  }
+
+  test("untargeted") {
+    generalChecks(requiredReferences = 1, requiredErrors = 1, requiredDefinitions = 1) {
+      given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+      // very short lists or we're going to take forever
+      given limitedList[T](using gen: Generator[T]): Generator[List[T]] =
+        listOf(gen, limit = 2)
+      given strGen: Generator[String] = anyFromSeq(List("foo", "bar", "ping"))
+      anyOf[Module]
+    }
+  }
+
+  test("mostly names: 1 definition") {
+    generalChecks(requiredReferences = 3, requiredErrors = 3, requiredDefinitions = 1) {
+      given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+
+      val gens = new NameTargetedGens(definitionCount = 1)
+      import gens.given
+      anyOf[Module]
+    }
+  }
+
+  test("mostly names: 3 definitions") {
+    generalChecks(requiredReferences = 2, requiredErrors = 2, requiredDefinitions = 3) {
+      given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+
+      val gens = new NameTargetedGens(definitionCount = 3)
+      import gens.given
+      anyOf[Module]
+    }
+  }
+
+  test("correct scoping: one defn, deeper") {
+    given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+    val gens = new CorrectlyScopedGens(maxDefns = 1)
+    given ValidNames = ValidNames.empty
+
+    import gens.given
+    anyOf[Module]
+      .toChecker
+      .withPrintExamples(printExamples = false)
+      .exists(_.definitions.exists(_.value.params.size >= 1))
+      .transform { module =>
+        val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
+        (module, info)
+      } { checker =>
+        checker
+          .exists(_._2.referencePairs.size >= 3)
+          .forall {
+            case (module, info) =>
+              val referencePairs = info.referencePairs.toList
+              val errors = info.errors.toList
+
+              assertEquals(errors, Nil)
+          }
+      }
+      .run()
+  }
+
+  test("correct scoping: >=3 defns, shallow") {
+    given dummyLocSrc: DummyLocSrc = IncreasingDummyLocSrc()
+    val gens = new CorrectlyScopedGens(maxDefns = 3)
+    given ValidNames = ValidNames.empty
+
+    import gens.given
+    anyOf[Module]
+      .toChecker
+      .withPrintExamples(printExamples = false)
+      .exists(_.definitions.exists(_.value.params.size >= 1))
+      .exists(_.definitions.size >= 3)
+      .transform { module =>
+        val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
+        (module, info)
+      } { checker =>
+        checker
+          .forall {
+            case (module, info) =>
+              val referencePairs = info.referencePairs.toList
+              val errors = info.errors.toList
+
+              assertEquals(errors, Nil)
+          }
+      }
+      .run()
+  }
 }

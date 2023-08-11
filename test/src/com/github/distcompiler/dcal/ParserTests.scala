@@ -2,14 +2,14 @@ package test.com.github.distcompiler.dcal
 
 import cats.data.Chain
 import cats.syntax.all.given
-import java.time.Duration
 
-import utest.{TestSuite, Tests, test}
 import chungus.*
 import com.github.distcompiler.dcal.{AST, Tokenizer, Parser, Token, Punctuation, Keyword, BinaryOperator}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
 
-object ParserTests extends TestSuite {
+class ParserTests extends munit.FunSuite {
+  override val munitTimeout = scala.concurrent.duration.Duration(1, scala.concurrent.duration.HOURS)
+
   import AST.*
   import Generator.*
 
@@ -218,44 +218,37 @@ object ParserTests extends TestSuite {
   def toTokensAndBack(genModule: Generator[Module]): Unit = {
     // TODO: are sure that minimum token count is a good representation of getting enough combos?
     genModule
+      .andThen { module =>
+        // get all possible token renderings of the generated module
+        pure(module).product(renderModule(module).force_!.map(_.toList))
+      }
       .toChecker
       .withPrintExamples(printExamples = false)
-      .transform { module =>
-        // get all possible arrangements of tokens representing this module
-        (module, renderModule(module)
-          .examplesIterator
-          .flatMap(_.flatten)
-          .map(_.value.toList)
-          .toList)
-      } { checker =>
-        checker
-          .exists {
-            case (_, tokenss) => tokenss.exists(_.size >= 50)
-          }
-          .forall {
-            case (expectedModule, tokenss) =>
-              tokenss.foreach { tokens =>
-                recording(tokens) {
-                  val result = Parser(
-                    tokens
-                      .iterator
-                      .map(Ps(_))
-                      .map(Right(_)),
-                    path = "<dummy>",
-                  )
-                  recording(result) {
-                    assert(result == Right(Ps(expectedModule)))
-                  }
-                }
-              }
-          }
+      .exists {
+        case (_, tokens) => tokens.size >= 50
+      }
+      .forall {
+        case (expectedModule, tokens) =>
+          val result = Parser(
+            tokens
+              .iterator
+              .map(Ps(_))
+              .map(Right(_)),
+            path = "<dummy>",
+          )
+              
+          assertEquals(result, Right(Ps(expectedModule)))
       }
       .run()
   }
   
-  def tests = Tests {
-    test("to tokens and back (fully general)") - toTokensAndBack(anyOf[Module])
-    test("to tokens and back (focus on one definition)") - toTokensAndBack {
+
+  test("to tokens and back (fully general)") {
+    toTokensAndBack(anyOf[Module])
+  }
+  
+  test("to tokens and back (focus on one definition)") {
+    toTokensAndBack {
       given anyDefns: Generator[List[Ps[Definition]]] =
         listOf(anyOf[Ps[Definition]], limit = 1)
 
