@@ -1,9 +1,12 @@
 package test.com.github.distcompiler.dcal.chungus
 
+import cats.*
+import cats.syntax.all.given
+
+import com.github.distcompiler.dcal.transform.Transform
+
 import java.time.{Instant, Duration}
 import scala.collection.mutable
-import scala.annotation.targetName
-import fansi.Str
 import Generator.Example
 
 sealed trait Checker[T] { self =>
@@ -11,14 +14,14 @@ sealed trait Checker[T] { self =>
   type Self <: Checker[T]
 
   private[chungus] def streamChecker: StreamChecker[T]
-  private[chungus] def replaceStreamChecker(streamChecker: StreamChecker[T]): Self
+  private[chungus] def replaceStreamChecker(streamChecker: StreamChecker[T]): Self { type Self = self.Self }
 
   final def requireDepth(depth: Int): Self =
     replaceStreamChecker {
       StreamChecker.combine(streamChecker, StreamChecker.requireDepth(depth))
     }
 
-  final def transform[U](transFn: T => U)(checkerFn: TransformChecker[U] => TransformChecker[U]): Self =
+  final def transform[U](transFn: T => U)(checkerFn: TransformChecker[U] => TransformChecker[U]): Self { type Self = self.Self } =
     replaceStreamChecker {
       StreamChecker.combine(
         streamChecker,
@@ -26,12 +29,12 @@ sealed trait Checker[T] { self =>
       )
     }
 
-  final def exists(pred: T => Boolean): Self =
+  final def exists(pred: T => Boolean): Self { type Self = self.Self } =
     replaceStreamChecker {
       StreamChecker.combine(streamChecker, StreamChecker.exists(pred))
     }
 
-  final def forall(fn: T => Unit): Self =
+  final def forall(fn: T => Unit): Self { type Self = self.Self } =
     replaceStreamChecker {
       StreamChecker.combine(streamChecker, StreamChecker.forall(fn))
     }
@@ -213,6 +216,48 @@ object Checker {
         override def check(example: Example[T]): Unit = innerChecker.check(Example(transFn(example.value), example.maxDepth))
         override def isSatisfied: Boolean = innerChecker.isSatisfied
       }
+  }
+
+  object Involves {
+    opaque type T = Boolean
+    object T {
+      given monoid: Monoid[Involves.T] with {
+        override def combine(x: Involves.T, y: Involves.T): Involves.T =
+          Involves.fromBoolean(x.value || y.value)
+
+        override def empty: Involves.T = false
+      }
+    }
+    
+    def fromBoolean(value: Boolean): Involves.T = value
+    def `true`: Involves.T = fromBoolean(true)
+    def `false`: Involves.T = fromBoolean(false)
+
+    extension (self: Involves.T) def value: Boolean = self
+  }
+
+  private inline def involvesBeyondSumImpl[T, Tpl <: Tuple](using mirror: deriving.Mirror.SumOf[T])(self: T, inline ord: Int): Involves.T = {
+    inline compiletime.erasedValue[Tpl] match {
+      case _: EmptyTuple => Involves.`false`
+      case _: (hd *: tl) =>
+        if(mirror.ordinal(self) == ord) {
+          compiletime.summonInline[Transform[hd, Involves.T]].apply(self.asInstanceOf[hd])
+        } else {
+          involvesBeyondSumImpl[T, tl](self, ord + 1)
+        }
+    }
+  }
+
+  extension [T](self: T) {
+    inline def involves[U](fn: PartialFunction[U, Involves.T]): Involves.T = {
+      given Transform[U, Involves.T] = u => fn.applyOrElse(u, _ => Involves.`false`)
+      compiletime.summonInline[Transform[T, Involves.T]].apply(self)
+    }
+
+    inline def involvesBeyondSum[U](using mirror: deriving.Mirror.SumOf[T])(fn: PartialFunction[U, Involves.T]): Involves.T = {
+      given Transform[U, Involves.T] = u => fn.applyOrElse(u, _ => Involves.`false`)
+      involvesBeyondSumImpl[T, mirror.MirroredElemTypes](self, ord = 0)
+    }
   }
 
   private def humanNum(num: Int): String = {

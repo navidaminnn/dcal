@@ -11,7 +11,7 @@ trait Transform[A, B] {
 object Transform {
   def apply[A, B](using transform: Transform[A, B]): Transform[A, B] = transform
 
-  private def lzyTrans[A, B](trans: =>Transform[A, B]): Transform[A, B] =
+  def lzyTrans[A, B](trans: =>Transform[A, B]): Transform[A, B] =
     new Transform[A, B] {
       override def apply(from: A): B = trans(from)
     }

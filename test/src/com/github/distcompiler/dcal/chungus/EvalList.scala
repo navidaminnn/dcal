@@ -67,7 +67,7 @@ private enum EvalList[+T] derives CanEqual {
             curr = Eval.now(Nil)
             value.value
           case Cons(head, tail) =>
-            curr = tail // don't "eval" the tail yet; delay as much as possible
+            curr = tail.memoize // don't "eval" the tail yet; delay as much as possible
             head.value
         }
     }

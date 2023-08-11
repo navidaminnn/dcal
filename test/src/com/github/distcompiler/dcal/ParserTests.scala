@@ -4,6 +4,7 @@ import cats.data.Chain
 import cats.syntax.all.given
 
 import chungus.*
+import com.github.distcompiler.dcal.transform.Transform
 import com.github.distcompiler.dcal.{AST, Tokenizer, Parser, Token, Punctuation, Keyword, BinaryOperator}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
 
@@ -12,6 +13,7 @@ class ParserTests extends munit.FunSuite {
 
   import AST.*
   import Generator.*
+  import Checker.*
 
   private given dummyLoc: SourceLocation = SourceLocation("dummy", offsetStart = -1, offsetEnd = -1)
 
@@ -20,18 +22,6 @@ class ParserTests extends munit.FunSuite {
   private given numGen: Generator[BigInt] = pure(BigInt(1))
 
   private given psGen[T](using gen: Generator[T]): Generator[Ps[T]] = gen.map(Ps(_))
-
-  // object StmtKey extends Counters.Key[Statement]
-  // private given stmtGen: Generator[Statement] =
-  //   rateLimit(StmtKey, limit = 3)(Generator.anySum)
-
-  // object ExprKey extends Counters.Key[Expression]
-  // private given exprGen: Generator[Expression] =
-  //   rateLimit(ExprKey, limit = 3)(Generator.anySum)
-
-  // object BindingKey extends Counters.Key[Binding]
-  // private given genBinding: Generator[Binding] =
-  //   rateLimit(BindingKey, limit = 3)(Generator.anySum)
 
   // if we focus on generating lists that are too long we'll never get very deep. length <= 3 seems good here.
   private given limitedListOf[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen, limit = 3)
@@ -215,18 +205,16 @@ class ParserTests extends munit.FunSuite {
     ++ renderDefinitions(definitions)
   }
 
-  def toTokensAndBack(genModule: Generator[Module]): Unit = {
-    // TODO: are sure that minimum token count is a good representation of getting enough combos?
-    genModule
-      .andThen { module =>
-        // get all possible token renderings of the generated module
-        pure(module).product(renderModule(module).force_!.map(_.toList))
-      }
-      .toChecker
-      .withPrintExamples(printExamples = false)
-      .exists {
-        case (_, tokens) => tokens.size >= 50
-      }
+  def toTokensAndBack(genModule: Generator[Module])(applyConstraints: (checker: Checker[(Module, List[Token])]) => checker.Self): Unit = {
+    applyConstraints {
+      genModule
+        .andThen { module =>
+          // get all possible token renderings of the generated module
+          pure(module).product(renderModule(module).force_!.map(_.toList))
+        }
+        .toChecker
+        .withPrintExamples(printExamples = false)
+    }
       .forall {
         case (expectedModule, tokens) =>
           val result = Parser(
@@ -244,15 +232,44 @@ class ParserTests extends munit.FunSuite {
   
 
   test("to tokens and back (fully general)") {
-    toTokensAndBack(anyOf[Module])
+    toTokensAndBack(anyOf[Module]) { checker =>
+      checker
+        .exists {
+          case (_, tokens) => tokens.size >= 50
+        }
+    }
   }
   
   test("to tokens and back (focus on one definition)") {
+    given Transform[String, Involves.T] = _ => Involves.`false`
+    given Transform[BigInt, Involves.T] = _ => Involves.`false`
+    given [T](using trans: Transform[T, Involves.T]): Transform[Ps[T], Involves.T] =
+      ps => trans(ps.value)
+
     toTokensAndBack {
       given anyDefns: Generator[List[Ps[Definition]]] =
         listOf(anyOf[Ps[Definition]], limit = 1)
 
       anyOf[Module]
+    } { checker =>
+      checker
+        .exists {
+          case (module, _) =>
+            // make sure we generate at least one level of nesting for exprs (same for stmts below)
+            module
+              .involves[Expression] { expr =>
+                expr.involvesBeyondSum[Expression](_ => Involves.`true`)
+              }
+              .value
+        }
+        .exists {
+          case (module, _) =>
+            module
+              .involves[Statement] { stmt =>
+                stmt.involvesBeyondSum[Statement](_ => Involves.`true`)
+              }
+              .value
+        }
     }
   }
 }
