@@ -2,7 +2,7 @@ package com.github.distcompiler.dcal
 
 import cats.derived.*
 import cats.data.{EitherT, WriterT, Chain}
-import cats.{Eval, Monoid}
+import cats.*
 import cats.syntax.all.given
 import cats.instances.all.{given Ordering[?]}
 
@@ -181,7 +181,6 @@ object Scoping {
 
   given scopeExpressionOpCall(using ScopingContext): Transform[Ps[Expression.OpCall], Scoping[Unit]] with {
     override def apply(from: Ps[Expression.OpCall]): Scoping[Unit] = {
-      // TODO: arity checking!
       val Ps(Expression.OpCall(ident, arguments)) = from
       val id = 
         ident match {
@@ -192,8 +191,14 @@ object Scoping {
         _ <- ctx.lookup(id.value) match {
           case None =>
             Scoping.error(ScopingError.UndefinedReference(from.toPsK.up))
-          case Some(defn) =>
-            Scoping.tellRef(from.toPsK.up -> defn.toPsK.up)
+          case Some(defn @ Ps(DefParam.Name(_) | Statement.Let(_, _) | Statement.Var(_, _))) =>
+            if(arguments.isEmpty) {
+              Scoping.tellRef(from.toPsK.up -> defn.toPsK.up)
+            } else {
+              Scoping.error(ScopingError.ArityMismatch(from.toPsK.up, defn.toPsK.up))
+            }
+          case Some(defn @ Ps(_: Definition | Import.Name(_))) =>
+            Scoping.error(ScopingError.KindMismatch(from.toPsK.up, defn.toPsK.up))
         }
         _ <- arguments.traverse_(scopeExpression)
       } yield ()

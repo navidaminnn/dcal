@@ -1,7 +1,7 @@
 package com.github.distcompiler.dcal.parsing
 
 import scala.annotation.targetName
-import cats.{Eval, Semigroup}
+import cats.*
 import cats.data.Chain
 import cats.syntax.all.given
 
@@ -210,20 +210,19 @@ object Parser {
     case Fatal(error: Error, progressIdx: Int)
   }
 
-  @annotation.showAsInfix
-  final case class ~[+A, +B](a: A, b: B)
+  final infix case class ~[+A, +B](a: A, b: B)
   extension [A](a: A) {
     @targetName("andThen")
     infix def ~[B](b: B): A ~ B = new ~(a, b)
   }
 
   final class Ops[Elem, Input, Error: Semigroup](using inputOps: InputOps[Elem, Input])(using errorOps: ErrorOps[Elem, Input, Error]) {
-    given Ops[Elem, Input, Error] = this // need this or we'll allocate too many new ops, including recursively
+    given ops: Ops[Elem, Input, Error] = this // need this or we'll allocate too many new ops, including recursively
     import Parser.Result
     type P[T] = Parser[Elem, Input, Error, T]
     object P {
       def apply[T](fn: (Int, Input) => Eval[R[T]]): P[T] = new Parser[Elem, Input, Error, T] {
-        override def apply(progressIdx: Int, input: Input): Eval[R[T]] = fn(progressIdx, input)
+        override def apply(progressIdx: Int, input: Input): Eval[R[T]] = Eval.defer(fn(progressIdx, input))
       }
     }
     type R[T] = Parser.Result[Input, Error, T]

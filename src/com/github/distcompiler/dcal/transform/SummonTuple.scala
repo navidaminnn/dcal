@@ -1,4 +1,4 @@
-package test.com.github.distcompiler.dcal.chungus
+package com.github.distcompiler.dcal.transform
 
 object SummonTuple {
   opaque type ST[T <: Tuple] = T

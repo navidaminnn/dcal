@@ -1,5 +1,7 @@
 package test.com.github.distcompiler.dcal.chungus
 
+import com.github.distcompiler.dcal.transform.SummonTuple
+
 import scala.annotation.targetName
 import scala.util.Try
 import scala.collection.mutable
@@ -7,7 +9,6 @@ import scala.collection.mutable
 import cats.data.{Chain, Ior}
 import cats.*
 import cats.implicits.given
-import cats.StackSafeMonad
 
 enum Generator[T] {
   import Generator.*
@@ -64,16 +65,6 @@ enum Generator[T] {
   @targetName("or")
   def |[U](other: Generator[U]): Generator[T | U] =
     this.widen.combineK(other.widen)
-    // (this, other) match {
-    //   case (Empty, _) => other
-    //   case (_, Empty) => this
-    //   case (Singleton(left), Singleton(right)) => Selection(Chain(left, right))
-    //   case (Singleton(left), Selection(rights)) => Selection(left +: rights)
-    //   case (Selection(lefts), Singleton(right)) => Selection(lefts :+ right)
-    //   case (Pay(genL), Pay(genR)) => Pay(genL | genR)
-    //   case (Cheapen(genL), Cheapen(genR)) => Cheapen(genL | genR)
-    //   case _ => Disjunction(this.up, other.up)
-    // }
 
   def toChecker: Checker.RootChecker[T] =
     Checker.fromGenerator(this)
@@ -179,17 +170,6 @@ enum Generator[T] {
         case andThen: AndThen[tt, T] =>
           val self = andThen.self
           val fn = andThen.fn
-          // TODO: don't accumulate all the vals from the current level all at once.
-          // we can safely assume we will always finish one layer before continuing (closed system, no-one can mess with this)
-          // so all we actually need to do is lazily build up the iter-producer for the next level while we're here
-          // e.g. build up a mutable list of depths with the iters unmaterialized
-
-          // compression strat:
-          // - iterate flatmap'd over current depth (don't do any all-at-once materialization)
-          // - if an element has a next-depth, then add it to a list buffer
-          // - list buffer is included in next round as extras
-          // - this will optimize away any next-round stuff if the flatmap has no next round.
-          // - if there is multi level stuff happening and it's tractable, then it's ok to hold a buffer of producers we can flat-iterate over
 
           def weave(selfElems: EvalList[Eval[Iterator[tt]]], existingDepthList: EvalList[Eval[Iterator[T]]]): EvalList[Eval[Iterator[T]]] =
             selfElems match {
@@ -349,19 +329,6 @@ object Generator {
   def anyFromSeq[T](seq: Seq[T]): Generator[T] =
     Selection(Chain.fromSeq(seq))
 
-  // def unfold[T](init: Generator[T], limit: Int = Int.MaxValue)(fn: Generator[T] => Generator[T]): Generator[T] = {
-  //   require(limit >= 0)
-  //   def impl(gen: Generator[T], level: Int): Generator[T] =
-  //     if(level <= limit) {
-  //       gen
-  //       | lzy(impl(fn(gen), level = level + 1))
-  //     } else {
-  //       empty
-  //     }
-
-  //   impl(init, level = 0)
-  // }
-
   def levelIdx(limit: Int = Int.MaxValue): Generator[Int] =
     unfoldLevels(limit = limit)(pure)
 
@@ -386,18 +353,6 @@ object Generator {
     (genHd, genTl).mapN(_ :: _)
 
   given anyListOf[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen)
-
-  // def count[T](key: Counters.Key[T])(gen: Generator[T]): Generator[T] =
-  //   Generator.IncrementCount(key, gen)
-
-  // def rateLimit[T](key: Counters.Key[T], limit: Int)(gen: Generator[T]): Generator[T] =
-  //   readCounters.flatMap { counters =>
-  //     if(counters.read(key) < limit) {
-  //       count(key)(gen).flatMap(_ => lzy(rateLimit(key, limit = limit)(gen)))
-  //     } else {
-  //       none.up
-  //     }
-  //   }
 
   private def tupleMapN[T <: Tuple](genTpl: Tuple.Map[T, Generator]): Generator[T] =
     genTpl

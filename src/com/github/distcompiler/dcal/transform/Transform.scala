@@ -1,7 +1,7 @@
 package com.github.distcompiler.dcal.transform
 
-import cats.kernel.Monoid
-import cats.Comonad
+import cats.*
+import cats.syntax.all.given
 
 @FunctionalInterface
 trait Transform[A, B] {
@@ -16,49 +16,38 @@ object Transform {
       override def apply(from: A): B = trans(from)
     }
 
-  given transformEmptyTupleMonoid[B](using m: Monoid[B]): Transform[EmptyTuple, B] with {
-    override def apply(from: EmptyTuple): B = m.empty
-  }
-
-  given transformTupleMonoid[Ah, At <: Tuple, B](using m: Monoid[B])(using transAh: =>Transform[Ah, B], transAt: =>Transform[At, B]): Transform[Ah *: At, B] with {
-    override def apply(from: Ah *: At): B =
-      m.combine(transAh(from.head), transAt(from.tail))
-  }
-
-  given transformProduct[A <: Product, B](using ev: util.NotGiven[A <:< Tuple])(using mirror: deriving.Mirror.ProductOf[A])(using transTuple: =>Transform[mirror.MirroredElemTypes, B]): Transform[A, B] with {
+  given transformProduct[A <: Product, B](using mirror: deriving.Mirror.ProductOf[A])(using Monoid[B])(using elemTrans: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform[T, B]]]): Transform[A, B] with {
     override def apply(from: A): B =
-      transTuple(Tuple.fromProductTyped(from))
+      (from.productIterator `zip` elemTrans.value.productIterator.asInstanceOf[Iterator[Transform[Any, B]]])
+        .map {
+          case (elem, trans) =>
+            trans(elem)
+        }
+        .foldLeft(Monoid[B].empty)(_ `combine` _)
   }
 
-  given transformProductM[F[_], A <: Product, B](using ev: util.NotGiven[A <:< Tuple])(using comonad: Comonad[F])(using mirror: deriving.Mirror.ProductOf[A])(using transTuple: =>Transform[mirror.MirroredElemTypes, B]): Transform[F[A], B] with {
+  given transformProductK[F[_], A <: Product, B](using Comonad[F])(using mirror: deriving.Mirror.ProductOf[A])(using withoutF: Transform[mirror.MirroredElemTypes, B]): Transform[F[A], B] with {
     override def apply(from: F[A]): B =
-      transTuple(Tuple.fromProductTyped(comonad.extract(from)))
+      withoutF(Tuple.fromProductTyped(from.extract))
   }
 
-  given tupleOfTransformsOneM[F[_], Hd, B](using transHd: =>Transform[F[Hd], B]): Tuple1[Transform[F[Hd], B]] =
-    Tuple1(lzyTrans(transHd))
-
-  given tupleOfTransformsConsM[F[_], Hd, Tl <: NonEmptyTuple, B](using transHd: =>Transform[F[Hd], B], transTl: Tl): (Transform[F[Hd], B] *: Tl) =
-    lzyTrans(transHd) *: transTl
-
-  given transformSumM[F[_], A, B](using mirror: deriving.Mirror.SumOf[A])(using com: Comonad[F])(using tupleOfTrans: =>Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform[F[T], B]]): Transform[F[A], B] with {
-    override def apply(from: F[A]): B =
-      tupleOfTrans.productElement(mirror.ordinal(com.extract(from)))
-        .asInstanceOf[Transform[F[A], B]]
-        .apply(from)
-  }
-
-  given tupleOfTransformsOne[Hd, B](using transHd: =>Transform[Hd, B]): Tuple1[Transform[Hd, B]] =
-    Tuple1(lzyTrans(transHd))
-
-  given tupleOfTransformsCons[Hd, Tl <: NonEmptyTuple, B](using transHd: =>Transform[Hd, B], transTl: Tl): (Transform[Hd, B] *: Tl) =
-    lzyTrans(transHd) *: transTl
-
-  given transformSum[A, B](using mirror: deriving.Mirror.SumOf[A])(using tupleOfTrans: =>Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform[T, B]]): Transform[A, B] with {
+  given transformSum[A, B](using mirror: deriving.Mirror.SumOf[A])(using transElems: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform[T, B]]]): Transform[A, B] with {
     override def apply(from: A): B =
-      tupleOfTrans.productElement(mirror.ordinal(from))
+      transElems.value.productElement(mirror.ordinal(from))
         .asInstanceOf[Transform[A, B]]
         .apply(from)
+  }
+
+  given transformSumK[F[_], A, B](using mirror: deriving.Mirror.SumOf[A])(using Comonad[F])(using transElems: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, [T] =>> SummonFallback.SF[Transform[F[T], B], Transform[T, B]]]]): Transform[F[A], B] with {
+    override def apply(from: F[A]): B =
+      transElems
+        .value
+        .productElement(mirror.ordinal(from.extract))
+        .asInstanceOf[SummonFallback.SF[Transform[F[A], B], Transform[A, B]]]
+        .value match {
+          case Left(unwrappedFn) => unwrappedFn(from.extract)
+          case Right(wrappedFn) => wrappedFn(from)
+        }
   }
 
   given transformList[A, B](using m: Monoid[B])(using aTrans: =>Transform[A, B]): Transform[List[A], B] with {

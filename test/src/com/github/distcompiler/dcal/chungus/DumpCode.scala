@@ -43,8 +43,20 @@ object DumpCode {
 
     def tryToShowTerm(term: Term): Unit =
       term match {
-        case Inlined(_, Nil, term) =>
-          tryToShowTerm(term)
+        case Inlined(_, bindings, term) =>
+          if(bindings.nonEmpty) {
+            put("inlined {")
+            indent()
+            newLine()
+            bindings.foreach { defn =>
+              tryToShowStmt(defn)
+              newLine()
+            }
+            dedent()
+            put("}")
+          } else {
+            tryToShowTerm(term)
+          }
         case Ident(id) => put(id)
         case Literal(const) =>
           put(const.show(using Printer.ConstantCode))
