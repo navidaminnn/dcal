@@ -3,7 +3,7 @@ package test.com.github.distcompiler.dcal
 import scala.collection.immutable.ListMap
 
 import cats.data.Chain
-import cats.Applicative
+import cats.*
 import cats.syntax.all.given
 
 import chungus.*
@@ -82,8 +82,7 @@ class ScopingTests extends munit.FunSuite {
       .toSet
   }
 
-  // TODO: generate well-scoped modules and check them
-  // TODO: and generate otherwise well-scoped modules with one scoping error inserted 
+  // TODO: generate otherwise well-scoped modules with one scoping error inserted 
 
   def generalChecks(requiredReferences: Int, requiredErrors: Int, requiredDefinitions: Int)(moduleGen: Generator[Module]): Unit = {
     moduleGen
@@ -240,9 +239,10 @@ class ScopingTests extends munit.FunSuite {
     given strGen: Generator[String] = anyFromSeq(allNames)
 
     given correctlyScopedOpCall(using validNames: ValidNames): Generator[Expression.OpCall] =
-      (anyFromSeq(validNames.valNames), anyOf[List[Ps[Expression]]]).mapN { (name, args) =>
-        Expression.OpCall(Right(Ps(Path.Name(name))), args)
+      anyFromSeq(validNames.valNames).map { name =>
+        Expression.OpCall(Right(Ps(Path.Name(name))), Nil)
       }
+      // TODO: calls with non-0 arity
 
     given correctlyScopedDefns(using validNames: ValidNames): Generator[List[Ps[Definition]]] = {
       val origValidNames = validNames
@@ -265,15 +265,15 @@ class ScopingTests extends munit.FunSuite {
         }
     }
 
-    given correctlyScopedBinding(using validNames: ValidNames): Generator[Ps[Binding.Call]] =
+    given correctlyScopedBinding(using validNames: ValidNames): Generator[Binding.Call] =
       anyFromSeq(validNames.defNames).andThen { name =>
         anyOf[Ps[Expression]].replicateA(validNames.arity(name)).map { args =>
-          Ps(Binding.Call(Ps(Path.Name(name)), args))
+          Binding.Call(Ps(Path.Name(name)), args)
         }
       }
 
-    given correctlyScopedCall(using validNames: ValidNames): Generator[Ps[Statement.Call]] =
-      anyOf[Ps[Binding.Call]].map(binding => Ps(Statement.Call(binding)))
+    given correctlyScopedCall(using validNames: ValidNames): Generator[Statement.Call] =
+      anyOf[Ps[Binding.Call]].map(binding => Statement.Call(binding))
 
     private def nonScopingStmt(using ValidNames): Generator[Ps[Statement]] =
       anySumOfShape[Statement]
@@ -344,11 +344,28 @@ class ScopingTests extends munit.FunSuite {
     val gens = new CorrectlyScopedGens(maxDefns = 1)
     given ValidNames = ValidNames.empty
 
+    import Checker.*
     import gens.given
     anyOf[Module]
       .toChecker
       .withPrintExamples(printExamples = false)
       .exists(_.definitions.exists(_.value.params.size >= 1))
+      .exists { module =>
+        given involvesStr: Transform[String, Involves.T] = _ => Monoid[Involves.T].empty
+        given involvesBigInt: Transform[BigInt, Involves.T] = _ => Monoid[Involves.T].empty
+
+        // contain at least 2 sequential stmts, and at least depth 2 of nested exprs
+        module
+          .involves[List[Ps[Statement]]] {
+            case lst => Involves.fromBoolean(lst.size >= 2)
+          }
+          .value
+        || module
+          .involves[Expression] { expr =>
+            expr.involvesBeyondSum[Expression](_ => Involves.`true`)
+          }
+          .value
+      }
       .transform { module =>
         val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
         (module, info)

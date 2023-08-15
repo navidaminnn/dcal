@@ -81,10 +81,6 @@ object Scoping {
     override def apply(from: String): Scoping[Unit] = Scoping.unit
   }
 
-  private given psStringIsEmpty: Transform[Ps[String], Scoping[Unit]] with {
-    override def apply(from: Ps[String]): Scoping[Unit] = Scoping.unit
-  }
-
   private given bigIntIsEmpty: Transform[BigInt, Scoping[Unit]] with {
     override def apply(from: BigInt): Scoping[Unit] = Scoping.unit
   }
@@ -153,11 +149,6 @@ object Scoping {
   def scopeStatement(statement: Ps[Statement])(using ScopingContext): Scoping[Unit] =
     Transform[Ps[Statement], Scoping[Unit]](statement)
 
-  given scopeOtherPs[T](using trans: =>Transform[T, Scoping[Unit]]): Transform[Ps[T], Scoping[Unit]] with {
-    override def apply(from: Ps[T]): Scoping[Unit] =
-      trans(from.value)
-  }
-
   given scopeBindingCall(using ScopingContext): Transform[Ps[Binding.Call], Scoping[Unit]] with {
     override def apply(from: Ps[Binding.Call]): Scoping[Unit] = {
       val Ps(Binding.Call(path, arguments)) = from
@@ -212,28 +203,22 @@ object Scoping {
     }
   }
 
-  given scopeStatements(using ScopingContext): Transform[List[Ps[Statement]], Scoping[Unit]] with {
-    override def apply(from: List[Ps[Statement]]): Scoping[Unit] = {
-      from match {
-        case Nil => Scoping.unit
-        case stmt :: restStmts =>
-          def scopeLetVar(name: String, binding: Ps[Binding], defn: Ps[Def]): Scoping[Unit] = {
-            val newCtx = ctx.withDefs(Map(name -> defn))
-            for {
-              _ <- scopeBinding(binding)
-              _ <- restStmts.traverse_(scopeStatement(_)(using newCtx))
-            } yield ()
-          }
-
-          stmt match {
-            case defn @ Ps(d @ Statement.Let(name, binding)) =>
-              scopeLetVar(name.value, binding, defn.map(_ => d))
-            case defn @ Ps(d @ Statement.Var(name, binding)) =>
-              scopeLetVar(name.value, binding, defn.map(_ => d))
-            case _ =>
-              Monoid.combine(scopeStatement(stmt), scopeStatements(restStmts))
-          }
-      }
+  given scopeStatements(using ScopingContext): Transform[List[Ps[Statement]], Scoping[Unit]] = {
+    def scopeLetVar(name: String, binding: Ps[Binding], defn: Ps[Def], restStmts: List[Ps[Statement]]): Scoping[Unit] = {
+      val newCtx = ctx.withDefs(Map(name -> defn))
+      for {
+        _ <- scopeBinding(binding)
+        _ <- restStmts.traverse_(scopeStatement(_)(using newCtx))
+      } yield ()
     }
+
+    Transform
+      .transformList[Ps[Statement], Scoping[Unit]]
+      .refine {
+        case (defn @ Ps(d @ Statement.Let(name, binding))) :: restStmts =>
+          scopeLetVar(name.value, binding, defn.map(_ => d), restStmts)
+        case (defn @ Ps(d @ Statement.Var(name, binding))) :: restStmts =>
+          scopeLetVar(name.value, binding, defn.map(_ => d), restStmts)
+      }
   }
 }

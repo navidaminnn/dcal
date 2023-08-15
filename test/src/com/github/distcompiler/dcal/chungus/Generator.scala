@@ -390,4 +390,14 @@ object Generator {
         .reduceOption(_ `combineK` _)
         .getOrElse(Empty())
     }
+
+  given anySumK[F[_], T](using mirror: deriving.Mirror.SumOf[T])(using partGensK: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, [TT] =>> Generator[F[TT]]]]): Generator[F[T]] =
+    lzy {
+      partGensK
+        .value
+        .productIterator
+        .map(_.asInstanceOf[Generator[F[T]]])
+        .reduceOption(_ `combineK` _)
+        .getOrElse(Empty())
+    }
 }
