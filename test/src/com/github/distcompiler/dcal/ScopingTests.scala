@@ -345,24 +345,20 @@ class ScopingTests extends munit.FunSuite {
     given ValidNames = ValidNames.empty
 
     import Checker.*
+    given involvesStr: Transform[String, Involves.T] = _ => Monoid[Involves.T].empty
+    given involvesBigInt: Transform[BigInt, Involves.T] = _ => Monoid[Involves.T].empty
+    import Transform.given Transform[List[?], ?]
+
     import gens.given
     anyOf[Module]
       .toChecker
       .withPrintExamples(printExamples = false)
       .exists(_.definitions.exists(_.value.params.size >= 1))
       .exists { module =>
-        given involvesStr: Transform[String, Involves.T] = _ => Monoid[Involves.T].empty
-        given involvesBigInt: Transform[BigInt, Involves.T] = _ => Monoid[Involves.T].empty
-
-        // contain at least 2 sequential stmts, and at least depth 2 of nested exprs
+        // contains at least 2 sequential stmts
         module
           .involves[List[Ps[Statement]]] {
             case lst => Involves.fromBoolean(lst.size >= 2)
-          }
-          .value
-        || module
-          .involves[Expression] { expr =>
-            expr.involvesBeyondSum[Expression](_ => Involves.`true`)
           }
           .value
       }

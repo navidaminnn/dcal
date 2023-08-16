@@ -213,7 +213,7 @@ object Scoping {
     }
 
     Transform
-      .transformList[Ps[Statement], Scoping[Unit]]
+      .combineFoldable[List, Ps[Statement], Scoping[Unit]]
       .refine {
         case (defn @ Ps(d @ Statement.Let(name, binding))) :: restStmts =>
           scopeLetVar(name.value, binding, defn.map(_ => d), restStmts)

@@ -70,16 +70,6 @@ enum Generator[T] {
     Checker.fromGenerator(this)
 
   def examplesIterator: Iterator[Example[Option[T]]] = {
-    extension [A](self: LazyList[A]) def zipIorLazyLists[B](other: LazyList[B]): LazyList[Ior[A, B]] =
-      (self, other) match {
-        case (selfHead #:: selfTail, otherHead #:: otherTail) =>
-          Ior.Both(selfHead, otherHead) #:: (selfTail `zipIorLazyLists` otherTail)
-        case (LazyList(), other) =>
-          other.map(Ior.Right(_))
-        case (self, LazyList()) =>
-          self.map(Ior.Left(_))
-      }
-
     extension [A](self: Iterator[A]) def zipIorIterators[B](other: Iterator[B]): Iterator[Ior[A, B]] =
       new Iterator[Ior[A, B]] {
         override def hasNext: Boolean = self.hasNext || other.hasNext
@@ -258,6 +248,25 @@ enum Generator[T] {
           ++ Iterator.single(Example(None, maxDepth = depth))
       }
   }
+
+  def isSatisfiedBy(example: T): Boolean = {
+    def impl[T](self: Generator[T], example: T): Boolean =
+      self match {
+        case Empty() => false
+        case Singleton(value) => ??? // value == example
+        case Selection(values) => ??? // values.contains(example)
+        case Log(gen, label) => impl(gen, example)
+        case Pay(genFn) => impl(genFn(), example)
+        case Filter(self, pred) =>
+          pred(example) && impl(self, example)
+        case Disjunction(left, right) =>
+          impl(left, example) || impl(right, example)
+        case Ap(transform, self) => ???
+        case AndThen(self, fn) => ???
+      }
+
+    impl(this, example)
+  }
 }
 
 object Generator {
@@ -352,7 +361,10 @@ object Generator {
   def consOf[T](genHd: Generator[T], genTl: Generator[List[T]]): Generator[List[T]] =
     (genHd, genTl).mapN(_ :: _)
 
-  given anyListOf[T](using gen: Generator[T]): Generator[List[T]] = listOf(gen)
+  given anyAlternative[F[_], T](using Alternative[F])(using gen: Generator[T]): Generator[F[T]] =
+    unfoldLevels() { level =>
+      gen.replicateA(level).map(_.foldMapK(_.pure))
+    }
 
   private def tupleMapN[T <: Tuple](genTpl: Tuple.Map[T, Generator]): Generator[T] =
     genTpl

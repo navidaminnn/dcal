@@ -21,12 +21,17 @@ object Transform {
       override def apply(from: A): B = trans(from)
     }
 
-  given transformList[A, B](using m: Monoid[B])(using aTrans: =>Transform[A, B]): Transform[List[A], B] with {
-    override def apply(from: List[A]): B =
-      m.combineAll(from.iterator.map(aTrans.apply))
+  given combineFoldable[F[_], A, B](using Foldable[F], Monoid[B])(using aTrans: Transform[A, B]): Transform[F[A], B] with {
+    override def apply(from: F[A]): B =
+      from.foldMap(aTrans.apply)
   }
 
-  given transformProduct[A <: Product, B](using mirror: deriving.Mirror.ProductOf[A])(using Monoid[B])(using elemTrans: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform[T, B]]]): Transform[A, B] with {
+  given mapFunctor[F[_], A, B](using Functor[F])(using aTrans: Transform[A, B]): Transform[F[A], F[B]] with {
+    override def apply(from: F[A]): F[B] =
+      from.map(aTrans.apply)
+  }
+
+  given combineProduct[A <: Product, B](using mirror: deriving.Mirror.ProductOf[A])(using Monoid[B])(using elemTrans: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform[T, B]]]): Transform[A, B] with {
     override def apply(from: A): B =
       (from.productIterator `zip` elemTrans.value.productIterator.asInstanceOf[Iterator[Transform[Any, B]]])
         .map {
@@ -36,36 +41,45 @@ object Transform {
         .foldLeft(Monoid[B].empty)(_ `combine` _)
   }
 
-  given transformProductK[F[_], A <: Product, B](using Comonad[F])(using mirror: deriving.Mirror.ProductOf[A])(using withoutF: Transform[mirror.MirroredElemTypes, B]): Transform[F[A], B] with {
-    override def apply(from: F[A]): B =
-      withoutF(Tuple.fromProductTyped(from.extract))
-  }
-
-  given transformSum[A, B](using mirror: deriving.Mirror.SumOf[A])(using transElems: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform[T, B]]]): Transform[A, B] with {
-    override def apply(from: A): B =
-      transElems.value.productElement(mirror.ordinal(from))
-        .asInstanceOf[Transform[A, B]]
-        .apply(from)
-  }
-
-  final class TransformSumK[F[_], A, B](val transform: Transform[F[A], B])
-
-  given transformSumK[F[_], A, B](using mirror: deriving.Mirror.SumOf[A])(using Comonad[F])(using transElems: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, [T] =>> SummonFallback.SF[Transform[F[T], B], Transform[T, B]]]]): TransformSumK[F, A, B] =
-    TransformSumK {
-      new Transform[F[A], B] {
-        override def apply(from: F[A]): B =
-          transElems
-            .value
-            .productElement(mirror.ordinal(from.extract))
-            .asInstanceOf[SummonFallback.SF[Transform[F[A], B], Transform[A, B]]]
-            .value match {
-              case Left(unwrappedFn) => unwrappedFn(from.extract)
-              case Right(wrappedFn) => wrappedFn(from)
+  given rewriteProduct[A <: Product](using mirror: deriving.Mirror.ProductOf[A])(using elemTrans: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform[T, T]]]): Transform[A, A] with {
+    override def apply(from: A): A =
+      mirror.fromTuple {
+        Tuple.fromArray {
+          (from.productIterator `zip` elemTrans.value.productIterator.asInstanceOf[Iterator[Transform[Any, Any]]])
+            .map {
+              case (elem, trans) =>
+                trans(elem)
             }
+            .toArray
+        }
+        .asInstanceOf[mirror.MirroredElemTypes]
       }
-    }
+  }
 
-  given transformMaybeSumK[F[_], A, B](using Comonad[F])(using eitherOr: SummonFallback.SF[TransformSumK[F, A, B], Transform[A, B]]): Transform[F[A], B] =
+  given transformSum[A, B](using tSumK: TSumK[Id, A, B]): Transform[A, B] with {
+    override def apply(from: A): B =
+      tSumK.transform(from)
+  }
+
+  final class TSumK[F[_], A, B](val transform: Transform[F[A], B])
+  object TSumK {
+    given instance[F[_], A, B](using mirror: deriving.Mirror.SumOf[A])(using Comonad[F])(using transElems: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, [T] =>> SummonFallback.SF[Transform[F[T], B], Transform[T, B]]]]): TSumK[F, A, B] =
+      TSumK {
+        new Transform[F[A], B] {
+          override def apply(from: F[A]): B =
+            transElems
+              .value
+              .productElement(mirror.ordinal(from.extract))
+              .asInstanceOf[SummonFallback.SF[Transform[F[A], B], Transform[A, B]]]
+              .value match {
+                case Left(unwrappedFn) => unwrappedFn(from.extract)
+                case Right(wrappedFn) => wrappedFn(from)
+              }
+        }
+      }
+  }
+
+  given extractComonad[F[_], A, B](using Comonad[F])(using eitherOr: SummonFallback.SF[TSumK[F, A, B], Transform[A, B]]): Transform[F[A], B] =
     eitherOr.value match {
       case Left(transInner) =>
         new Transform[F[A], B] {
@@ -74,4 +88,9 @@ object Transform {
         }
       case Right(transSumK) => transSumK.transform
     }
+
+  given coflatMap[F[_], A, B](using CoflatMap[F])(using transFn: Transform[F[A], B]): Transform[F[A], F[B]] with {
+    override def apply(from: F[A]): F[B] =
+      from.coflatMap(transFn.apply)
+  }
 }
