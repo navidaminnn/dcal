@@ -15,3 +15,7 @@ final case class SourceLocation(path: String, offsetStart: Int, offsetEnd: Int) 
     )
   }
 }
+
+object SourceLocation {
+  def fileStart(path: String, offsetStart: Int = 0): SourceLocation = SourceLocation(path = path, offsetStart, offsetStart)
+}

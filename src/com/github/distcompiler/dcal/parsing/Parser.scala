@@ -5,7 +5,9 @@ import cats.*
 import cats.data.Chain
 import cats.syntax.all.given
 
-abstract class Parser[Elem, Input, Error: Semigroup, +T](using inputOps: InputOps[Elem, Input])(using ops: Parser.Ops[Elem, Input, Error]) { self =>
+import com.github.distcompiler.dcal.util.EvalList
+
+abstract class Parser[Elem, Input, Error: Semigroup, +T](using ops: Parser.Ops[Elem, Input, Error]) { self =>
   import Parser.*
   import ops.*
 
@@ -18,18 +20,21 @@ abstract class Parser[Elem, Input, Error: Semigroup, +T](using inputOps: InputOp
       case Result.Fatal(error, _) => Left(error)
     }    
 
-  final def parseAll(input: Input): Iterator[Either[Error, T]] =
-    Iterator.unfold(Some(input): Option[Input]) {
-      case None => None
-      case Some(input) =>
-        // parse EOF here, because that's the most reasonable way to check for EOF,
-        // in which case we happily end parsing
-        (self.left | eof.right).parse(input) match {
-          case Left(error) => Some((Left(error), None)) // and this is why input is an option, so we can bail one step later
-          case Right((Right(()), _)) => None
-          case Right((Left(value), nextInput)) => Some((Right(value), Some(nextInput)))
-        }
-    }
+  final def parseAll(input: Input): EvalList[Either[Error, T]] = {
+    def impl(input: Input): EvalList[Either[Error, T]] =
+      // parse EOF here, because that's the most reasonable way to check for EOF,
+      // in which case we happily end parsing
+      (self.left | eof.right).parse(input) match {
+        case Left(error) => EvalList.singleNow(Left(error))
+        case Right((Right(()), _)) => EvalList.empty
+        case Right((Left(value), nextInput)) => Right(value) +: impl(nextInput)
+      }
+
+    impl(input)
+  }
+
+  final def widenK[F[_], U, S >: U](using ev: T <:< F[U])(using Functor[F]): P[F[S]] =
+    self.map { v => ev(v).widen }
 
   final def map[U](fn: T => U): P[U] =
     self.flatMap(value => trivial(fn(value)))
@@ -216,7 +221,7 @@ object Parser {
     infix def ~[B](b: B): A ~ B = new ~(a, b)
   }
 
-  final class Ops[Elem, Input, Error: Semigroup](using inputOps: InputOps[Elem, Input])(using errorOps: ErrorOps[Elem, Input, Error]) {
+  final class Ops[Elem, Input, Error: Semigroup](using inputOps: InputOps[Elem, Input, Error])(using errorOps: ErrorOps[Elem, Error]) {
     given ops: Ops[Elem, Input, Error] = this // need this or we'll allocate too many new ops, including recursively
     import Parser.Result
     type P[T] = Parser[Elem, Input, Error, T]
@@ -238,9 +243,14 @@ object Parser {
     val eof: P[Unit] =
       P { (progressIdx, input) =>
         inputOps.read(input) match {
-          case None => Eval.now(Result.Ok((), input, progressIdx, None))
-          case Some((actualElem, _)) =>
-            Eval.now(Result.Backtrack(errorOps.expectedEOF(input = input, actualElem = actualElem), progressIdx))
+          case Left(err) => Eval.now(Result.Fatal(err, progressIdx))
+          case Right(None) => Eval.now(Result.Ok((), input, progressIdx, None))
+          case Right(Some((actualElem, nextInput))) =>
+            Eval.now(Result.Backtrack(
+              errorOps.expectedEOF(
+                sourceLocation = inputOps.lastSourceLocation(nextInput),
+                actualElem = actualElem),
+              progressIdx))
         }
       }
 
@@ -250,9 +260,10 @@ object Parser {
     val anyElem: P[Elem] =
       P { (progressIdx, input) =>
         inputOps.read(input) match {
-          case None =>
-            Eval.now(Result.Backtrack(errorOps.unexpectedEOF(input), progressIdx))
-          case Some((elem, nextInput)) =>
+          case Left(err) => Eval.now(Result.Fatal(err, progressIdx))
+          case Right(None) =>
+            Eval.now(Result.Backtrack(errorOps.unexpectedEOF(inputOps.nextSourceLocation(input)), progressIdx))
+          case Right(Some((elem, nextInput))) =>
             Eval.now(Result.Ok(elem, nextInput, progressIdx + 1, None))
         }
       }
@@ -302,45 +313,16 @@ object Parser {
     def rep1sep[T](elem: P[T], sep: P[?])(using sourcecode.Enclosing): P[Chain[T]] =
       elem.flatMap(firstValue => rep(sep ~>? elem).map(firstValue +: _))
 
-    def capturingPosition[T](parser: P[T])(using capturePrePosition: =>CapturePrePosition[Elem, Input]): P[(T, SourceLocation)] =
+    def capturingPosition[T](parser: P[T]): P[(T, SourceLocation)] =
       for {
-        prePos <- input.map(capturePrePosition.capture)
+        prePos <- input.map(inputOps.nextSourceLocation)
         value <- parser
-        postPos <- input.map(inputOps.getPrevSourceLocation)
+        postPos <- input.map(inputOps.lastSourceLocation)
       } yield (value, prePos.combine(postPos))
   }
 
   object Ops {
-    def apply[Elem, Input, Error: Semigroup](using inputOps: InputOps[Elem, Input])(using errorOps: ErrorOps[Elem, Input, Error]): Ops[Elem, Input, Error] =
+    def apply[Elem, Input, Error: Semigroup](using inputOps: InputOps[Elem, Input, Error])(using errorOps: ErrorOps[Elem, Error]): Ops[Elem, Input, Error] =
       new Ops
-  }
-
-  trait CapturePrePosition[Elem, Input] {
-    def capture(input: Input): SourceLocation
-  }
-
-  object CapturePrePosition {
-    given capturePrePositionChar[Input](using inputOps: InputOps[Char, Input]): CapturePrePosition[Char, Input] with {
-      override def capture(input: Input): SourceLocation = {
-        val SourceLocation(path, startOffset, endOffset) = inputOps.getPrevSourceLocation(input)
-        SourceLocation(path, startOffset + 1, endOffset + 1)
-      }
-    }
-
-    given capturePrePositionSourceLocated[Elem, Input](using inputOps: InputOps[Ps[Elem], Input]): CapturePrePosition[Ps[Elem], Input] with {
-      override def capture(input: Input): SourceLocation =
-        inputOps.read(input)
-          .map(_._1.sourceLocation)
-          .getOrElse(inputOps.getPrevSourceLocation(input))
-    }
-
-    given capturePrePositionEitherSourceLocated[Error, Elem, Input](using inputOps: InputOps[Either[Error, Ps[Elem]], Input]): CapturePrePosition[Either[Error, Ps[Elem]], Input] with {
-      override def capture(input: Input): SourceLocation =
-        inputOps.read(input)
-          .map(_._1)
-          .flatMap(_.toOption)
-          .map(_.sourceLocation)
-          .getOrElse(inputOps.getPrevSourceLocation(input))
-    }
   }
 }

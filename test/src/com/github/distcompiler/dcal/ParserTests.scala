@@ -4,6 +4,7 @@ import cats.data.Chain
 import cats.syntax.all.given
 
 import chungus.*
+import com.github.distcompiler.dcal.util.EvalList
 import com.github.distcompiler.dcal.transform.Transform
 import com.github.distcompiler.dcal.{AST, Tokenizer, Parser, Token, Punctuation, Keyword, BinaryOperator}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
@@ -218,10 +219,11 @@ class ParserTests extends munit.FunSuite {
       .forall {
         case (expectedModule, tokens) =>
           val result = Parser(
-            tokens
-              .iterator
-              .map(Ps(_))
-              .map(Right(_)),
+            EvalList.fromIterableOnce(
+              tokens
+                .iterator
+                .map(Ps(_))
+                .map(Right(_))),
             path = "<dummy>",
           )
               
@@ -241,14 +243,15 @@ class ParserTests extends munit.FunSuite {
   }
   
   test("to tokens and back (focus on one definition)") {
-    given Transform[String, Involves.T] = _ => Involves.`false`
-    given Transform[BigInt, Involves.T] = _ => Involves.`false`
-    given [T](using trans: Transform[T, Involves.T]): Transform[Ps[T], Involves.T] =
-      ps => trans(ps.value)
+    given Transform[String, Involves.T] = Transform.fromFn(_ => Involves.`false`)
+    given Transform[BigInt, Involves.T] = Transform.fromFn(_ => Involves.`false`)
 
     toTokensAndBack {
       given anyDefns: Generator[List[Ps[Definition]]] =
         listOf(anyOf[Ps[Definition]], limit = 1)
+
+      given anyDefParams: Generator[List[Ps[DefParam]]] =
+        listOf(anyOf[Ps[DefParam]], limit = 2)
 
       anyOf[Module]
     } { checker =>
@@ -257,16 +260,16 @@ class ParserTests extends munit.FunSuite {
           case (module, _) =>
             // make sure we generate at least one level of nesting for exprs (same for stmts below)
             module
-              .involves[Expression] { expr =>
-                expr.involvesBeyondSum[Expression](_ => Involves.`true`)
+              .involves[Ps[Expression]] { expr =>
+                expr.value.involvesBeyondSum[Ps[Expression]](_ => Involves.`true`)
               }
               .value
         }
         .exists {
           case (module, _) =>
             module
-              .involves[Statement] { stmt =>
-                stmt.involvesBeyondSum[Statement](_ => Involves.`true`)
+              .involves[Ps[Statement]] { stmt =>
+                stmt.value.involvesBeyondSum[Ps[Statement]](_ => Involves.`true`)
               }
               .value
         }

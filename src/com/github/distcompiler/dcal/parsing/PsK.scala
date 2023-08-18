@@ -6,9 +6,6 @@ final case class PsK[T](value: T, sourceLocation: SourceLocation) {
   def map[U](fn: T => U): PsK[U] =
     copy(value = fn(value))
 
-  def up[U >: T]: PsK[U] =
-    map(v => v: U)
-
   def toPs: Ps[T] =
     Ps(value)(using sourceLocation)
 }

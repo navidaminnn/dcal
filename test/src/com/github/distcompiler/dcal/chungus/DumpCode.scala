@@ -90,9 +90,14 @@ object DumpCode {
         case TypeApply(term, args) =>
           tryToShowTerm(term)
           put("[")
+          var first = true
           args.foreach { tpe =>
-            put("?")
-            put(",")
+            if(first) {
+              first = false
+            } else {
+              put(",")
+            }
+            put(tpe.tpe.show(using Printer.TypeReprShortCode))
             //newLine()
           }
           put("]")
@@ -100,6 +105,9 @@ object DumpCode {
           put("new ")
           put(tpe.tpe.show(using Printer.TypeReprShortCode))
           //tryToShowTypeTree(tpe)
+        case Closure(name, _) =>
+          put("closure ")
+          tryToShowTerm(name)
         case Block(Nil, v) =>
           tryToShowTerm(v)
         case Block(stmts, v) =>
@@ -194,6 +202,8 @@ object DumpCode {
             put(" = ")
             tryToShowTerm(body)
           }
+        case term: Term =>
+          tryToShowTerm(term)
         case _ =>
           report.error(s"${builder.result()}\n\nTODO: $stmt")
       }

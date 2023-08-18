@@ -16,6 +16,7 @@ object dcal extends RootModule with ScalaModule {
     ivy"com.lihaoyi::pprint:0.8.1",
     ivy"com.lihaoyi::fansi:0.4.0",
     ivy"org.typelevel::cats-core:2.9.0",
+    ivy"org.typelevel::alleycats-core:2.9.0",
     ivy"org.typelevel::kittens:3.0.0",
   )
 

@@ -1,6 +1,6 @@
 package test.com.github.distcompiler.dcal.chungus
 
-import com.github.distcompiler.dcal.transform.SummonTuple
+import com.github.distcompiler.dcal.util.{SummonTuple, EvalList}
 
 import scala.annotation.targetName
 import scala.util.Try
@@ -88,9 +88,9 @@ enum Generator[T] {
         case Empty() =>
           EvalList.empty
         case Singleton(value) =>
-          EvalList.Cons(Eval.now(Eval.always(Iterator.single(value))), Eval.now(EvalList.empty))
+          EvalList.singleNow(Eval.always(Iterator.single(value)))
         case Selection(values) =>
-          EvalList.Cons(Eval.now(Eval.always(values.iterator)), Eval.now(EvalList.empty))
+          EvalList.singleNow(Eval.always(values.iterator))
         case Log(gen, label) =>
           impl(gen)
             .zipWithIndex
@@ -105,17 +105,18 @@ enum Generator[T] {
                 }
             }
         case Pay(genFn) =>
-          EvalList.Cons(Eval.now(Eval.always(Iterator.empty)), Eval.later(impl(genFn())))
+          Eval.always(Iterator.empty) +: impl(genFn())
         case Filter(self, pred) =>
           impl(self)
             .map(iterFn => iterFn.map(_.filter(pred)))
         case Disjunction(left, right) =>
-          (impl(left) `zipIor` impl(right)).map {
-            case Ior.Left(leftIterFn) => leftIterFn
-            case Ior.Right(rightIterFn) => rightIterFn
-            case Ior.Both(leftIterFn, rightIterFn) =>
-              leftIterFn.map2(rightIterFn)(_ ++ _)
-          }
+          (impl(left) `zipIor` impl(right))
+            .map {
+              case Ior.Left(leftIterFn) => leftIterFn
+              case Ior.Right(rightIterFn) => rightIterFn
+              case Ior.Both(leftIterFn, rightIterFn) =>
+                leftIterFn.map2(rightIterFn)(_ ++ _)
+            }
         case ap: Ap[tt, T] =>
           val selfIterFns = impl(ap.self)
           val transIterFns = impl(ap.transform)
@@ -162,77 +163,83 @@ enum Generator[T] {
           val fn = andThen.fn
 
           def weave(selfElems: EvalList[Eval[Iterator[tt]]], existingDepthList: EvalList[Eval[Iterator[T]]]): EvalList[Eval[Iterator[T]]] =
-            selfElems match {
-              case EvalList.Nil => existingDepthList
-              case selfElems @ (EvalList.Single(_) | EvalList.Cons(_, _)) =>
-                val (iterFn, deeperIterFns) =
-                  selfElems match {
-                    case EvalList.Single(value) => (value, Eval.now(EvalList.Nil))
-                    case EvalList.Cons(head, tail) => (head, tail)
-                  }
-
-                var nextIterBufferUsed = false
-                var reachedIdx = -1
-                val nextIterBuffer = mutable.ListBuffer.empty[Eval[EvalList[Eval[Iterator[T]]]]]
-
-                val (currentExistingIter, nextExistingDepthList) =
-                  existingDepthList match {
-                    case EvalList.Nil => (Eval.always(Iterator.empty), Eval.now(EvalList.Nil))
-                    case EvalList.Single(value) => (value.flatten, Eval.now(EvalList.Nil))
-                    case EvalList.Cons(head, tail) => (head.flatten, tail)
-                  }
-
-                val currentAdditionalIter =
-                  iterFn
-                    .flatMap { iterFn =>
-                      iterFn.map { iter =>
-                        iter
-                          .zipWithIndex
-                          .flatMap {
-                            case (value, idx) =>
-                              val result = impl(fn(value)) match {
-                                case EvalList.Nil => Iterator.empty
-                                case EvalList.Single(value) =>
-                                  value.flatten.value
-                                case EvalList.Cons(iter, nextIters) =>
-                                  // note: do not under any circumstance evaluate nextIters!
-                                  // doing that will make the assert below fail, because it breaks
-                                  // the invariant: we will always exhaust shallower iters before
-                                  // asking for deeper ones
-                                  if(reachedIdx < idx) {
-                                    assert(!nextIterBufferUsed)
-                                    nextIterBuffer += nextIters
-                                  }
-                                  iter.flatten.value
-                              }
-                              
-                              reachedIdx = idx `max` reachedIdx
-                              result
-                          }
-                      }
+            selfElems
+              .asEvalCell
+              .flatMap {
+                case EvalList.Cell.Nil => existingDepthList.asEvalCell
+                case selfElems @ (EvalList.Cell.Single(_) | EvalList.Cell.Cons(_, _)) =>
+                  val (iterFn, nextSelfElems) =
+                    selfElems match {
+                      case EvalList.Cell.Single(value) => (value, EvalList.empty)
+                      case EvalList.Cell.Cons(head, tail) => (head, tail)
                     }
 
-                EvalList.Cons(
-                  Eval.now(currentExistingIter.map2(currentAdditionalIter)(_ ++ _)),
-                  for {
-                    _ <- Eval.later { nextIterBufferUsed = true }
-                    tail <- nextIterBuffer
-                      .foldLeft(nextExistingDepthList)({ (acc, list) =>
-                        acc.map2(list) { (acc: EvalList[Eval[Iterator[T]]], list: EvalList[Eval[Iterator[T]]]) =>
-                          (acc `zipIor` list).map {
-                            case Ior.Both(left, right) => left.map2(right)(_ ++ _)
-                            case Ior.Left(iter) => iter
-                            case Ior.Right(iter) => iter
-                          }
-                        }
-                      })
-                      .map2(deeperIterFns) { (nextExistingDepthList, nextSelfElems) => 
-                        weave(nextSelfElems, nextExistingDepthList)
-                      }
-                      .memoize
-                  } yield tail,
-                )
-            }
+                  existingDepthList
+                    .asEvalCell
+                    .map {
+                      case EvalList.Cell.Nil => (Eval.always(Iterator.empty), EvalList.empty)
+                      case EvalList.Cell.Single(value) => (value.flatten, EvalList.empty)
+                      case EvalList.Cell.Cons(head, tail) => (head.flatten, tail)
+                    }
+                    .flatMap {
+                      case (currentExistingIter, nextExistingDepthList) =>
+                        var nextIterBufferUsed = false
+                        var reachedIdx = -1
+                        val nextIterBuffer = mutable.ListBuffer.empty[EvalList[Eval[Iterator[T]]]]
+
+                        val currentAdditionalIter =
+                          iterFn
+                            .flatMap { iterFn =>
+                              iterFn.map { iter =>
+                                iter
+                                  .zipWithIndex
+                                  .flatMap {
+                                    case (value, idx) =>
+                                      val result = impl(fn(value)).cell match {
+                                        case EvalList.Cell.Nil => Iterator.empty
+                                        case EvalList.Cell.Single(value) =>
+                                          value.flatten.value
+                                        case EvalList.Cell.Cons(iter, nextIters) =>
+                                          // note: do not under any circumstance evaluate nextIters!
+                                          // doing that will make the assert below fail, because it breaks
+                                          // the invariant: we will always exhaust shallower iters before
+                                          // asking for deeper ones
+                                          if(reachedIdx < idx) {
+                                            assert(!nextIterBufferUsed)
+                                            nextIterBuffer += nextIters
+                                          }
+                                          iter.flatten.value
+                                      }
+                                      
+                                      reachedIdx = idx `max` reachedIdx
+                                      result
+                                  }
+                              }
+                            }
+
+                        (currentExistingIter.map2(currentAdditionalIter)(_ ++ _) +: {
+                          val nextDepthList =
+                            Eval.defer {
+                              nextIterBufferUsed = true
+                              nextIterBuffer
+                                .foldLeft(nextExistingDepthList)({ (acc, list) =>
+                                  (acc `zipIor` list).map {
+                                    case Ior.Both(left, right) => left.map2(right)(_ ++ _)
+                                    case Ior.Left(iter) => iter
+                                    case Ior.Right(iter) => iter
+                                  }
+                                })
+                                .asEvalCell
+                            }
+                            .memoize
+                            .asEvalList
+                          
+                          weave(nextSelfElems, nextDepthList).memoize
+                        })
+                          .asEvalCell
+                    }
+              }
+              .asEvalList
 
           weave(impl(self), EvalList.empty)
       }
@@ -247,25 +254,6 @@ enum Generator[T] {
           }
           ++ Iterator.single(Example(None, maxDepth = depth))
       }
-  }
-
-  def isSatisfiedBy(example: T): Boolean = {
-    def impl[T](self: Generator[T], example: T): Boolean =
-      self match {
-        case Empty() => false
-        case Singleton(value) => ??? // value == example
-        case Selection(values) => ??? // values.contains(example)
-        case Log(gen, label) => impl(gen, example)
-        case Pay(genFn) => impl(genFn(), example)
-        case Filter(self, pred) =>
-          pred(example) && impl(self, example)
-        case Disjunction(left, right) =>
-          impl(left, example) || impl(right, example)
-        case Ap(transform, self) => ???
-        case AndThen(self, fn) => ???
-      }
-
-    impl(this, example)
   }
 }
 
@@ -308,8 +296,8 @@ object Generator {
     Pay(() => lzyGen)
   }
 
-  extension [T](inline gen: Generator[T]) inline def dumpCode_! : Generator[T] =
-    ${ DumpCode.impl('gen) }
+  extension [T](inline value: T) inline def dumpCode_! : T =
+    ${ DumpCode.impl('value) }
 
   type TupleExcluding[T, Tpl <: Tuple] <: Tuple = Tpl match {
     case (T *: tl) => tl
@@ -319,7 +307,7 @@ object Generator {
   final class AnySumOfShape[Top, Tpl <: Tuple] {
     def excluding[TT]: AnySumOfShape[Top, TupleExcluding[Generator[TT], Tpl]] = new AnySumOfShape
 
-    def summon(using partGens: =>SummonTuple.ST[Tpl]): Generator[Top] =
+    def summon(using partGens: =>SummonTuple[Tpl]): Generator[Top] =
       lzy {
         partGens
           .value
@@ -375,7 +363,7 @@ object Generator {
       }
       .asInstanceOf[Generator[T]]
 
-  given anyProduct[T](using mirror: deriving.Mirror.ProductOf[T])(using mirror.MirroredElemLabels <:< NonEmptyTuple)(using elemGens: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, Generator]]): Generator[T] =
+  given anyProduct[T](using mirror: deriving.Mirror.ProductOf[T])(using mirror.MirroredElemLabels <:< NonEmptyTuple)(using elemGens: =>SummonTuple[Tuple.Map[mirror.MirroredElemTypes, Generator]]): Generator[T] =
     lzy {
       tupleMapN(elemGens.value)
         .map { parts =>
@@ -393,7 +381,7 @@ object Generator {
   given anyEmptyProduct[T](using mirror: deriving.Mirror.ProductOf[T])(using EmptyTuple =:= mirror.MirroredElemTypes): Generator[T] =
     mirror.fromTuple(EmptyTuple).pure
 
-  given anySum[T](using mirror: deriving.Mirror.SumOf[T])(using partGens: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, Generator]]): Generator[T] =
+  given anySum[T](using mirror: deriving.Mirror.SumOf[T])(using partGens: =>SummonTuple[Tuple.Map[mirror.MirroredElemTypes, Generator]]): Generator[T] =
     lzy {
       partGens
         .value
@@ -403,7 +391,7 @@ object Generator {
         .getOrElse(Empty())
     }
 
-  given anySumK[F[_], T](using mirror: deriving.Mirror.SumOf[T])(using partGensK: =>SummonTuple.ST[Tuple.Map[mirror.MirroredElemTypes, [TT] =>> Generator[F[TT]]]]): Generator[F[T]] =
+  given anySumK[F[_], T](using mirror: deriving.Mirror.SumOf[T])(using partGensK: =>SummonTuple[Tuple.Map[mirror.MirroredElemTypes, [TT] =>> Generator[F[TT]]]]): Generator[F[T]] =
     lzy {
       partGensK
         .value

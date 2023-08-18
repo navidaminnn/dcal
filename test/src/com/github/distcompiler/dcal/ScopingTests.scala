@@ -58,26 +58,19 @@ class ScopingTests extends munit.FunSuite {
   def findAllReferents(module: Module): Set[PsK[Scoping.Referent]] = {
     import Scoping.Referent
 
-    given strEmpty: Transform[String, Chain[PsK[Referent]]] = _ => Chain.empty
-    given bigIntEmpty: Transform[BigInt, Chain[PsK[Referent]]] = _ => Chain.empty
+    given strEmpty: Transform[String, Chain[PsK[Referent]]] = Transform.fromFn(_ => Chain.empty)
+    given bigIntEmpty: Transform[BigInt, Chain[PsK[Referent]]] = Transform.fromFn(_ => Chain.empty)
 
-    given otherPs[T](using trans: Transform[T, Chain[PsK[Referent]]]): Transform[Ps[T], Chain[PsK[Referent]]] with {
-      override def apply(from: Ps[T]): Chain[PsK[Referent]] = trans(from.value)
-    }
+    given findOpCall: Transform[Ps[Expression.OpCall], Chain[PsK[Referent]]] =
+      Transform.fromFn(from => Chain.one(from.toPsK.widen))
 
-    given findOpCall: Transform[Ps[Expression.OpCall], Chain[PsK[Referent]]] with {
-      override def apply(from: Ps[Expression.OpCall]): Chain[PsK[Referent]] = Chain.one(from.toPsK.up)
-    }
+    given findStatementCall: Transform[Ps[Statement.Call], Chain[PsK[Referent]]] =
+      Transform.fromFn(from => Chain.one(from.toPsK.widen))
 
-    given findStatementCall: Transform[Ps[Statement.Call], Chain[PsK[Referent]]] with {
-      override def apply(from: Ps[Statement.Call]): Chain[PsK[Referent]] = Chain.one(from.toPsK.up)
-    }
+    given findBindingCall: Transform[Ps[Binding.Call], Chain[PsK[Referent]]] =
+      Transform.fromFn(from => Chain.one(from.toPsK.widen))
 
-    given findBindingCall: Transform[Ps[Binding.Call], Chain[PsK[Referent]]] with {
-      override def apply(from: Ps[Binding.Call]): Chain[PsK[Referent]] = Chain.one(from.toPsK.up)
-    }
-
-    Transform[Module, Chain[PsK[Referent]]](module)
+    summon[Transform[Module, Chain[PsK[Referent]]]](module)
       .iterator
       .toSet
   }
@@ -136,7 +129,7 @@ class ScopingTests extends munit.FunSuite {
               // if no errors, all referents must be accounted for
               if(errors.isEmpty) {
                 val allReferents = findAllReferents(module)
-                assertEquals(allReferents, referentSet)
+                assertEquals(referentSet, allReferents)
               }
           }
       }
@@ -345,8 +338,8 @@ class ScopingTests extends munit.FunSuite {
     given ValidNames = ValidNames.empty
 
     import Checker.*
-    given involvesStr: Transform[String, Involves.T] = _ => Monoid[Involves.T].empty
-    given involvesBigInt: Transform[BigInt, Involves.T] = _ => Monoid[Involves.T].empty
+    given involvesStr: Transform[String, Involves.T] = Transform.fromFn(_ => Monoid[Involves.T].empty)
+    given involvesBigInt: Transform[BigInt, Involves.T] = Transform.fromFn(_ => Monoid[Involves.T].empty)
     import Transform.given Transform[List[?], ?]
 
     import gens.given

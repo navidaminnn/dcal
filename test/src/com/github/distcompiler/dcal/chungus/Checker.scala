@@ -248,14 +248,16 @@ object Checker {
     }
   }
 
+  import Generator.dumpCode_!
+
   extension [T](self: T) {
     inline def involves[U](fn: PartialFunction[U, Involves.T]): Involves.T = {
-      given Transform[U, Involves.T] = u => fn.applyOrElse(u, _ => Involves.`false`)
+      given Transform[U, Involves.T] = Transform.fromFn(fn.applyOrElse(_, _ => Involves.`false`))
       compiletime.summonInline[Transform[T, Involves.T]].apply(self)
     }
 
     inline def involvesBeyondSum[U](using mirror: deriving.Mirror.SumOf[T])(fn: PartialFunction[U, Involves.T]): Involves.T = {
-      given Transform[U, Involves.T] = u => fn.applyOrElse(u, _ => Involves.`false`)
+      given Transform[U, Involves.T] = Transform.fromFn(fn.applyOrElse(_, _ => Involves.`false`))
       involvesBeyondSumImpl[T, mirror.MirroredElemTypes](self, ord = 0)
     }
   }

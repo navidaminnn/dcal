@@ -1,5 +1,6 @@
 package com.github.distcompiler.dcal
 
+import util.EvalList
 import parsing.{Ps, SourceLocation}
 
 import cats.data.NonEmptyChain
@@ -7,16 +8,16 @@ import cats.data.NonEmptyChain
 object Tokenizer {
   private type Elem = Char
   private type Error = NonEmptyChain[Ps[TokenizerError]]
-  private type Input = parsing.InputOps.LazyListInput[Char]
-  private given parsing.ErrorOps[Elem, Input, Error] with {
-    override def expectedEOF(input: Input, actualElem: Elem): Error =
+  private type Input = parsing.CharInput
+  private given parsing.ErrorOps[Elem, Error] with {
+    override def expectedEOF(sourceLocation: SourceLocation, actualElem: Elem): Error =
       NonEmptyChain.one {
-        Ps(TokenizerError.ExpectedAbstract(category = "EOF", actualChar = actualElem))(using input.prevSourceLocation.shiftRight)
+        Ps(TokenizerError.ExpectedAbstract(category = "EOF", actualChar = actualElem))(using sourceLocation)
       }
 
-    override def unexpectedEOF(input: Input): Error =
+    override def unexpectedEOF(sourceLocation: SourceLocation): Error =
       NonEmptyChain.one {
-        Ps(TokenizerError.UnexpectedEOF)(using input.prevSourceLocation.shiftRight)
+        Ps(TokenizerError.UnexpectedEOF)(using sourceLocation)
       }
   }
   private val ops = parsing.Parser.Ops[Elem, Input, Error]
@@ -122,11 +123,11 @@ object Tokenizer {
     ).map(Some(_))
     | whitespace.map(_ => None)
 
-  def apply(contents: Iterable[Char], path: String, offsetStart: Int = 0): Iterator[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]] =
+  def apply(contents: Iterable[Char], path: String, offsetStart: Int = 0): EvalList[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]] =
     singleTokenOpt
-      .parseAll(parsing.InputOps.LazyListInput(list = contents.to(LazyList), path = path, offsetStart = offsetStart))
-      .flatMap {
-        case Left(errs) => Some(Left(errs))
-        case Right(tokenOpt) => tokenOpt.map(Right(_))
+      .parseAll(parsing.CharInput(contents, path, offsetStart = offsetStart))
+      .collect {
+        case Left(errs) => Left(errs)
+        case Right(Some(token)) => Right(token)
       }
 }

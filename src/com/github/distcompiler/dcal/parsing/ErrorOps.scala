@@ -4,7 +4,7 @@ import cats.data.{Chain, NonEmptyChain}
 import cats.syntax.all.given
 import cats.*
 
-trait ErrorOps[Elem, Input, Error] {
-  def unexpectedEOF(input: Input): Error
-  def expectedEOF(input: Input, actualElem: Elem): Error
+trait ErrorOps[Elem, Error] {
+  def unexpectedEOF(sourceLocation: SourceLocation): Error
+  def expectedEOF(sourceLocation: SourceLocation, actualElem: Elem): Error
 }

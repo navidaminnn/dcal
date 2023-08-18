@@ -77,13 +77,11 @@ object Scoping {
     def mapUnit: Scoping[Unit] = self.map(_ => ())
   }
 
-  private given stringIsEmpty: Transform[String, Scoping[Unit]] with {
-    override def apply(from: String): Scoping[Unit] = Scoping.unit
-  }
+  private given stringIsEmpty: Transform[String, Scoping[Unit]] =
+    Transform.fromFn(_ => Scoping.unit)
 
-  private given bigIntIsEmpty: Transform[BigInt, Scoping[Unit]] with {
-    override def apply(from: BigInt): Scoping[Unit] = Scoping.unit
-  }
+  private given bigIntIsEmpty: Transform[BigInt, Scoping[Unit]] =
+    Transform.fromFn(_ => Scoping.unit)
 
   def scopeModule(module: Module)(using ScopingContext): Scoping[Unit] = {
     val Module(name, imports, definitions) = module
@@ -92,7 +90,7 @@ object Scoping {
     val topLevelDefs: Map[String, Ps[Def]] = definitions.iterator
       .map {
         case defn @ Ps(Definition(Ps(name), _, _)) =>
-          name -> defn.up
+          name -> defn.widen
       }
       .toMap
 
@@ -104,7 +102,7 @@ object Scoping {
         case (_, firstDef :: redefinitions) =>
           redefinitions
             .traverse_ { redefinition =>
-              Scoping.error(ScopingError.Redefinition(firstDef.toPsK.up, redefinition.toPsK.up))
+              Scoping.error(ScopingError.Redefinition(firstDef.toPsK.widen, redefinition.toPsK.widen))
             }
         case _ =>
           Scoping.unit
@@ -120,7 +118,7 @@ object Scoping {
 
     val argDefs: Map[String, Ps[Def]] = arguments.iterator
       .map {
-        case ps @ Ps(DefParam.Name(name)) => name -> ps.up
+        case ps @ Ps(DefParam.Name(name)) => name -> ps.widen
       }
       .toMap
 
@@ -131,77 +129,79 @@ object Scoping {
       .traverse_ {
         case (_, firstDef :: redefinitions) =>
           redefinitions.traverse_ { redefinition =>
-            Scoping.error(ScopingError.Redefinition(firstDef.toPsK.up, redefinition.toPsK.up))
+            Scoping.error(ScopingError.Redefinition(firstDef.toPsK.widen, redefinition.toPsK.widen))
           }
         case _ => Scoping.unit
       }
       .errorBarrier {
-        scopeStatement(body.up)(using ctx.withDefs(argDefs))
+        scopeStatement(body.widen)(using ctx.withDefs(argDefs))
       }
   }
 
   def scopeBinding(binding: Ps[Binding])(using ScopingContext): Scoping[Unit] =
-    Transform[Ps[Binding], Scoping[Unit]](binding)
+    summon[Transform[Ps[Binding], Scoping[Unit]]](binding)
 
   def scopeExpression(expression: Ps[Expression])(using ScopingContext): Scoping[Unit] =
-    Transform[Ps[Expression], Scoping[Unit]](expression)
+    summon[Transform[Ps[Expression], Scoping[Unit]]](expression)
 
   def scopeStatement(statement: Ps[Statement])(using ScopingContext): Scoping[Unit] =
-    Transform[Ps[Statement], Scoping[Unit]](statement)
+    summon[Transform[Ps[Statement], Scoping[Unit]]](statement)
 
-  given scopeBindingCall(using ScopingContext): Transform[Ps[Binding.Call], Scoping[Unit]] with {
-    override def apply(from: Ps[Binding.Call]): Scoping[Unit] = {
-      val Ps(Binding.Call(path, arguments)) = from
-      for {
-        _ <- ctx.lookup(path.value) match {
-          case None =>
-            Scoping.error(ScopingError.UndefinedReference(from.toPsK.up))
-          case Some(defn @ Ps(Definition(_, params, _))) =>
-            if(params.size != arguments.size) {
-              Scoping.error(ScopingError.ArityMismatch(from.toPsK.up, defn.toPsK.up))
-            } else {
-              Scoping.tellRef(from.toPsK.up -> defn.toPsK.up)
-            }
-          case Some(otherDef) =>
-            Scoping.error(ScopingError.KindMismatch(from.toPsK.up, otherDef.toPsK.up))
-        }
-        _ <- arguments.traverse_(scopeExpression)
-      } yield ()
-    }
+  private def scopeCall(from: Ps[Referent], call: Binding.Call)(using ScopingContext): Scoping[Unit] = {
+    val Binding.Call(path, arguments) = call
+    for {
+      _ <- ctx.lookup(path.value) match {
+        case None =>
+          Scoping.error(ScopingError.UndefinedReference(from.toPsK.widen))
+        case Some(defn @ Ps(Definition(_, params, _))) =>
+          if(params.size != arguments.size) {
+            Scoping.error(ScopingError.ArityMismatch(from.toPsK.widen, defn.toPsK.widen))
+          } else {
+            Scoping.tellRef(from.toPsK.widen -> defn.toPsK.widen)
+          }
+        case Some(otherDef) =>
+          Scoping.error(ScopingError.KindMismatch(from.toPsK.widen, otherDef.toPsK.widen))
+      }
+      _ <- arguments.traverse_(scopeExpression)
+    } yield ()
   }
 
-  given scopeExpressionOpCall(using ScopingContext): Transform[Ps[Expression.OpCall], Scoping[Unit]] with {
-    override def apply(from: Ps[Expression.OpCall]): Scoping[Unit] = {
-      val Ps(Expression.OpCall(ident, arguments)) = from
-      val id = 
-        ident match {
-          case Left(op) => op
-          case Right(path) => path
-        }
-      for {
-        _ <- ctx.lookup(id.value) match {
-          case None =>
-            Scoping.error(ScopingError.UndefinedReference(from.toPsK.up))
-          case Some(defn @ Ps(DefParam.Name(_) | Statement.Let(_, _) | Statement.Var(_, _))) =>
-            if(arguments.isEmpty) {
-              Scoping.tellRef(from.toPsK.up -> defn.toPsK.up)
-            } else {
-              Scoping.error(ScopingError.ArityMismatch(from.toPsK.up, defn.toPsK.up))
-            }
-          case Some(defn @ Ps(_: Definition | Import.Name(_))) =>
-            Scoping.error(ScopingError.KindMismatch(from.toPsK.up, defn.toPsK.up))
-        }
-        _ <- arguments.traverse_(scopeExpression)
-      } yield ()
+  given scopeBindingCall(using ScopingContext): Transform[Ps[Binding.Call], Scoping[Unit]] =
+    Transform.fromFn {
+      case from @ Ps(Binding.Call(path, arguments)) =>
+        scopeCall(from.widen, from.value)
     }
-  }
 
-  given scopeStatementCall(using ScopingContext): Transform[Ps[Statement.Call], Scoping[Unit]] with {
-    override def apply(from: Ps[Statement.Call]): Scoping[Unit] = {
-      val Ps(Statement.Call(call)) = from
-      scopeBinding(call.up)
+  given scopeExpressionOpCall(using ScopingContext): Transform[Ps[Expression.OpCall], Scoping[Unit]] =
+    Transform.fromFn {
+      case from @ Ps(Expression.OpCall(ident, arguments)) =>
+        val id = 
+          ident match {
+            case Left(op) => op
+            case Right(path) => path
+          }
+        for {
+          _ <- ctx.lookup(id.value) match {
+            case None =>
+              Scoping.error(ScopingError.UndefinedReference(from.toPsK.widen))
+            case Some(defn @ Ps(DefParam.Name(_) | Statement.Let(_, _) | Statement.Var(_, _))) =>
+              if(arguments.isEmpty) {
+                Scoping.tellRef(from.toPsK.widen -> defn.toPsK.widen)
+              } else {
+                Scoping.error(ScopingError.ArityMismatch(from.toPsK.widen, defn.toPsK.widen))
+              }
+            case Some(defn @ Ps(_: Definition | Import.Name(_))) =>
+              Scoping.error(ScopingError.KindMismatch(from.toPsK.widen, defn.toPsK.widen))
+          }
+          _ <- arguments.traverse_(scopeExpression)
+        } yield ()
     }
-  }
+
+  given scopeStatementCall(using ScopingContext): Transform[Ps[Statement.Call], Scoping[Unit]] =
+    Transform.fromFn {
+      case from @ Ps(Statement.Call(Ps(call))) =>
+        scopeCall(from.widen, call)
+    }
 
   given scopeStatements(using ScopingContext): Transform[List[Ps[Statement]], Scoping[Unit]] = {
     def scopeLetVar(name: String, binding: Ps[Binding], defn: Ps[Def], restStmts: List[Ps[Statement]]): Scoping[Unit] = {

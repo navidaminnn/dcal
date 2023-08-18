@@ -186,4 +186,26 @@ class GeneratorTests extends munit.FunSuite {
       ),
     ))
   }
+
+  test("involves") {
+    import com.github.distcompiler.dcal.transform.Transform
+    import Checker.*
+
+    enum Tree {
+      case Leaf(list: List[Int])
+      case Branch(left: Tree, right: Tree)
+    }
+
+    val tree1 = Tree.Branch(Tree.Leaf(Nil), Tree.Leaf(List(16)))
+    val tree2 = Tree.Branch(Tree.Leaf(List(5, 6, 7)), tree1)
+    val tree3 = Tree.Branch(Tree.Leaf(List(0, -1, 8)), tree1)
+
+    val listWithNegs: PartialFunction[List[Int], Involves.T] = {
+      case list if list.exists(_ < 0) => Involves.`true`
+    }
+
+    assert(!clue(tree1.involves[List[Int]](listWithNegs)).value)
+    assert(!clue(tree2.involves[List[Int]](listWithNegs)).value)
+    assert(clue(tree3.involves[List[Int]](listWithNegs)).value)
+  }
 }

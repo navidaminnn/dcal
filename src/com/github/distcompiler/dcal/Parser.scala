@@ -1,60 +1,23 @@
 package com.github.distcompiler.dcal
 
-import parsing.{Ps, SourceLocation}
+import cats.*
+import cats.syntax.all.given
 import cats.data.NonEmptyChain
 
-import com.github.distcompiler.dcal.AST.*
-import com.github.distcompiler.dcal.parsing.InputOps
-import InputOps.LazyListInput
-import cats.data.NonEmptyChainImpl.Type
+import parsing.{Ps, SourceLocation, InputOps}
+import util.EvalList
+import AST.*
 
 object Parser {
-  private type Elem = Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]
+  private type Elem = Ps[Token]
   private type Error = NonEmptyChain[ParserError]
-  private type Input = parsing.InputOps.LazyListInput[Elem]
-  private given parsing.ErrorOps[Elem, Input, Error] with {
-    private def tokErrOr(elem: Elem)(fn: Ps[Token] => ParserError): ParserError =
-      elem match {
-        case Left(errors) => ParserError.FromTokenizer(errors)
-        case Right(actualTok) => fn(actualTok)
-      }
+  private type Input = parsing.TokenInput[Elem, Error]
+  private given parsing.ErrorOps[Elem, Error] with {
+    override def expectedEOF(sourceLocation: SourceLocation, actualElem: Elem): Error =
+      NonEmptyChain.one(ParserError.ExpectedAbstract(category = "EOF", actualTok = actualElem))
 
-    override def expectedEOF(input: Input, actualElem: Elem): Error =
-      NonEmptyChain.one {
-        tokErrOr(actualElem) { actualTok =>
-          ParserError.ExpectedAbstract(category = "EOF", actualTok = actualTok)
-        }
-      }
-
-    override def unexpectedEOF(input: Input): Error =
-      NonEmptyChain.one(ParserError.UnexpectedEOF(input.prevSourceLocation))
-  }
-  given inputOps: parsing.InputOps[Elem, Input] with {
-    override def getPrevSourceLocation(input: LazyListInput[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]]): SourceLocation =
-      input.prevSourceLocation
-
-    override def read(input: LazyListInput[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]]): Option[(Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]], LazyListInput[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]])] =
-      if(input.list.isEmpty) {
-        None
-      } else {
-        Some((input.list.head, input.advanceWithPrevSourceLocation {
-          input.list.head match {
-            case Left(_) => input.prevSourceLocation
-            case Right(value) => value.sourceLocation
-          }
-        }))
-      }
-  }
-  given parsing.Parser.CapturePrePosition[Elem, Input] with {
-    override def capture(input: LazyListInput[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]]): SourceLocation =
-      if(input.list.isEmpty) {
-        input.prevSourceLocation
-      } else {
-        input.list.head match {
-          case Left(_) => input.prevSourceLocation
-          case Right(value) => value.sourceLocation
-        }
-      }
+    override def unexpectedEOF(sourceLocation: SourceLocation): Error =
+      NonEmptyChain.one(ParserError.UnexpectedEOF(sourceLocation))
   }
   private val ops = parsing.Parser.Ops[Elem, Input, Error]
   import ops.*
@@ -62,11 +25,7 @@ object Parser {
   private def err(error: ParserError): Error =
     NonEmptyChain.one(error)
 
-  private val anyTok: P[Ps[Token]] =
-    anyElem.constrain {
-      case Left(errors) => Left(err(ParserError.FromTokenizer(errors)))
-      case Right(tok) => Right(tok)
-    }
+  private val anyTok: P[Ps[Token]] = anyElem
 
   private def kw(keyword: Keyword): P[Token.Keyword] =
     anyTok.constrain {
@@ -140,11 +99,11 @@ object Parser {
       }
 
   private def exprBase: P[Ps[AST.Expression]] =
-    (intLiteral
-    | stringLiteral
-    | opCallExpr
-    | setConstructorExpr
-    | (pn(Punctuation.`(`) ~> expression <~ pn(Punctuation.`)`))).map(_.up)
+    intLiteral.widenK
+    | stringLiteral.widenK
+    | opCallExpr.widenK
+    | setConstructorExpr.widenK
+    | (pn(Punctuation.`(`) ~> expression <~ pn(Punctuation.`)`))
 
   // TODO: precedence
   private def binOpExpr: P[Ps[AST.Expression]] =
@@ -211,7 +170,7 @@ object Parser {
             valuePart match {
               case Left(expr) =>
                 Ps(AST.Binding.Value(expr))(using posOpt.getOrElse(expr.sourceLocation))
-              case Right(call) => call.up
+              case Right(call) => call.widen
             }
           }
       }
@@ -247,13 +206,13 @@ object Parser {
       }
 
   private lazy val statement: P[Ps[AST.Statement]] =
-    (await
-    | assignment
-    | letStmt
-    | varStmt
-    | ifStmt
-    | callStmt
-    | block).map(_.up)
+    await.widenK
+    | assignment.widenK
+    | letStmt.widenK
+    | varStmt.widenK
+    | ifStmt.widenK
+    | callStmt.widenK
+    | block.widenK
 
   private lazy val block: P[Ps[AST.Statement.Block]] =
     capturingPosition(pn(Punctuation.`{`) ~> rep(statement) <~ pn(Punctuation.`}`))
@@ -275,11 +234,14 @@ object Parser {
         ))
     }
 
-  def apply(tokens: Iterator[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]], path: String, offsetStart: Int = 0): Either[NonEmptyChain[ParserError], Ps[AST.Module]] = {
-    val result = phrase(module).parse(parsing.InputOps.LazyListInput(
-      path = path,
-      offsetStart = offsetStart,
-      list = LazyList.from(tokens),
+  def apply(tokens: EvalList[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]], path: String, offsetStart: Int = 0): Either[NonEmptyChain[ParserError], Ps[AST.Module]] = {
+    val result = phrase(module).parse(parsing.TokenInput(
+      tokens = tokens.map {
+        case Left(tokErrs) => Left(NonEmptyChain.one(ParserError.FromTokenizer(tokErrs)))
+        case Right(tok) => Right(tok)
+      },
+      initialSourceLocation = SourceLocation.fileStart(path, offsetStart = offsetStart),
+      elemLocation = _.sourceLocation,
     ))
     result match {
       case Left(errors) => Left(errors)
