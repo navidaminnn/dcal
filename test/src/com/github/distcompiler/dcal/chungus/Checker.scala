@@ -218,47 +218,43 @@ object Checker {
       }
   }
 
+  final case class Involves(count: Int, depth: Int) {
+    def combine(other: Involves): Involves =
+      Involves(
+        count = count + other.count,
+        depth = depth `max` other.depth,
+      )
+
+    def inc: Involves =
+      Involves(
+        count = count + 1,
+        depth = depth + 1,
+      )
+
+    def exists: Boolean = count > 0
+  }
+
   object Involves {
-    opaque type T = Boolean
-    object T {
-      given monoid: Monoid[Involves.T] with {
-        override def combine(x: Involves.T, y: Involves.T): Involves.T =
-          Involves.fromBoolean(x.value || y.value)
+    val empty: Involves = Involves(count = 0, depth = 0)
 
-        override def empty: Involves.T = false
-      }
-    }
-    
-    def fromBoolean(value: Boolean): Involves.T = value
-    def `true`: Involves.T = fromBoolean(true)
-    def `false`: Involves.T = fromBoolean(false)
+    given monoid: Monoid[Involves] with {
+      override def combine(x: Involves, y: Involves): Involves =
+        x.combine(y)
 
-    extension (self: Involves.T) def value: Boolean = self
-  }
-
-  private inline def involvesBeyondSumImpl[T, Tpl <: Tuple](using mirror: deriving.Mirror.SumOf[T])(self: T, inline ord: Int): Involves.T = {
-    inline compiletime.erasedValue[Tpl] match {
-      case _: EmptyTuple => Involves.`false`
-      case _: (hd *: tl) =>
-        if(mirror.ordinal(self) == ord) {
-          compiletime.summonInline[Transform[hd, Involves.T]].apply(self.asInstanceOf[hd])
-        } else {
-          involvesBeyondSumImpl[T, tl](self, ord + 1)
-        }
+      override def empty: Involves = Involves.empty
     }
   }
-
-  import Generator.dumpCode_!
 
   extension [T](self: T) {
-    inline def involves[U](fn: PartialFunction[U, Involves.T]): Involves.T = {
-      given Transform[U, Involves.T] = Transform.fromFn(fn.applyOrElse(_, _ => Involves.`false`))
-      compiletime.summonInline[Transform[T, Involves.T]].apply(self)
-    }
-
-    inline def involvesBeyondSum[U](using mirror: deriving.Mirror.SumOf[T])(fn: PartialFunction[U, Involves.T]): Involves.T = {
-      given Transform[U, Involves.T] = Transform.fromFn(fn.applyOrElse(_, _ => Involves.`false`))
-      involvesBeyondSumImpl[T, mirror.MirroredElemTypes](self, ord = 0)
+    inline def involves[U](fn: U => Boolean): Involves = {
+      given searchFn: Transform.Refined[U, Involves] = Transform.Refined { rec => from =>
+        if(fn(from)) {
+          rec(from).inc
+        } else {
+          rec(from)
+        }
+      }
+      compiletime.summonInline[Transform[T, Involves]].apply(self)
     }
   }
 

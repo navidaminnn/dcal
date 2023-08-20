@@ -3,85 +3,73 @@ package com.github.distcompiler.dcal.transform
 import cats.*
 import cats.syntax.all.given
 import com.github.distcompiler.dcal.util.{SummonFallback, SummonTuple}
+import scala.annotation.tailrec
+import scala.annotation.targetName
 
 opaque type Transform[A, B] = A => B
 
 object Transform {
-  opaque type LazyTransform[A, B] = A => B
-  object LazyTransform {
-    given instance[A, B](using fn: =>Transform[A, B]): LazyTransform[A, B] =
+  opaque type Lazy[A, B] = Transform[A, B]
+
+  object Lazy {
+    given instance[A, B](using fn: =>Transform[A, B]): Lazy[A, B] =
       from => fn(from)
   }
 
-  def fromFn[A, B](fn: A => B): Transform[A, B] = fn
+  extension [A, B](self: Lazy[A, B]) {
+    def asTransform: Transform[A, B] = self
+  }
+
+  def fromFunction[A, B](fn: A => B): Transform[A, B] = fn
+
+  def genericFromFunction[A, B](fn: A => B): Transform.Generic[A, B] = fn
 
   extension [A, B](self: Transform[A, B]) {
-    def asFn: A => B = self
+    def asFunction: A => B = self
 
-    def apply(from: A): B = self.asFn.apply(from)
+    def apply(from: A): B = (self: A => B).apply(from)
 
-    def refine(fn: PartialFunction[A, B]): Transform[A, B] =
-      fromFn(fn.applyOrElse(_, self))
+    // def asGeneric: Transform.Generic[A, B] = self
+
+    // def asRefined: Transform.Refined[A, B] = self
   }
 
-  given combineFoldable[F[_], A, B](using Foldable[F], Monoid[B])(using fnA: =>Transform[A, B]): Transform[F[A], B] =
-    fromFn(_.foldMap(fnA))
+  //def fromGeneric[A, B](generic: Generic[A, B]): Transform[A, B] = generic
 
-  given mapFunctor[F[_], A, B](using Functor[F])(using fnA: =>Transform[A, B]): Transform[F[A], F[B]] =
-    fromFn(_.map(fnA))
-
-  given combineProduct[A <: Product, B](using mirror: deriving.Mirror.ProductOf[A])(using Monoid[B])(using elemFns: =>SummonTuple[Tuple.Map[mirror.MirroredElemTypes, [T] =>> LazyTransform[T, B]]]): Transform[A, B] =
-    fromFn { from =>
-      (from.productIterator `zip` elemFns.value.productIterator.asInstanceOf[Iterator[LazyTransform[Any, B]]])
-        .map {
-          case (elem, fn) =>
-            fn(elem)
-        }
-        .foldLeft(Monoid[B].empty)(_ `combine` _)
+  given refinedOrGeneric[A, B](using choice: SummonFallback[Refined[A, B], Generic[A, B]]): Transform[A, B] =
+    choice.value match {
+      case Left(generic) => generic
+      case Right(refined) => refined
     }
 
-  given rewriteProduct[A <: Product](using mirror: deriving.Mirror.ProductOf[A])(using elemFns: =>SummonTuple[Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform[T, T]]]): Transform[A, A] =
-    fromFn { from =>
-      mirror.fromTuple {
-        Tuple.fromArray {
-          (from.productIterator `zip` elemFns.value.productIterator.asInstanceOf[Iterator[Transform[Any, Any]]])
-            .map {
-              case (elem, fn) =>
-                fn(elem)
-            }
-            .toArray
-        }
-        .asInstanceOf[mirror.MirroredElemTypes]
-      }
-    }
+  opaque type Generic[A, B] = Transform[A, B]
 
-  given transformSum[A, B](using tSumK: TSumK[Id, A, B]): Transform[A, B] = tSumK.fn
-
-  final class TSumK[F[_], A, B](val fn: Transform[F[A], B])
-  object TSumK {
-    given instance[F[_], A, B](using mirror: deriving.Mirror.SumOf[A])(using Comonad[F])(using elemFns: SummonTuple[Tuple.Map[mirror.MirroredElemTypes, [T] =>> SummonFallback[LazyTransform[F[T], B], LazyTransform[T, B]]]]): TSumK[F, A, B] =
-      TSumK {
-        fromFn { from =>
-          elemFns
-            .value
-            .productElement(mirror.ordinal(from.extract))
-            .asInstanceOf[SummonFallback[Transform[F[A], B], Transform[A, B]]]
-            .value match {
-              case Left(unwrappedFn) => unwrappedFn(from.extract)
-              case Right(wrappedFn) => wrappedFn(from)
-            }
-        }
-      }
+  extension [A, B](self: Generic[A, B]) {
+    @targetName("applyGeneric")
+    def apply(from: A): B = self(from)
   }
 
-  given extractComonad[F[_], A, B](using Comonad[F])(using tSumKOrfnA: SummonFallback[TSumK[F, A, B], LazyTransform[A, B]]): Transform[F[A], B] =
-    tSumKOrfnA.value match {
-      case Left(fnA) =>
-        fromFn(from => fnA(from.extract))
-      case Right(tSumK) =>
-        tSumK.fn
+  opaque type Refined[A, B] = Transform[A, B]
+
+  extension [A, B](self: Refined[A, B]) {
+    @targetName("applyRefined")
+    def apply(from: A): B = self(from)
+
+    @targetName("refinedAsFunction")
+    def asFunction: A => B = self
+  }
+
+  object Refined {
+    inline def apply[A, B](fn: Transform.Generic[A, B] => A => B): Transform.Refined[A, B] = {
+      // see below for cast rationale
+      given refined: Transform.Refined[A, B] = (from => fn(generic)(from)).asInstanceOf[Transform.Refined[A, B]]
+      lazy val generic = compiletime.summonInline[Transform.Generic[A, B]]
+      refined
     }
 
-  given coflatMap[F[_], A, B](using CoflatMap[F])(using fnFA: =>Transform[F[A], B]): Transform[F[A], F[B]] =
-    fromFn(_.coflatMap(fnFA))
+    inline def fromPartialFunction[A, B](fn: PartialFunction[A, B]): Transform.Refined[A, B] =
+      // that type cast exists because in an expanded macro we don't get the benefit of being in this file (can't see through opaque type)
+      // also, because we are in this file now, the asFunction extension appears ambiguous even though it won't be at expansion time, so we can't use it
+      Refined(generic => from => fn.applyOrElse(from, generic.asInstanceOf[A => B]))
+  }
 }

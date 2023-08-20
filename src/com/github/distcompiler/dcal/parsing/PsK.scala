@@ -2,7 +2,7 @@ package com.github.distcompiler.dcal.parsing
 
 import cats.Comonad
 
-final case class PsK[T](value: T, sourceLocation: SourceLocation) {
+final case class PsK[+T](value: T, sourceLocation: SourceLocation) {
   def map[U](fn: T => U): PsK[U] =
     copy(value = fn(value))
 

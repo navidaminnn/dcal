@@ -1,7 +1,10 @@
-package test.com.github.distcompiler.dcal.chungus
+package com.github.distcompiler.dcal.util
 
 import scala.collection.mutable
 import scala.quoted.*
+
+extension [T](inline value: T) inline def dumpCode_! : T =
+  ${ DumpCode.impl('value) }
 
 object DumpCode {
   def impl[T](expr: Expr[T])(using quotes: Quotes): Expr[T] = {
@@ -209,16 +212,7 @@ object DumpCode {
       }
 
     tryToShowTerm(expr.asTerm)
-    report.info(builder.result(), expr)
-    //report.info(expr.asTerm.show(using Printer.TreeStructure), expr)
-    // val summonedTree =
-    //   expr match {
-    //     case '{ (${_}: AnySumOfShape[?, ?]).summon(using $arg) } => arg
-    //     case '{ anyOf(using $arg) } => arg
-    //     case _ =>
-    //       report.errorAndAbort("couldn't find summoned tree", expr)
-    //   }
-    //report.info(expr.asTerm.show(using Printer.TreeShortCode), expr)
+    report.error(builder.result(), expr)
 
     expr
   }

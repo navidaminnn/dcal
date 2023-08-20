@@ -9,8 +9,9 @@ import cats.syntax.all.given
 import chungus.*
 
 import com.github.distcompiler.dcal.{AST, Scoping}
-import com.github.distcompiler.dcal.transform.Transform
 import com.github.distcompiler.dcal.parsing.{SourceLocation, Ps, PsK}
+import com.github.distcompiler.dcal.transform.Transform
+import com.github.distcompiler.dcal.transform.instances.all.given
 
 import Scoping.ScopingError
 
@@ -58,17 +59,33 @@ class ScopingTests extends munit.FunSuite {
   def findAllReferents(module: Module): Set[PsK[Scoping.Referent]] = {
     import Scoping.Referent
 
-    given strEmpty: Transform[String, Chain[PsK[Referent]]] = Transform.fromFn(_ => Chain.empty)
-    given bigIntEmpty: Transform[BigInt, Chain[PsK[Referent]]] = Transform.fromFn(_ => Chain.empty)
+    given strEmpty: Transform[String, Chain[PsK[Referent]]] = Transform.fromFunction(_ => Chain.empty)
+    given bigIntEmpty: Transform[BigInt, Chain[PsK[Referent]]] = Transform.fromFunction(_ => Chain.empty)
 
-    given findOpCall: Transform[Ps[Expression.OpCall], Chain[PsK[Referent]]] =
-      Transform.fromFn(from => Chain.one(from.toPsK.widen))
+    given findInExpression: Transform.Refined[Ps[Expression], Chain[PsK[Referent]]] =
+      Transform.Refined(rec => {
+        case from @ Ps(opCall: Expression.OpCall) =>
+          Chain.one(from.as(opCall).toPsK.widen)
+          ++ rec(from)
+        case from => rec(from)
+      })
 
-    given findStatementCall: Transform[Ps[Statement.Call], Chain[PsK[Referent]]] =
-      Transform.fromFn(from => Chain.one(from.toPsK.widen))
+    given findInStatement: Transform.Refined[Ps[Statement], Chain[PsK[Referent]]] =
+      Transform.Refined(rec => {
+        case from @ Ps(call @ Statement.Call(Ps(Binding.Call(path, arguments)))) =>
+          Chain.one(from.as(call).toPsK.widen)
+          ++ summon[Transform[Ps[Path], Chain[PsK[Referent]]]](path)
+          ++ arguments.foldMap(findInExpression.asFunction)
+        case from => rec(from)
+      })
 
-    given findBindingCall: Transform[Ps[Binding.Call], Chain[PsK[Referent]]] =
-      Transform.fromFn(from => Chain.one(from.toPsK.widen))
+    given findInBinding: Transform.Refined[Ps[Binding], Chain[PsK[Referent]]] =
+      Transform.Refined(rec => {
+        case from @ Ps(call: Binding.Call) =>
+          Chain.one(from.as(call).toPsK.widen)
+          ++ rec(from)
+        case from => rec(from)
+      })
 
     summon[Transform[Module, Chain[PsK[Referent]]]](module)
       .iterator
@@ -338,8 +355,8 @@ class ScopingTests extends munit.FunSuite {
     given ValidNames = ValidNames.empty
 
     import Checker.*
-    given involvesStr: Transform[String, Involves.T] = Transform.fromFn(_ => Monoid[Involves.T].empty)
-    given involvesBigInt: Transform[BigInt, Involves.T] = Transform.fromFn(_ => Monoid[Involves.T].empty)
+    given involvesStr: Transform[String, Involves] = Transform.fromFunction(_ => Monoid[Involves].empty)
+    given involvesBigInt: Transform[BigInt, Involves] = Transform.fromFunction(_ => Monoid[Involves].empty)
     import Transform.given Transform[List[?], ?]
 
     import gens.given
@@ -350,10 +367,8 @@ class ScopingTests extends munit.FunSuite {
       .exists { module =>
         // contains at least 2 sequential stmts
         module
-          .involves[List[Ps[Statement]]] {
-            case lst => Involves.fromBoolean(lst.size >= 2)
-          }
-          .value
+          .involves[List[Ps[Statement]]](_.size >= 2)
+          .exists
       }
       .transform { module =>
         val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value

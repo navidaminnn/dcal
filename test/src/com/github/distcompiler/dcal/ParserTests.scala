@@ -1,13 +1,15 @@
 package test.com.github.distcompiler.dcal
 
+import cats.*
 import cats.data.Chain
 import cats.syntax.all.given
 
 import chungus.*
 import com.github.distcompiler.dcal.util.EvalList
-import com.github.distcompiler.dcal.transform.Transform
 import com.github.distcompiler.dcal.{AST, Tokenizer, Parser, Token, Punctuation, Keyword, BinaryOperator}
 import com.github.distcompiler.dcal.parsing.{Ps, SourceLocation}
+import com.github.distcompiler.dcal.transform.Transform
+import com.github.distcompiler.dcal.transform.instances.all.given
 
 class ParserTests extends munit.FunSuite {
   override val munitTimeout = scala.concurrent.duration.Duration(1, scala.concurrent.duration.HOURS)
@@ -243,8 +245,8 @@ class ParserTests extends munit.FunSuite {
   }
   
   test("to tokens and back (focus on one definition)") {
-    given Transform[String, Involves.T] = Transform.fromFn(_ => Involves.`false`)
-    given Transform[BigInt, Involves.T] = Transform.fromFn(_ => Involves.`false`)
+    given Transform[String, Involves] = Transform.fromFunction(_ => Monoid[Involves].empty)
+    given Transform[BigInt, Involves] = Transform.fromFunction(_ => Monoid[Involves].empty)
 
     toTokensAndBack {
       given anyDefns: Generator[List[Ps[Definition]]] =
@@ -260,18 +262,14 @@ class ParserTests extends munit.FunSuite {
           case (module, _) =>
             // make sure we generate at least one level of nesting for exprs (same for stmts below)
             module
-              .involves[Ps[Expression]] { expr =>
-                expr.value.involvesBeyondSum[Ps[Expression]](_ => Involves.`true`)
-              }
-              .value
+              .involves[Ps[Expression]](_ => true)
+              .depth >= 2
         }
         .exists {
           case (module, _) =>
             module
-              .involves[Ps[Statement]] { stmt =>
-                stmt.value.involvesBeyondSum[Ps[Statement]](_ => Involves.`true`)
-              }
-              .value
+              .involves[Ps[Statement]](_ => true)
+              .depth >= 2
         }
     }
   }

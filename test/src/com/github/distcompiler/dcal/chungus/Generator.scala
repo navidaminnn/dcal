@@ -296,9 +296,6 @@ object Generator {
     Pay(() => lzyGen)
   }
 
-  extension [T](inline value: T) inline def dumpCode_! : T =
-    ${ DumpCode.impl('value) }
-
   type TupleExcluding[T, Tpl <: Tuple] <: Tuple = Tpl match {
     case (T *: tl) => tl
     case (hd *: tl) => hd *: TupleExcluding[T, tl]

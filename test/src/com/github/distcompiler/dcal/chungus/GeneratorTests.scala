@@ -189,7 +189,10 @@ class GeneratorTests extends munit.FunSuite {
 
   test("involves") {
     import com.github.distcompiler.dcal.transform.Transform
+    import com.github.distcompiler.dcal.transform.instances.all.given
+
     import Checker.*
+    given intInvolves: Transform.Generic[Int, Involves] = Transform.genericFromFunction(_ => Involves.empty)
 
     enum Tree {
       case Leaf(list: List[Int])
@@ -200,12 +203,14 @@ class GeneratorTests extends munit.FunSuite {
     val tree2 = Tree.Branch(Tree.Leaf(List(5, 6, 7)), tree1)
     val tree3 = Tree.Branch(Tree.Leaf(List(0, -1, 8)), tree1)
 
-    val listWithNegs: PartialFunction[List[Int], Involves.T] = {
-      case list if list.exists(_ < 0) => Involves.`true`
-    }
+    val listWithNegs: List[Int] => Boolean = _.exists(_ < 0)
 
-    assert(!clue(tree1.involves[List[Int]](listWithNegs)).value)
-    assert(!clue(tree2.involves[List[Int]](listWithNegs)).value)
-    assert(clue(tree3.involves[List[Int]](listWithNegs)).value)
+    assert(!clue(tree1.involves[List[Int]](listWithNegs)).exists)
+    assert(!clue(tree2.involves[List[Int]](listWithNegs)).exists)
+    assert(clue(tree3.involves[List[Int]](listWithNegs)).exists)
+
+    assert(!clue(tree1.involves[Int](_ < 0)).exists)
+    assert(!clue(tree2.involves[Int](_ < 0)).exists)
+    assert(clue(tree3.involves[Int](_ < 0)).exists)
   }
 }
