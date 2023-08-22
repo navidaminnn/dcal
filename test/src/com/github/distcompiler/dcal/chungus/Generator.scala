@@ -111,8 +111,7 @@ enum Generator[T] {
           impl(self)
             .map(_.filter(pred))
         case Disjunction(left, right) =>
-          (impl(left) `zipIor` impl(right))
-            .map(_.fold(identity, identity, _ ++ _))
+          impl(left).alignWith(impl(right))(_.fold(identity, identity, _ ++ _))
         case ap: Ap[tt, T] =>
           val selfIterFns = impl(ap.self).memoize
           val transIterFns = impl(ap.transform).memoize
@@ -135,7 +134,7 @@ enum Generator[T] {
                 }
             }
 
-          (selfIterFns `zipIor` transIterFns)
+          (selfIterFns `align` transIterFns)
             .zipWithIndex
             .map {
               case (Ior.Left(selfIterFn), depth) =>
@@ -143,8 +142,8 @@ enum Generator[T] {
               case (Ior.Right(transIterFn), depth) =>
                 incTrans(transIterFn, depth).flatten
               case (Ior.Both(selfIterFn, transIterFn), depth) =>
-                (incSelf(selfIterFn, depth) `zipIor` incTrans(transIterFn, depth - 1))
-                  .flatMap(_.fold(identity, identity, _ ++ _))
+                incSelf(selfIterFn, depth).alignWith(incTrans(transIterFn, depth - 1))(_.fold(identity, identity, _ ++ _))
+                  .flatten
             }
         case andThen: AndThen[tt, T] =>
           val self = andThen.self
@@ -208,7 +207,7 @@ enum Generator[T] {
                               nextIterBufferUsed = true
                               nextIterBuffer
                                 .foldLeft(nextExistingDepthList)({ (acc, list) =>
-                                  (acc `zipIor` list).map(_.fold(identity, identity, _ ++ _))
+                                  acc.alignWith(list)(_.fold(identity, identity, _ ++ _))
                                 })
                             }
                             .memoize

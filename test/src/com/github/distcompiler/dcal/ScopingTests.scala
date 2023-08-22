@@ -8,12 +8,10 @@ import cats.syntax.all.given
 
 import chungus.*
 
-import com.github.distcompiler.dcal.{AST, Scoping}
+import com.github.distcompiler.dcal.{AST, Scoping, ScopingError}
 import com.github.distcompiler.dcal.parsing.{SourceLocation, Ps, PsK}
 import com.github.distcompiler.dcal.transform.Transform
 import com.github.distcompiler.dcal.transform.instances.all.given
-
-import Scoping.ScopingError
 
 class ScopingTests extends munit.FunSuite {
   override val munitTimeout = scala.concurrent.duration.Duration(1, scala.concurrent.duration.HOURS)
@@ -100,16 +98,16 @@ class ScopingTests extends munit.FunSuite {
       .withPrintExamples(printExamples = false)
       .exists(_.definitions.size >= requiredDefinitions)
       .transform { module =>
-        val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
-        (module, info)
+        val result = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty)
+        (module, result.fold(errs => (errs.toChain, Chain.nil), (Chain.nil, _)))
       } { checker =>
         checker
-          .exists(_._2.errors.size >= requiredErrors)
-          .exists(_._2.referencePairs.size >= requiredReferences)
+          .exists(_._2._1.size >= requiredErrors)
+          .exists(_._2._2.size >= requiredReferences)
           .forall {
             case (module, info) =>
-              val errors = info.errors.toList
-              val referencePairs = info.referencePairs.toList
+              val errors = info._1.toList
+              val referencePairs = info._2.toList
 
               assert(clue(errors).size == clue(errors.toSet).size, "all errors must be unique")
 
@@ -371,15 +369,15 @@ class ScopingTests extends munit.FunSuite {
           .exists
       }
       .transform { module =>
-        val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
-        (module, info)
+        val result = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty)
+        (module, result.fold(errs => (errs.toChain, Chain.nil), (Chain.nil, _)))
       } { checker =>
         checker
-          .exists(_._2.referencePairs.size >= 3)
+          .exists(_._2._2.size >= 3)
           .forall {
             case (module, info) =>
-              val referencePairs = info.referencePairs.toList
-              val errors = info.errors.toList
+              val referencePairs = info._2.toList
+              val errors = info._1.toList
 
               assertEquals(errors, Nil)
           }
@@ -399,14 +397,14 @@ class ScopingTests extends munit.FunSuite {
       .exists(_.definitions.exists(_.value.params.size >= 1))
       .exists(_.definitions.size >= 3)
       .transform { module =>
-        val (info, ()) = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty).run.value
-        (module, info)
+        val result = Scoping.scopeModule(module)(using Scoping.ScopingContext.empty)
+        (module, result.fold(errs => (errs.toChain, Chain.nil), (Chain.nil, _)))
       } { checker =>
         checker
           .forall {
             case (module, info) =>
-              val referencePairs = info.referencePairs.toList
-              val errors = info.errors.toList
+              val referencePairs = info._2.toList
+              val errors = info._1.toList
 
               assertEquals(errors, Nil)
           }

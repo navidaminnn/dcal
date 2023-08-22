@@ -180,20 +180,23 @@ object EvalList {
         case Cons(_, _) => Nil
       }
 
-    def zipIor[U](other: =>EvalList[U]): EvalList[Ior[T, U]] =
+    def align[U](other: EvalList[U]): EvalList[Ior[T, U]] =
+      self.alignWith(other)(identity)
+
+    def alignWith[U, V](other: EvalList[U])(fn: Ior[T, U] => V): EvalList[V] =
       (self.asEvalCell.product(other))
         .flatMap {
           case (Nil, Nil) => Eval.now(Nil)
-          case (notNil, Nil) => EvalList.map(Eval.now(notNil))(Ior.Left(_))
-          case (Nil, notNil) => EvalList.map(Eval.now(notNil))(Ior.Right(_))
+          case (notNil, Nil) => EvalList.map(Eval.now(notNil))(v => fn(Ior.Left(v)))
+          case (Nil, notNil) => EvalList.map(Eval.now(notNil))(v => fn(Ior.Right(v)))
           case (Single(valueL), Single(valueR)) =>
-            Eval.now(Single(Ior.Both(valueL, valueR)))
+            Eval.now(Single(fn(Ior.Both(valueL, valueR))))
           case (Cons(headL, tailL), Single(valueR)) =>
-            Eval.now(Cons(Ior.Both(headL, valueR), EvalList.map(tailL)(Ior.Left(_))))
+            Eval.now(Cons(fn(Ior.Both(headL, valueR)), EvalList.map(tailL)(v => fn(Ior.Left(v)))))
           case (Single(valueL), Cons(headR, tailR)) =>
-            Eval.now(Cons(Ior.Both(valueL, headR), EvalList.map(tailR)(Ior.Right(_))))
+            Eval.now(Cons(fn(Ior.Both(valueL, headR)), EvalList.map(tailR)(v => fn(Ior.Right(v)))))
           case (Cons(headL, tailL), Cons(headR, tailR)) =>
-            Eval.now(Cons(Ior.Both(headL, headR), EvalList.zipIor(tailL)(tailR)))
+            Eval.now(Cons(fn(Ior.Both(headL, headR)), EvalList.alignWith(tailL)(tailR)(fn)))
         }
 
     def map[U](fn: T => U): EvalList[U] =

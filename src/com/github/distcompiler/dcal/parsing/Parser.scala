@@ -6,6 +6,7 @@ import cats.data.Chain
 import cats.syntax.all.given
 
 import com.github.distcompiler.dcal.util.EvalList
+import cats.StackSafeMonad
 
 abstract class Parser[Elem, Input, Error: Semigroup, +T](using ops: Parser.Ops[Elem, Input, Error]) { self =>
   import Parser.*
@@ -235,6 +236,16 @@ object Parser {
     type R[T] = Parser.Result[Input, Error, T]
 
     export Parser.~
+
+    given monad: StackSafeMonad[P] with {
+      override def pure[A](x: A): P[A] = trivial(x)
+      override def flatMap[A, B](fa: P[A])(f: A => P[B]): P[B] = fa.flatMap(f)
+    }
+
+    given semigroupK: SemigroupK[P] with {
+      override def combineK[A](x: P[A], y: P[A]): P[A] = x | y
+    }
+    given semigroup[T]: Semigroup[P[T]] = semigroupK.algebra
 
     def peek[T](parser: P[T]): P[T] =
       parser.peek
