@@ -1,6 +1,6 @@
 package com.github.distcompiler.dcal.util
 
-import cats.Eval
+import cats.*
 import cats.data.Ior
 import cats.syntax.all.given
 
@@ -9,43 +9,56 @@ opaque type EvalList[+T] = Eval[EvalList.Cell[T]]
 object EvalList {
   enum Cell[+T] derives CanEqual {
     case Nil
-    case Single(value: Eval[T])
-    case Cons(head: Eval[T], tail: EvalList[T])
+    case Single(value: T)
+    case Cons(head: T, tail: EvalList[T])
   }
   import Cell.*
 
   def empty[T]: EvalList[T] = Eval.now(Cell.Nil)
 
-  def singleNow[T](value: T): EvalList[T] = Eval.now(Cell.Single(Eval.now(value)))
+  def single[T](value: T): EvalList[T] = Eval.now(Cell.Single(value))
 
-  def singleLater[T](value: =>T): EvalList[T] = Eval.now(Cell.Single(Eval.later(value)))
-
-  def singleAlways[T](value: =>T): EvalList[T] = Eval.now(Cell.Single(Eval.always(value)))
+  def defer[T](list: =>EvalList[T]): EvalList[T] =
+    Eval.defer(list)
 
   def continually[T](fn: =>T): EvalList[T] =
-    Eval.now(Cons(Eval.later(fn), Eval.defer(continually(fn)).memoize)) // this structure makes sure we don't re-eval fn
+    Eval.later(Cons(fn, continually(fn)))
 
   def fromIterableOnce[T](iter: IterableOnce[T]): EvalList[T] = {
     val it = iter.iterator
-
-    val optList = 
-      EvalList.continually(it.nextOption())
-        .takeWhile(_.nonEmpty)
+    def impl(): EvalList[T] =
+      Eval.later {
+        if(it.hasNext) {
+          Cons(it.next, impl())
+        } else {
+          Nil
+        }
+      }
     
-    EvalList.map(optList)(_.get)
+    impl()
   }
 
+  def fromIterable[T](iter: Iterable[T]): EvalList[T] =
+    fromIterableOnce(iter.iterator)
+
+  given monoidK: MonoidK[EvalList] with {
+    override def empty[A]: EvalList[A] = EvalList.empty
+
+    override def combineK[A](x: EvalList[A], y: EvalList[A]): EvalList[A] =
+      x ++ y
+  }
+
+  given monoid[T]: Monoid[EvalList[T]] = monoidK.algebra
+
   extension [T](elem: =>T) {
-    def +:(self: =>EvalList[T]): EvalList[T] =
-      Eval.now(Cons(Eval.later(elem), Eval.defer(self)))
+    def +:(self: EvalList[T]): EvalList[T] =
+      Eval.later(Cons(elem, self))
   }
 
   extension [T](self: EvalList[T]) {
     def cell: Cell[T] = self.value
 
     def asEvalCell: Eval[Cell[T]] = self
-
-    def memoize: EvalList[T] = self.memoize
 
     def isEmpty: Boolean =
       self.cell match {
@@ -58,8 +71,8 @@ object EvalList {
     def uncons: Option[(T, EvalList[T])] =
       self.cell match {
         case Nil => None
-        case Single(value) => Some((value.value, EvalList.empty))
-        case Cons(head, tail) => Some((head.value, tail))
+        case Single(value) => Some((value, EvalList.empty))
+        case Cons(head, tail) => Some((head, tail))
       }
 
     def toList: List[T] =
@@ -81,120 +94,144 @@ object EvalList {
             case Nil => throw java.util.NoSuchElementException()
             case Single(value) => 
               curr = Eval.now(Nil)
-              value.value
+              value
             case Cons(head, tail) =>
               curr = tail.memoize // don't "eval" the tail yet; delay as much as possible
-              head.value
+              head
           }
       }
-  }
 
-  extension [T](self: =>EvalList[T]) {
-    def ++(other: =>EvalList[T]): EvalList[T] = {
-      def impl(self: EvalList[T]): EvalList[T] =
+    def ++(other: EvalList[T]): EvalList[T] =
+      self.flatMap {
+        case Nil => other
+        case Single(value) => Eval.now(Cons(value, other))
+        case Cons(head, tail) => Eval.now(Cons(head, tail ++ other))
+      }
+
+    def tapEach[U](fn: T => U): EvalList[T] =
+      EvalList.map(self) { value =>
+        fn(value)
+        value
+      }
+
+    def flatten[U](using T <:< EvalList[U]): EvalList[U] =
+      self.flatMap(identity)
+
+    def filter(pred: T => Boolean): EvalList[T] =
+      self.flatMap {
+        case Nil => Eval.now(Nil)
+        case Single(value) if pred(value) => Eval.now(Single(value))
+        case Single(_) => Eval.now(Nil)
+        case Cons(head, tail) if pred(head) => Eval.now(Cons(head, tail.filter(pred)))
+        case Cons(_, tail) => tail.filter(pred)
+      }
+
+    def take(n: Int): EvalList[T] =
+      self.slice(0, n `max` 0)
+
+    def drop(n: Int): EvalList[T] =
+      self.slice(n, -1)
+
+    def slice(from: Int, to: Int): EvalList[T] = {
+      val lo = from `max` 0
+      val hi = if(lo < 0) -1 else to
+
+      if(hi == 0) {
+        Eval.now(Nil)
+      } else {
+        if(lo == 0) {
+          if(hi == -1) {
+            self
+          } else {
+            self.map {
+              case Nil => Nil
+              case Single(value) => Single(value)
+              case Cons(head, tail) => Cons(head, tail.slice(0, hi - 1))
+            }
+          }
+        } else {
+          self.flatMap {
+            case Nil | Single(_) => Eval.now(Nil)
+            case Cons(_, tail) => tail.slice(lo - 1, hi - 1)
+          }
+        }
+      }
+    }
+
+    def memoize: EvalList[T] = {
+      def impl(self: Eval[Cell[T]]): Eval[Cell[T]] =
         self
-          .flatMap {
-            case Nil => Eval.defer(other)
-            case Single(value) => Eval.now(Cons(value, Eval.defer(other)))
-            case Cons(head, tail) => Eval.now(Cons(head, impl(tail)))
+          .map {
+            case Nil => Nil
+            case Single(value) => Single(value)
+            case Cons(head, tail) => Cons(head, impl(tail.asEvalCell).asEvalList)
           }
           .memoize
 
-      impl(Eval.defer(self))
+      impl(self)
     }
 
-    def takeWhile(pred: T => Boolean): EvalList[T] = {
-      def impl(self: EvalList[T]): EvalList[T] =
-        self
-          .asEvalCell
-          .flatMap {
-            case Nil => Eval.now(Nil)
-            case Single(value) =>
-              value.map { value =>
-                if(pred(value)) {
-                  Single(Eval.now(value))
-                } else {
-                  Nil
-                }
-              }
-            case Cons(head, tail) =>
-              head.flatMap { head =>
-                if(pred(head)) {
-                  Eval.now(Cons(Eval.now(head), impl(tail)))
-                } else {
-                  Eval.now(Nil)
-                }
-              }
-          }
-          .memoize
-
-      impl(Eval.defer(self))
-    }
+    def takeWhile(pred: T => Boolean): EvalList[T] =
+      self.map {
+        case Nil => Nil
+        case Single(value) if pred(value) => Single(value)
+        case Single(_) => Nil
+        case Cons(head, tail) if pred(head) => Cons(head, tail.takeWhile(pred))
+        case Cons(_, _) => Nil
+      }
 
     def zipIor[U](other: =>EvalList[U]): EvalList[Ior[T, U]] =
-      (Eval.defer(self).asEvalCell.product(Eval.defer(other)))
+      (self.asEvalCell.product(other))
         .flatMap {
           case (Nil, Nil) => Eval.now(Nil)
           case (notNil, Nil) => EvalList.map(Eval.now(notNil))(Ior.Left(_))
           case (Nil, notNil) => EvalList.map(Eval.now(notNil))(Ior.Right(_))
           case (Single(valueL), Single(valueR)) =>
-            Eval.now(Single(valueL.map2(valueR)(Ior.Both(_, _))))
+            Eval.now(Single(Ior.Both(valueL, valueR)))
           case (Cons(headL, tailL), Single(valueR)) =>
-            Eval.now(Cons(headL.map2(valueR)(Ior.Both(_, _)), EvalList.map(tailL)(Ior.Left(_))))
+            Eval.now(Cons(Ior.Both(headL, valueR), EvalList.map(tailL)(Ior.Left(_))))
           case (Single(valueL), Cons(headR, tailR)) =>
-            Eval.now(Cons(valueL.map2(headR)(Ior.Both(_, _)), EvalList.map(tailR)(Ior.Right(_))))
+            Eval.now(Cons(Ior.Both(valueL, headR), EvalList.map(tailR)(Ior.Right(_))))
           case (Cons(headL, tailL), Cons(headR, tailR)) =>
-            Eval.now(Cons(headL.map2(headR)(Ior.Both(_, _)), EvalList.zipIor(tailL)(tailR)))
+            Eval.now(Cons(Ior.Both(headL, headR), EvalList.zipIor(tailL)(tailR)))
         }
-        .memoize
 
     def map[U](fn: T => U): EvalList[U] =
-      Eval.defer(self)
-        .map {
-          case Nil => Nil
-          case Single(value) => 
-            Single(value.map(fn))
-          case Cons(head, tail) =>
-            Cons(head.map(fn), tail.map(fn))
-        }
-        .memoize
+      self.map {
+        case Nil => Nil
+        case Single(value) => 
+          Single(fn(value))
+        case Cons(head, tail) =>
+          Cons(fn(head), EvalList.map(tail)(fn))
+      }
 
-    def flatMap[U](fn: T => EvalList[U]): EvalList[U] = {
-      def impl(self: EvalList[T]): EvalList[U] =
-        self
-          .asEvalCell
-          .flatMap {
-            case Cell.Nil => Eval.now(Cell.Nil)
-            case Cell.Single(value) => value.flatMap(fn)
-            case Cell.Cons(head, tail) =>
-              head.flatMap(fn) ++ impl(tail)
-          }
-          .memoize
-
-      impl(Eval.defer(self))
-    }
+    def flatMap[U](fn: T => EvalList[U]): EvalList[U] =
+      self.flatMap {
+        case Cell.Nil => Eval.now(Cell.Nil)
+        case Cell.Single(value) => fn(value)
+        case Cell.Cons(head, tail) =>
+          fn(head) ++ EvalList.flatMap(tail)(fn)
+      }
 
     def collect[U](fn: PartialFunction[T, U]): EvalList[U] =
       EvalList.flatMap(self) { value =>
         fn.unapply(value) match {
           case None => EvalList.empty
-          case Some(value) => EvalList.singleNow(value)
+          case Some(value) => EvalList.single(value)
         }
       }
 
     def zipWithIndex: EvalList[(T, Int)] = {
       def impl(self: EvalList[T], level: Int): EvalList[(T, Int)] =
-        self
-          .map {
-            case Nil => Nil
-            case Single(value) => 
-              Single(value.map((_, level)))
-            case Cons(head, tail) =>
-              Cons(head.map((_, level)), impl(tail, level = level + 1))
-          }
-          .memoize
+        self.map {
+          case Nil => Nil
+          case Single(value) => 
+            Single((value, level))
+          case Cons(head, tail) =>
+            Cons((head, level), impl(tail, level = level + 1))
+        }
 
-      impl(Eval.defer(self), level = 0)
+      impl(self, level = 0)
     }
   }
 

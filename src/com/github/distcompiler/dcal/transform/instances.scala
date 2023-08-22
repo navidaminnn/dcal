@@ -11,7 +11,7 @@ object instances {
 
   trait Priority1 extends Priority2 {
     given combineProduct[A <: Product, B](using mirror: deriving.Mirror.ProductOf[A])(using Monoid[B])(using elemFns: =>SummonTuple[Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform.Lazy[T, B]]]): Transform.Generic[A, B] =
-      Transform.genericFromFunction { from =>
+      Transform.Generic.fromFunction { from =>
         (from.productIterator `zip` elemFns.value.productIterator.asInstanceOf[Iterator[Transform.Lazy[Any, B]]])
           .map {
             case (elem, fn) =>
@@ -21,7 +21,7 @@ object instances {
       }
 
     given rewriteProduct[A <: Product](using mirror: deriving.Mirror.ProductOf[A])(using elemFns: SummonTuple[Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform.Lazy[T, T]]]): Transform.Generic[A, A] =
-      Transform.genericFromFunction { from =>
+      Transform.Generic.fromFunction { from =>
         mirror.fromTuple {
           Tuple.fromArray {
             (from.productIterator `zip` elemFns.value.productIterator.asInstanceOf[Iterator[Transform.Lazy[Any, Any]]])
@@ -36,7 +36,7 @@ object instances {
       }
 
     given combineSum[A, B](using mirror: deriving.Mirror.SumOf[A])(using elemFns: SummonTuple[Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform.Lazy[T, B]]]): Transform.Generic[A, B] =
-      Transform.genericFromFunction { from =>
+      Transform.Generic.fromFunction { from =>
         elemFns
           .value
           .productElement(mirror.ordinal(from))
@@ -46,7 +46,7 @@ object instances {
       }
 
     given rewriteSum[A](using mirror: deriving.Mirror.SumOf[A])(using elemFns: SummonTuple[Tuple.Map[mirror.MirroredElemTypes, [T] =>> Transform.Lazy[T, T]]]): Transform.Generic[A, A] =
-      Transform.genericFromFunction { from =>
+      Transform.Generic.fromFunction { from =>
         elemFns
           .value
           .productElement(mirror.ordinal(from))
@@ -58,17 +58,17 @@ object instances {
 
   trait Priority2 extends Priority3 {
     given combineFoldable[F[_], A, B](using Foldable[F], Monoid[B])(using fnA: =>Transform[A, B]): Transform.Generic[F[A], B] =
-      Transform.genericFromFunction(_.foldMap(fnA.asFunction))
+      Transform.Generic.fromFunction(_.foldMap(fnA.asFunction))
 
     given mapFunctor[F[_], A, B](using Functor[F])(using fnA: =>Transform[A, B]): Transform.Generic[F[A], F[B]] =
-      Transform.genericFromFunction(_.map(fnA.asFunction))
+      Transform.Generic.fromFunction(_.map(fnA.asFunction))
   }
 
   trait Priority3 {
     given extractComonad[F[_], A, B](using Comonad[F])(using fnA: =>Transform[A, B]): Transform.Generic[F[A], B] =
-      Transform.genericFromFunction(from => fnA(from.extract))
+      Transform.Generic.fromFunction(from => fnA(from.extract))
 
     given coflatMap[F[_], A, B](using CoflatMap[F])(using fnFA: =>Transform[F[A], B]): Transform.Generic[F[A], F[B]] =
-      Transform.genericFromFunction(_.coflatMap(fnFA.asFunction))
+      Transform.Generic.fromFunction(_.coflatMap(fnFA.asFunction))
   }
 }

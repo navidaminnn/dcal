@@ -54,13 +54,13 @@ object Tokenizer {
         Left(err(TokenizerError.ExpectedAbstract(category = "alphabetic", actualChar = ch)))
     }  
 
-  private val intLiteral: P[Ps[Token]] =
+  private val intLiteral: P[Ps[Token.IntLiteral]] =
     capturingPosition(rep1(numeric))
       .mapPositioned { digits =>
         Ps(Token.IntLiteral(BigInt(digits.iterator.mkString)))
       }
 
-  private val stringLiteral: P[Ps[Token]] =
+  private val stringLiteral: P[Ps[Token.StringLiteral]] =
     capturingPosition {
       val strCharacter: P[Char] = capturingPosition(anyElem).constrain {
         case (ch, _) if ch != '"' && ch != '\\' => Right(ch)
@@ -80,7 +80,7 @@ object Tokenizer {
       Ps(Token.StringLiteral(chars.iterator.mkString))
     }
 
-  private val name: P[Ps[Token]] =
+  private val name: P[Ps[Token.Name]] =
     capturingPosition {
       val underscore: P[Char] = elem('_')
       val character: P[Char] = underscore | alphabetic | numeric

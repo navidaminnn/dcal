@@ -24,10 +24,12 @@ abstract class Parser[Elem, Input, Error: Semigroup, +T](using ops: Parser.Ops[E
     def impl(input: Input): EvalList[Either[Error, T]] =
       // parse EOF here, because that's the most reasonable way to check for EOF,
       // in which case we happily end parsing
-      (self.left | eof.right).parse(input) match {
-        case Left(error) => EvalList.singleNow(Left(error))
-        case Right((Right(()), _)) => EvalList.empty
-        case Right((Left(value), nextInput)) => Right(value) +: impl(nextInput)
+      EvalList.defer {
+        (self.left | eof.right).parse(input) match {
+          case Left(error) => EvalList.single(Left(error))
+          case Right((Right(()), _)) => EvalList.empty
+          case Right((Left(value), nextInput)) => Right(value) +: impl(nextInput)
+        }
       }
 
     impl(input)

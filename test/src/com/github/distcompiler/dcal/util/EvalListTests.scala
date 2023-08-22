@@ -14,7 +14,7 @@ class EvalListTests extends munit.FunSuite {
     }
 
     // check that a "single" list works
-    assertEquals(EvalList.singleNow(42).toList, List(42))
+    assertEquals(EvalList.single(42).toList, List(42))
   }
 
   test("counting with continually") {
@@ -54,5 +54,46 @@ class EvalListTests extends munit.FunSuite {
 
     assertEquals(evalList.toList, (1 until 5).toList)
     assertEquals(evalList.toList, (1 until 5).toList)
+  }
+
+  test("zipWithIndex") {
+    assertEquals(
+      EvalList.continually("foo").zipWithIndex.takeWhile(_._2 <= 3).toList,
+      List(("foo", 0), ("foo", 1), ("foo", 2), ("foo", 3)),
+    )
+  }
+  
+  test("flatMap") {
+    val evalList = EvalList.fromIterableOnce(Iterator.range(1, 3))
+
+    assertEquals(evalList.flatMap(_ => evalList).toList, List(1, 2, 1, 2))
+  }
+
+  test("filter") {
+    val evalList = EvalList.fromIterableOnce(Iterator.range(1, 5))
+
+    assertEquals(evalList.filter(_ % 2 == 0).toList, List(2, 4))
+  }
+
+  test("take") {
+    val evalList = EvalList.fromIterableOnce(Iterator.range(1, 5))
+
+    assertEquals(evalList.take(0).toList, List())
+    assertEquals(evalList.take(1).toList, List(1))
+    assertEquals(evalList.take(2).toList, List(1, 2))
+    assertEquals(evalList.take(3).toList, List(1, 2, 3))
+    assertEquals(evalList.take(4).toList, List(1, 2, 3, 4))
+    assertEquals(evalList.take(5).toList, List(1, 2, 3, 4))
+  }
+
+  test("drop") {
+    val evalList = EvalList.fromIterableOnce(Iterator.range(1, 5))
+
+    assertEquals(evalList.drop(0).toList, List(1, 2, 3, 4))
+    assertEquals(evalList.drop(1).toList, List(2, 3, 4))
+    assertEquals(evalList.drop(2).toList, List(3, 4))
+    assertEquals(evalList.drop(3).toList, List(4))
+    assertEquals(evalList.drop(4).toList, List())
+    assertEquals(evalList.drop(5).toList, List())
   }
 }

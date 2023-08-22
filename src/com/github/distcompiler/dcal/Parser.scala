@@ -99,10 +99,10 @@ object Parser {
       }
 
   private def exprBase: P[Ps[AST.Expression]] =
-    intLiteral.widenK
-    | stringLiteral.widenK
-    | opCallExpr.widenK
-    | setConstructorExpr.widenK
+    intLiteral
+    | stringLiteral
+    | opCallExpr
+    | setConstructorExpr
     | (pn(Punctuation.`(`) ~> expression <~ pn(Punctuation.`)`))
 
   // TODO: precedence
@@ -206,13 +206,13 @@ object Parser {
       }
 
   private lazy val statement: P[Ps[AST.Statement]] =
-    await.widenK
-    | assignment.widenK
-    | letStmt.widenK
-    | varStmt.widenK
-    | ifStmt.widenK
-    | callStmt.widenK
-    | block.widenK
+    await
+    | assignment
+    | letStmt
+    | varStmt
+    | ifStmt
+    | callStmt
+    | block
 
   private lazy val block: P[Ps[AST.Statement.Block]] =
     capturingPosition(pn(Punctuation.`{`) ~> rep(statement) <~ pn(Punctuation.`}`))

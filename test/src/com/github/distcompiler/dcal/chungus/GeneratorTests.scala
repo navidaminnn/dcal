@@ -192,7 +192,7 @@ class GeneratorTests extends munit.FunSuite {
     import com.github.distcompiler.dcal.transform.instances.all.given
 
     import Checker.*
-    given intInvolves: Transform.Generic[Int, Involves] = Transform.genericFromFunction(_ => Involves.empty)
+    given intInvolves: Transform.Generic[Int, Involves] = Transform.Generic.fromFunction(_ => Involves.empty)
 
     enum Tree {
       case Leaf(list: List[Int])
