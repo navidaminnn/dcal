@@ -8,6 +8,9 @@ object dcal extends RootModule with ScalaModule {
     "-deprecation",
     "-Werror",
     "-language:strictEquality",
+    "-Xmax-inlines", "64",
+    //"-Ximplicit-search-limit", "100000",
+    //"-Xprompt", "-Xprint-types", "-Xprint-inline",
   )
 
   def ivyDeps = Agg(
@@ -18,6 +21,7 @@ object dcal extends RootModule with ScalaModule {
     ivy"org.typelevel::cats-core:2.9.0",
     ivy"org.typelevel::cats-collections-core:0.9.7",
     ivy"org.typelevel::kittens:3.0.0",
+    ivy"dev.zio::izumi-reflect:2.3.8",
   )
 
   object test extends ScalaTests with TestModule.Munit {
