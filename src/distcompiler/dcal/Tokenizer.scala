@@ -3,28 +3,25 @@ package distcompiler.dcal
 import distcompiler.util.EvalList
 import distcompiler.parsing.{Ps, SourceLocation}
 
-import cats.data.NonEmptyChain
+import cats.*
+import cats.syntax.all.given
+import cats.data.*
 
 object Tokenizer {
   private type Elem = Char
-  private type Error = NonEmptyChain[Ps[TokenizerError]]
+  private type Error = Ps[TokenizerError]
   private type Input = distcompiler.parsing.CharInput
   private given distcompiler.parsing.ErrorOps[Elem, Error] with {
     override def expectedEOF(sourceLocation: SourceLocation, actualElem: Elem): Error =
-      NonEmptyChain.one {
-        Ps(TokenizerError.ExpectedAbstract(category = "EOF", actualChar = actualElem))(using sourceLocation)
-      }
+      Ps(TokenizerError.ExpectedAbstract(category = "EOF", actualChar = actualElem))(using sourceLocation)
 
     override def unexpectedEOF(sourceLocation: SourceLocation): Error =
-      NonEmptyChain.one {
-        Ps(TokenizerError.UnexpectedEOF)(using sourceLocation)
-      }
+      Ps(TokenizerError.UnexpectedEOF)(using sourceLocation)
   }
   private val ops = distcompiler.parsing.Parser.Ops[Elem, Input, Error]
-  import ops.*
+  import ops.{*, given}
 
-  private def err(error: TokenizerError)(using SourceLocation): Error =
-    NonEmptyChain.one(Ps(error))
+  private def err(error: TokenizerError)(using SourceLocation): Error = Ps(error)
 
   private def elem(elem: Elem): P[Elem] =
     capturingPosition(anyElem).constrain {
@@ -123,11 +120,11 @@ object Tokenizer {
     ).map(Some(_))
     | whitespace.map(_ => None)
 
-  def apply(contents: Iterable[Char], path: String, offsetStart: Int = 0): EvalList[Either[NonEmptyChain[Ps[TokenizerError]], Ps[Token]]] =
+  def apply(contents: Iterable[Char], path: String, offsetStart: Int = 0): EvalList[Either[NonEmptyList[Ps[TokenizerError]], Ps[Token]]] =
     singleTokenOpt
       .parseAll(distcompiler.parsing.CharInput(contents, path, offsetStart = offsetStart))
       .collect {
-        case Left(errs) => Left(errs)
+        case Left(errors) => Left(errors)
         case Right(Some(token)) => Right(token)
       }
 }

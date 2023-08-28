@@ -268,7 +268,13 @@ class ParserTests extends munit.FunSuite {
   // note: use single token strings / bigints because the parser is insensitive to the values
 
   test("to tokens and back (fully general)") {
-    toTokensAndBack(Generatable[Module].any) { checker =>
+    toTokensAndBack {
+      Generatable[Module]
+        .build
+        .replace[String](pure("str"))
+        .replace[BigInt](pure(BigInt(0)))
+        .apply
+    } { checker =>
       checker
         .exists {
           case (_, tokens) => tokens.size >= 50
