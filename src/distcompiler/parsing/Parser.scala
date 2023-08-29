@@ -8,6 +8,8 @@ import scala.annotation.targetName
 import scala.collection.mutable
 
 import distcompiler.util.EvalList
+import cats.collections.HashMap
+import cats.collections.HashSet
 
 enum Parser[Elem, Input, Error, +T] {
   private type P[+T] = Parser[Elem, Input, Error, T]
@@ -17,6 +19,7 @@ enum Parser[Elem, Input, Error, +T] {
   case Input() extends Parser[Elem, Input, Error, Input]
   case Trivial(value: T)
   case Peek(p: Parser[Elem, Input, Error, T])
+  case Log(name: String, p: Parser[Elem, Input, Error, T])
   case Lazy(handle: Parser.Handle, pFn: () => Parser[Elem, Input, Error, T])
   case Constrain[Elem, Input, Error, T, U](p: Parser[Elem, Input, Error, T], pred: T => Either[Error, U]) extends Parser[Elem, Input, Error, U]
   case Or[Elem, Input, Error, T, U](left: Parser[Elem, Input, Error, T], right: Parser[Elem, Input, Error, U]) extends Parser[Elem, Input, Error, T | U]
@@ -30,6 +33,7 @@ enum Parser[Elem, Input, Error, +T] {
       case Input() => false
       case Trivial(_) => false
       case Peek(p) => p.mustMakeProgress
+      case Log(name, p) => p.mustMakeProgress
       case Lazy(_, _) => false
       case Constrain(p, _) => p.mustMakeProgress
       case Or(left, right) => left.mustMakeProgress && right.mustMakeProgress
@@ -41,6 +45,9 @@ enum Parser[Elem, Input, Error, +T] {
     assert(mustMakeProgress, "lack of progress detected! (could not prove that the parser won't get stuck)")
     this
   }
+
+  def log(name: String): P[T] =
+    Log(name, this)
 
   def parse(input: Input)(using inputOps: InputOps[Elem, Input, Error], errorOps: ErrorOps[Elem, Error]): Either[NonEmptyList[Error], (T, Input)] = {
     enum Result[+T] derives CanEqual {
@@ -89,36 +96,63 @@ enum Parser[Elem, Input, Error, +T] {
             case Result.Backtrack(errors, _) => Result.Backtrack(errors, input.idx)
             case result @ Result.Fatal(_, _) => result
           }
+        case Log(name, p) =>
+          println(s"[$name @ ${input.idx}] enter")
+          impl(p, input).map { result =>
+            result match {
+              case Result.Ok(value, nextInput, recoveredErrors) =>
+                println(s"[$name ${input.idx}] success w/ $value")
+              case Result.Backtrack(errors, idx) =>
+                println(s"[$name ${input.idx}] backtrack @ $idx")
+              case Result.Fatal(errors, idx) =>
+                println(s"[$name ${input.idx}] fatal @ $idx")
+            }
+            result
+          }
         case Lazy(handle, pFn) =>
-          val anchor = (handle, inputOps.tellIdx(input))
+          val anchor = (handle, input.idx)
           leftRecTable.get(anchor) match {
             case None =>
               leftRecTable.update(anchor, None)
-              def grow(result: Result[T], smallerValue: Option[T], prevIdx: Int): Eval[Result[T]] =
+              def grow(result: Result[T], smallerValue: Option[T], prevInput: Input, prevRecoveredErrors: Chain[Error], anchor: Anchor): Eval[Result[T]] =
                 result match {
-                  case result @ Result.Ok(value, nextInput, _) =>
+                  case result @ Result.Ok(value, nextInput, recoveredErrors) =>
                     if(leftRecReached(anchor)) {
                       leftRecReached.remove(anchor)
-                      leftRecTable.update(anchor, Some(value))
+                      leftRecTable.remove(anchor)
 
-                      assert(prevIdx < nextInput.idx)
+                      val nextAnchor = (handle, nextInput.idx)
+                      leftRecTable.update(nextAnchor, Some(value))
+
+                      assert(prevInput.idx < nextInput.idx)
                       impl(pFn(), nextInput)
-                        .flatMap(grow(_, Some(value), nextInput.idx))
+                        .flatMap(grow(_, Some(value), nextInput, recoveredErrors, nextAnchor))
+                        .productL(Eval.always {
+                          leftRecReached.remove(nextAnchor)
+                          leftRecTable.remove(nextAnchor)
+                        })
                     } else {
-                      Eval.now(result)
+                      // if we didn't reach ourselves recursively but did get a value, it means we use a non-rec case.
+                      // don't return that, because we shouldn't have tried that from this position. just pretend
+                      // we stopped at the prev value
+                      smallerValue match {
+                        case None => Eval.now(result)
+                        case Some(value) => 
+                          Eval.now(Result.Ok(value, prevInput, prevRecoveredErrors))
+                      }
                     }
                   case Result.Backtrack(errors, _) =>
                     smallerValue match {
                       case None =>
                         Eval.now(result)
                       case Some(value) =>
-                        Eval.now(Result.Ok(value, input, recoveredErrors = errors))
+                        Eval.now(Result.Ok(value, prevInput, recoveredErrors = errors))
                     }
                   case result @ Result.Fatal(_, _) => Eval.now(result)
                 }
 
               impl(pFn(), input)
-                .flatMap(grow(_, None, input.idx))
+                .flatMap(grow(_, None, input, Chain.nil, anchor))
                 .productL(Eval.always { 
                   leftRecReached.remove(anchor)
                   leftRecTable.remove(anchor)
@@ -334,23 +368,6 @@ object Parser {
 
     val anyElem: P[Elem] = Parser.ReadElem()
 
-    // def log[T](name: String)(parser: P[T]): P[T] =
-    //   P { (progressIdx, input, leftRecCtx) =>
-    //     val origProgressIdx = progressIdx
-    //     println(s"[$name@$progressIdx] entering")
-    //     parser(progressIdx, input, leftRecCtx).map {
-    //       case res @ Result.Ok(value, nextInput, progressIdx, backtrackedOpt, _) =>
-    //         println(s"[$name@$origProgressIdx] parsed $value, progressIdx=$progressIdx and backtrackedOpt=$backtrackedOpt")
-    //         res
-    //       case res @ Result.Backtrack(error, progressIdx, _) =>
-    //         println(s"[$name@$origProgressIdx] backtrack $error, progressIdx=$progressIdx")
-    //         res
-    //       case res @ Result.Fatal(error, progressIdx) =>
-    //         println(s"[$name@$origProgressIdx] fatal $error, progressIdx=$progressIdx")
-    //         res
-    //     }
-    //   }
-
     def phrase[T](body: P[T]): P[T] =
       body <~ eof
 
@@ -380,6 +397,91 @@ object Parser {
       (input.map(inputOps.nextSourceLocation) ~ parser ~ input.map(inputOps.nextSourceLocation)).map {
         case prePos ~ value ~ postPos => (value, prePos.combine(postPos))
       }
+
+    def localRec[T](fn: P[T] => P[T]): P[T] = {
+      lazy val pp: P[T] = lzy(fn(pp))
+      pp
+    }
+
+    final class PrecedenceTree[K: PartialOrder, T](pairs: Chain[PrecedenceTree.Case[K, T]], minPrecedence: Chain[P[T]]) {
+      import PrecedenceTree.Case
+
+      def level(precedence: K)(fn: P[T] => P[T]): PrecedenceTree[K, T] =
+        PrecedenceTree(
+          pairs = pairs :+ Case.Level(precedence, fn),
+          minPrecedence = minPrecedence)
+
+      def levelRec(precedence: K)(fn: P[T] => P[T] => P[T]): PrecedenceTree[K, T] =
+        PrecedenceTree(
+          pairs = pairs :+ Case.LevelRec(precedence, fn),
+          minPrecedence = minPrecedence)
+
+      def bottomLevel(p: P[T]): PrecedenceTree[K, T] =
+        PrecedenceTree(
+          pairs = pairs,
+          minPrecedence = minPrecedence :+ p)
+
+      lazy val parser: P[T] = {
+        val sortedPairs =
+          pairs
+            .toList
+            .sortBy(_.precedence)(using Ordering.fromLessThan[K](_ < _).reverse)
+        val bottomParser = {
+          assert(minPrecedence.nonEmpty)
+          minPrecedence.iterator.reduce(_ | _)
+        }
+
+        val cache = mutable.HashMap[K, P[T]]()
+
+        def impl(pairs: List[Case[K, T]]): P[T] =
+          pairs match {
+            case Nil => bottomParser
+            case cse :: restPairs =>
+              cache.getOrElseUpdate(cse.precedence, {
+                def withFn(cse: Case[K, T])(body: (P[T] => P[T]) => P[T]): P[T] =
+                  cse match {
+                    case Case.Level(_, fn) => body(fn)
+                    case Case.LevelRec(_, fn) => localRec(rec => body(fn(rec)))
+                  }
+
+                def findLowers(pairs: List[Case[K, T]])(using keysIncluded: mutable.ArrayBuffer[K]): P[T] =
+                  pairs match {
+                    case Nil => bottomParser
+                    case cse :: restPairs =>
+                      if(keysIncluded.nonEmpty && keysIncluded.forall(cse.precedence < _)) {
+                        impl(pairs)
+                      } else if(keysIncluded.exists(cse.precedence < _)) {
+                        findLowers(restPairs)
+                      } else {
+                        keysIncluded += cse.precedence
+                        withFn(cse) { fn =>
+                          fn(findLowers(restPairs)(using mutable.ArrayBuffer()))
+                          | findLowers(restPairs)
+                        }
+                      }
+                  }
+                
+                withFn(cse) { fn =>
+                  fn(findLowers(restPairs)(using mutable.ArrayBuffer()))
+                  | impl(restPairs)
+                }
+              })
+          }
+        
+        impl(sortedPairs)
+      }
+    }
+
+    object PrecedenceTree {
+      enum Case[K, T] {
+        case Level(precedence: K, fn: P[T] => P[T])
+        case LevelRec(precedence: K, fn: P[T] => P[T] => P[T])
+
+        def precedence: K
+      }
+    }
+
+    def precedenceTree[K: PartialOrder: Hash, T]: PrecedenceTree[K, T] = PrecedenceTree(Chain.nil, Chain.nil)
   }
   
   object Ops {
