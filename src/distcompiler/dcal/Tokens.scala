@@ -73,14 +73,15 @@ enum Punctuation extends Token.Meta derives CanEqual, Transformable {
   case `!`
   case `|->`
   case `@!`
+  case `@`
 
-  case `\\in` extends Punctuation with BinaryOperator(Precedence(5, 5))
-  case `\\notin` extends Punctuation with BinaryOperator(Precedence(5, 5))
-  case `=` extends Punctuation with BinaryOperator(Precedence(5, 5))
-  case `.` extends Punctuation with BinaryOperator(Precedence(17, 17), leftAssociative = true)
+  case `\\in` extends Punctuation, BinaryOperator(Precedence(5, 5))
+  case `\\notin` extends Punctuation, BinaryOperator(Precedence(5, 5))
+  case `=` extends Punctuation, BinaryOperator(Precedence(5, 5))
+  case `.` extends Punctuation, BinaryOperator(Precedence(17, 17), leftAssociative = true)
 }
 
 sealed trait BinaryOperator(val precedence: Precedence, val leftAssociative: Boolean = false) derives CanEqual, Transformable { self: Punctuation =>
-  def asOperator: Punctuation = self
+  def asPunctuation: Punctuation = self
 }
 

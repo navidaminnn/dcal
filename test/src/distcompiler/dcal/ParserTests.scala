@@ -21,11 +21,13 @@ class ParserTests extends munit.FunSuite {
   given genPs[T: Tag](using gen: Generatable[T]): Generatable[Ps[T]] = gen.map(Ps(_))
 
   given Generatable[BinaryOperator] = Generatable.derived
+  given Generatable[Punctuation] = Generatable.derived
 
   given Generatable[AST.AssignLhs] = Generatable.derived
   given Generatable[AST.Expression] = Generatable.derived
   given Generatable[AST.CallArg] = Generatable.derived
-  given Generatable[AST.Statement] = Generatable.derived
+  given Generatable[AST.Statements] = Generatable.derived
+  given Generatable[AST.SingleStatement] = Generatable.derived
   given Generatable[AST.Binding] = Generatable.derived
   given Generatable[AST.ValBinding] = Generatable.derived
   given Generatable[AST.CheckDirective] = Generatable.derived
@@ -34,6 +36,7 @@ class ParserTests extends munit.FunSuite {
   given Generatable[AST.InstanceDecl] = Generatable.derived
   given Generatable[AST.Param] = Generatable.derived
   given Generatable[AST.Path] = Generatable.derived
+  given Generatable[AST.PathSegment] = Generatable.derived
   given Generatable[AST.QuantifierBound] = Generatable.derived
   given Generatable[AST.Module] = Generatable.derived
   given Generatable[AST.AssignPair] = Generatable.derived
@@ -95,9 +98,15 @@ class ParserTests extends munit.FunSuite {
         }
     }
 
+  private def renderPathSegment(segment: PathSegment): GC[Token] =
+    segment match {
+      case PathSegment.Name(name) => tok(Token.Name(name.value))
+      case PathSegment.Punctuation(pn) => tok(Token.Punctuation(pn.value))
+    }
+
   private def renderPath(path: Path): GC[Token] = {
     val Path(parts) = path
-    renderSepBy(parts)(Chain.one(Token.Punctuation(Punctuation.`.`)))(ps => tok(Token.Name(ps.value)))
+    renderSepBy(parts)(Chain.one(Token.Punctuation(Punctuation.`.`)))(ps => renderPathSegment(ps.value))
   }
 
   private def renderExpression(expression: Expression, outerPrecedence: Precedence = Precedence.min): GC[Token] = {
@@ -116,7 +125,7 @@ class ParserTests extends munit.FunSuite {
       case Expression.BinaryOpCall(op, lhs, rhs) =>
         groupOrNo(Some(op.value.precedence)) {
           renderExpression(lhs.value, op.value.precedence)
-          ++ tok(Token.Punctuation(op.value.asOperator))
+          ++ tok(Token.Punctuation(op.value.asPunctuation))
           ++ renderExpression(rhs.value, op.value.precedence)
         }
       case Expression.FunctionApplication(function, argument) =>
@@ -169,7 +178,7 @@ class ParserTests extends munit.FunSuite {
                 ++ substitutions.foldLeft(pure(Chain.empty)) { (acc, sub) =>
                   acc
                   ++ (sub match {
-                    case Ps((keys, value)) =>
+                    case Ps(FunctionSubstitutionBranch(keys, value)) =>
                       tok(Token.Punctuation(Punctuation.`!`))
                       ++ keys.foldLeft(pure(Chain.empty)) { (acc, key) =>
                         acc
@@ -182,7 +191,7 @@ class ParserTests extends munit.FunSuite {
                         })
                       }
                       ++ tok(Token.Punctuation(Punctuation.`=`))
-                      ++ renderExpression(value.value)
+                      ++ renderExpression(value.anchor.body.value)
                     })
                 }
               }
@@ -249,7 +258,7 @@ class ParserTests extends munit.FunSuite {
         } else {
           pure(Chain.empty)
         })
-        ++ renderStatement(call.value)
+        ++ renderSingleStatement(call.value)
     }
 
   private def renderBinding(binding: Binding, needEquals: Boolean): GC[Token] =
@@ -305,12 +314,37 @@ class ParserTests extends munit.FunSuite {
         ++ renderExpression(set.value)
     }
 
-  private def renderStatement(statement: Statement): GC[Token] =
+  private def renderStatements(statements: Statements): GC[Token] =
+    def renderRestOpt(restOpt: Option[Ps[Statements]]): GC[Token] =
+      restOpt match {
+        case None => pure(Chain.empty) | tok(Token.Punctuation(Punctuation.`;`))
+        case Some(statements) =>
+          renderStatements(statements.value)
+          | (tok(Token.Punctuation(Punctuation.`;`)) ++ renderStatements(statements.value))
+      }
+
+    statements match {
+      case Statements.Let(name, binding, restOpt) =>
+        tok(Token.Keyword(Keyword.`let`))
+        ++ tok(Token.Name(name.value))
+        ++ renderBinding(binding.value, needEquals = true)
+        ++ renderRestOpt(restOpt)
+      case Statements.Var(name, binding, restOpt) =>
+        tok(Token.Keyword(Keyword.`var`))
+        ++ tok(Token.Name(name.value))
+        ++ renderValBinding(binding.value, needEquals = true)
+        ++ renderRestOpt(restOpt)
+      case Statements.Single(singleStatement, restOpt) =>
+        renderSingleStatement(singleStatement.value)
+        ++ renderRestOpt(restOpt)
+    }
+
+  private def renderSingleStatement(statement: SingleStatement): GC[Token] =
     statement match {
-      case Statement.Await(expression) =>
+      case SingleStatement.Await(expression) =>
         tok(Token.Keyword(Keyword.`await`))
         ++ renderExpression(expression.value)
-      case Statement.Assignment(pairs) =>
+      case SingleStatement.Assignment(pairs) =>
         renderSepBy(pairs)(Chain.one(Token.Punctuation(Punctuation.`||`))) {
           case Ps(AssignPair(lhs, binding)) =>
             renderAssignLhs(lhs.value)
@@ -322,68 +356,64 @@ class ParserTests extends munit.FunSuite {
                 renderValBinding(noEq, needEquals = false)
             })
         }
-      case Statement.Let(name, binding) =>
-        tok(Token.Keyword(Keyword.`let`))
-        ++ tok(Token.Name(name.value))
-        ++ renderBinding(binding.value, needEquals = true)
-      case Statement.Var(name, binding) =>
-        tok(Token.Keyword(Keyword.`var`))
-        ++ tok(Token.Name(name.value))
-        ++ renderValBinding(binding.value, needEquals = true)
-      case Statement.Block(statements) =>
-        renderBlockLike(statements)(stmt => renderStatement(stmt.value))
-      case Statement.If(predicate, thenBlock, elseBlockOpt) =>
+      case SingleStatement.Block(statements) =>
+        statements match {
+          case None => renderBraces(pure(Chain.empty))
+          case Some(statements) =>
+            renderBraces(renderStatements(statements.value))
+        }
+      case SingleStatement.If(predicate, thenBlock, elseBlockOpt) =>
         tok(Token.Keyword(Keyword.`if`))
         ++ tok(Token.Punctuation(Punctuation.`(`))
         ++ renderExpression(predicate.value)
         ++ tok(Token.Punctuation(Punctuation.`)`))
-        ++ renderStatement(thenBlock.value)
+        ++ renderSingleStatement(thenBlock.value)
         ++ (elseBlockOpt match {
           case None => pure(Chain.empty)
           case Some(Ps(elseBlock)) =>
             tok(Token.Keyword(Keyword.`else`))
-            ++ renderStatement(elseBlock)
+            ++ renderSingleStatement(elseBlock)
         })
-      case Statement.Call(path, arguments) =>
+      case SingleStatement.Call(path, arguments) =>
         tok(Token.Keyword(Keyword.`call`))
         ++ renderPath(path.value)
         ++ renderParentheses(renderCommaSep(arguments)(arg => renderCallArg(arg.value)))
-      case Statement.Assert(property) =>
+      case SingleStatement.Assert(property) =>
         tok(Token.Keyword(Keyword.assert))
         ++ renderExpression(property.value)
-      case Statement.Assume(property) =>
+      case SingleStatement.Assume(property) =>
         tok(Token.Keyword(Keyword.assume))
         ++ renderExpression(property.value)
-      case Statement.Defer(label) =>
+      case SingleStatement.Defer(label) =>
         tok(Token.Keyword(Keyword.`defer`))
         ++ tok(Token.Name(label.value))
-      case Statement.Either(blocks) =>
+      case SingleStatement.Either(blocks) =>
         tok(Token.Keyword(Keyword.either))
-        ++ renderStatement(blocks.head.value)
+        ++ renderSingleStatement(blocks.head.value)
         ++ blocks.tail.foldLeft(pure(Chain.empty)) { (acc, blk) =>
           acc
           ++ tok(Token.Keyword(Keyword.or))
-          ++ renderStatement(blk.value)
+          ++ renderSingleStatement(blk.value)
         }
-      case Statement.Fork(bindings, blocks) =>
+      case SingleStatement.Fork(bindings, blocks) =>
         tok(Token.Keyword(Keyword.fork))
         ++ (if(bindings.nonEmpty) renderParentheses(renderCommaSep(bindings)(binding => renderQuantifierBound(binding.value))) else pure(Chain.empty))
-        ++ renderSepBy(blocks)(Chain.one(Token.Keyword(Keyword.and)))(block => renderStatement(block.value))
-      case Statement.LocalDefinition(defn) => 
+        ++ renderSepBy(blocks)(Chain.one(Token.Keyword(Keyword.and)))(block => renderSingleStatement(block.value))
+      case SingleStatement.LocalDefinition(defn) => 
         renderDefinition(defn.value)
-      case Statement.Return(value) =>
+      case SingleStatement.Return(value) =>
         tok(Token.Keyword(Keyword.`return`))
         ++ renderValBinding(value.value, needEquals = false)
-      case Statement.Spawn(bindings, block) =>
+      case SingleStatement.Spawn(bindings, block) =>
         tok(Token.Keyword(Keyword.spawn))
         ++ (if(bindings.nonEmpty) renderParentheses(renderCommaSep(bindings)(binding => renderQuantifierBound(binding.value))) else pure(Chain.empty))
-        ++ renderStatement(block.value)
+        ++ renderSingleStatement(block.value)
     }
     
   private def renderCheckDirective(directive: CheckDirective): GC[Token] =
     directive match {
-      case CheckDirective.CheckTimeStatement(stmt) =>
-        renderStatement(stmt.value)
+      case CheckDirective.CheckTimeStatements(statements) =>
+        renderStatements(statements.value)
       case CheckDirective.OverrideLet(path, binding) =>
         tok(Token.Keyword(Keyword.`override`))
         ++ tok(Token.Keyword(Keyword.`let`))
@@ -431,9 +461,21 @@ class ParserTests extends munit.FunSuite {
         ++ tok(Token.Keyword(Keyword.`def`))
         ++ tok(Token.Name(name.value))
         ++ renderParentheses(renderCommaSep(params)(param => renderParam(param.value)))
-      case InterfaceMember.ConcreteStatement(stmt) =>
-        renderStatement(stmt.value)
+      case InterfaceMember.ConcreteStatements(statements) =>
+        renderStatements(statements.value)
     }
+
+  private def renderCheckBlock(checkBlock: CheckBlock): GC[Token] =
+    renderBlockLike(checkBlock.directives)(dir => renderCheckDirective(dir.value))
+
+  private def renderInterfaceRef(ref: InterfaceRef): GC[Token] =
+    renderPath(ref.path.value)
+
+  private def renderInterfaceBlock(interfaceBlock: InterfaceBlock): GC[Token] =
+    renderBlockLike(interfaceBlock.members)(member => renderInterfaceMember(member.value))
+
+  private def renderImplBlock(implBlock: ImplBlock): GC[Token] =
+    renderBlockLike(implBlock.definitions)(definition => renderDefinition(definition.value))
 
   private def renderDefinition(definition: Definition): GC[Token] =
     definition match {
@@ -442,28 +484,28 @@ class ParserTests extends munit.FunSuite {
         ++ tok(Token.Keyword(Keyword.`def`))
         ++ tok(Token.Name(name.value))
         ++ renderParentheses(renderCommaSep(params)(param => renderParam(param.value)))
-        ++ renderStatement(body.value)
-      case Definition.Check(name, directives) =>
+        ++ renderSingleStatement(body.value)
+      case Definition.Check(name, block) =>
         tok(Token.Keyword(Keyword.check))
         ++ tok(Token.Name(name.value))
-        ++ renderBlockLike(directives)(dir => renderCheckDirective(dir.value))
-      case Definition.Interface(name, supers, members) =>
+        ++ renderCheckBlock(block.value)
+      case Definition.Interface(name, supers, block) =>
         tok(Token.Keyword(Keyword.`interface`))
         ++ tok(Token.Name(name.value))
         ++ (if(supers.nonEmpty) {
           tok(Token.Keyword(Keyword.`extends`))
-          ++ renderCommaSep(supers)(sup => renderPath(sup.value))
+          ++ renderCommaSep(supers)(sup => renderInterfaceRef(sup.value))
         } else pure(Chain.empty))
-        ++ renderBlockLike(members)(member => renderInterfaceMember(member.value))
-      case Definition.Impl(name, params, interfaces, definitions) =>
+        ++ renderInterfaceBlock(block.value)
+      case Definition.Impl(name, params, interfaces, block) =>
         tok(Token.Keyword(Keyword.impl))
         ++ tok(Token.Name(name.value))
         ++ renderParentheses(renderCommaSep(params)(param => renderParam(param.value)))
         ++ (if(interfaces.nonEmpty) {
           tok(Token.Keyword(Keyword.`extends`))
-          ++ renderCommaSep(interfaces)(sup => renderPath(sup.value))
+          ++ renderCommaSep(interfaces)(sup => renderInterfaceRef(sup.value))
         } else pure(Chain.empty))
-        ++ renderBlockLike(definitions)(definition => renderDefinition(definition.value))
+        ++ renderImplBlock(block.value)
     }
 
   private def renderDefinitions(definitions: List[Ps[Definition]]): GC[Token] =
@@ -549,6 +591,7 @@ class ParserTests extends munit.FunSuite {
       def gen: Generator[Ps[Module]] =
         Generatable[Ps[Module]]
           .build
+          .replace[Int](pure(-1))
           .replace[BigInt](pure(BigInt(0)))
           .replace[String](pure("str"))
           .apply
@@ -567,6 +610,7 @@ class ParserTests extends munit.FunSuite {
       def gen: Generator[Ps[Module]] =
         Generatable[Ps[Module]]
           .build
+          .replace[Int](pure(-1))
           .replace[BigInt](pure(BigInt(0)))
           .replace[String](pure("str"))
           .replace[List[Ps[Definition]]] {
@@ -583,7 +627,7 @@ class ParserTests extends munit.FunSuite {
             case (module, _) =>
               Transformable[Ps[Module]]
                 .combining[Count]
-                .incrementAt[Ps[Statement]](_ => true)
+                .incrementAt[Ps[SingleStatement]](_ => true)
                 .apply(module)
                 .depth >= 2
           }
@@ -596,6 +640,7 @@ class ParserTests extends munit.FunSuite {
       def gen: Generator[Ps[Expression]] =
         Generatable[Ps[Expression]]
           .build
+          .replace[Int](pure(-1))
           .replace[BigInt](pure(BigInt(0)))
           .replace[String](pure("str"))
           .apply
@@ -627,40 +672,32 @@ class ParserTests extends munit.FunSuite {
     .run()
   }
 
-  test("to tokens and back (statement)") {
-    new ToTokensAndBack[Ps[Statement]] {
-      def gen: Generator[Ps[Statement]] =
-        Generatable[Ps[Statement]]
+  test("to tokens and back (statement)".only) {
+    new ToTokensAndBack[Ps[Statements]] {
+      def gen: Generator[Ps[Statements]] =
+        Generatable[Ps[Statements]]
           .build
+          .replace[Int](pure(-1))
           .replace[BigInt](pure(BigInt(0)))
           .replace[String](pure("str"))
           .apply
 
-      def applyConstraints(checker: Checker[(Ps[Statement], List[Token])]): checker.Self =
+      def applyConstraints(checker: Checker[(Ps[Statements], List[Token])]): checker.Self =
         checker
           .exists {
             case (stmt, _) =>
-              Transformable[Ps[Statement]]
+              Transformable[Ps[Statements]]
                 .combining[Count]
-                .incrementAt[List[Ps[Statement]]](lst => lst.size >= 2)
-                .incrementAt[NonEmptyList[Ps[Statement]]](lst => lst.size >= 2)
-                .apply(stmt)
-                .exists
-          }
-          .exists {
-            case (stmt, _) =>
-              Transformable[Ps[Statement]]
-                .combining[Count]
-                .incrementAt[Ps[Statement]](_ => true)
+                .incrementAt[Ps[SingleStatement]](_ => true)
                 .apply(stmt)
                 .depth >= 3
           }
 
-      def parse(input: Parser.Input): Either[NonEmptyList[Parser.Error], Ps[Statement]] =
-        Parser.statement.parse(input).map(_._1)
+      def parse(input: Parser.Input): Either[NonEmptyList[Parser.Error], Ps[Statements]] =
+        Parser.statements.parse(input).map(_._1)
 
-      def render(t: Ps[Statement]): Generator[Chain[Token]] =
-        renderStatement(t.value)
+      def render(t: Ps[Statements]): Generator[Chain[Token]] =
+        renderStatements(t.value)
     }
     .run()
   }

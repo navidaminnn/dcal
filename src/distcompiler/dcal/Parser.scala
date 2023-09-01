@@ -107,14 +107,19 @@ object Parser {
           }
         )
       }
-      | ps(statement.map(AST.CheckDirective.CheckTimeStatement(_)))
+      | ps(statements.map(AST.CheckDirective.CheckTimeStatements(_)))
+    }
+
+  lazy val checkBlock: P[Ps[AST.CheckBlock]] =
+    ps {
+      blockLike(checkDirective).map(AST.CheckBlock(_))
     }
 
   lazy val definitionCheck: P[Ps[AST.Definition.Check]] =
     ps {
-      (kw(Keyword.check) ~> ps(name) ~ blockLike(checkDirective)).map {
-        case name ~ directives =>
-          AST.Definition.Check(name, directives)
+      (kw(Keyword.check) ~> ps(name) ~ checkBlock).map {
+        case name ~ block =>
+          AST.Definition.Check(name, block)
       }
     }
 
@@ -128,22 +133,35 @@ object Parser {
             AST.InterfaceMember.AbstractDef(qualifierOpt, name, params.toList)
         }
       ))
-      | statement.map(AST.InterfaceMember.ConcreteStatement(_))
+      | statements.map(AST.InterfaceMember.ConcreteStatements(_))
+    }
+
+  lazy val interfaceRef: P[Ps[AST.InterfaceRef]] =
+    ps(path.map(AST.InterfaceRef(_)))
+
+  lazy val interfaceBlock: P[Ps[AST.InterfaceBlock]] =
+    ps {
+      blockLike(interfaceMember).map(AST.InterfaceBlock(_))
     }
 
   lazy val definitionInterface: P[Ps[AST.Definition.Interface]] =
     ps {
-      (kw(Keyword.`interface`) ~> ps(name) ~ opt(kw(Keyword.`extends`) ~> comma1Sep(path)) ~ blockLike(interfaceMember)).map {
-        case name ~ extendsOpt ~ members =>
-          AST.Definition.Interface(name, extendsOpt.fold(List.empty)(_.toList), members.toList)
+      (kw(Keyword.`interface`) ~> ps(name) ~ opt(kw(Keyword.`extends`) ~> comma1Sep(interfaceRef)) ~ interfaceBlock).map {
+        case name ~ extendsOpt ~ block =>
+          AST.Definition.Interface(name, extendsOpt.fold(List.empty)(_.toList), block)
       }
+    }
+
+  lazy val implBlock: P[Ps[AST.ImplBlock]] =
+    ps {
+      blockLike(definition).map(AST.ImplBlock(_))
     }
   
   lazy val definitionImpl: P[Ps[AST.Definition.Impl]] =
     ps {
-      (kw(Keyword.impl) ~> ps(name) ~ parentheses(commaSep(param)) ~ opt(kw(Keyword.`extends`) ~> comma1Sep(path)) ~ blockLike(definition)).map {
-        case name ~ params ~ interfaces ~ definitions =>
-          AST.Definition.Impl(name, params, interfaces.fold(List.empty)(_.toList), definitions.toList)
+      (kw(Keyword.impl) ~> ps(name) ~ parentheses(commaSep(param)) ~ opt(kw(Keyword.`extends`) ~> comma1Sep(interfaceRef)) ~ implBlock).map {
+        case name ~ params ~ interfaces ~ block =>
+          AST.Definition.Impl(name, params, interfaces.fold(List.empty)(_.toList), block)
       }
     }
 
@@ -239,14 +257,20 @@ object Parser {
 
   lazy val functionSubstitutionExpr: P[Ps[AST.Expression.FunctionSubstitution]] =
     ps {
-      val subst: P[Ps[(NonEmptyList[Ps[Expression]], Ps[Expression])]] =
+      val subst: P[Ps[AST.FunctionSubstitutionBranch]] =
         ps {
           val index: P[Ps[Expression]] =
             (pn(Punctuation.`.`) ~> ps(name.map(AST.Expression.StringLiteral(_))))
             | brackets(expression)
 
-          (pn(Punctuation.!) ~>? rep1(index) ~ (pn(Punctuation.`=`) ~> expression)).map {
-            case indices ~ value => (indices.toNonEmptyList, value)
+          (ps(pn(Punctuation.!) ~>? rep1(index) ~ (pn(Punctuation.`=`) ~> expression))).map {
+            case ps @ Ps(indices ~ value) =>
+              AST.FunctionSubstitutionBranch(
+                indices.toNonEmptyList,
+                AST.FunctionSubstitutionBody(
+                  AST.FunctionSubstitutionAnchor(ps.sourceLocation, value),
+                ),
+              )
           }
         }
 
@@ -319,13 +343,22 @@ object Parser {
         .parser
     }
 
-  lazy val await: P[Ps[AST.Statement.Await]] =
+  lazy val await: P[Ps[AST.SingleStatement.Await]] =
     ps {
-      kw(Keyword.`await`) ~> expression.map(AST.Statement.Await(_))
+      kw(Keyword.`await`) ~> expression.map(AST.SingleStatement.Await(_))
     }
 
+  lazy val pathSegment: P[Ps[AST.PathSegment]] =
+    ps(name).map(AST.PathSegment.fromName)
+    | anyTok
+        .constrain {
+          case ps @ Ps(Token.Punctuation(op: BinaryOperator)) => Right(ps.as(op))
+          case actualTok => Left(ParserError.ExpectedAbstract("binary operator", actualTok))
+        }
+        .map(AST.PathSegment.fromPunctuation)
+
   lazy val path: P[Ps[AST.Path]] =
-    ps(rep1sep(ps(name), pn(Punctuation.`.`)).map(parts => AST.Path(parts.toNonEmptyList)))
+    ps(rep1sep(pathSegment, pn(Punctuation.`.`)).map(parts => AST.Path(parts.toNonEmptyList)))
 
   lazy val assignLhs: P[Ps[AST.AssignLhs]] =
     ps {
@@ -342,9 +375,9 @@ object Parser {
       }
     }
 
-  lazy val assignment: P[Ps[AST.Statement.Assignment]] =
+  lazy val assignment: P[Ps[AST.SingleStatement.Assignment]] =
     ps {
-      rep1sep(assignPair, pn(Punctuation.`||`)).map(pairs => AST.Statement.Assignment(pairs.toNonEmptyList))
+      rep1sep(assignPair, pn(Punctuation.`||`)).map(pairs => AST.SingleStatement.Assignment(pairs.toNonEmptyList))
     }
 
   lazy val instanceDecl: P[Ps[AST.InstanceDecl]] =
@@ -363,11 +396,11 @@ object Parser {
       | (kw(Keyword.`instance`) ~> instanceDecl.map(AST.CallArg.Instance(_)))
     }
 
-  lazy val call: P[Ps[AST.Statement.Call]] =
+  lazy val call: P[Ps[AST.SingleStatement.Call]] =
     ps {
       (kw(Keyword.`call`) ~> path ~ (pn(Punctuation.`(`) ~> repsep(callArg, pn(Punctuation.`,`)) <~ pn(Punctuation.`)`))).map {
         case path ~ arguments =>
-          AST.Statement.Call(path, arguments.toList)
+          AST.SingleStatement.Call(path, arguments.toList)
       }
     }
 
@@ -397,89 +430,97 @@ object Parser {
       }
   }
 
-  lazy val letStmt: P[Ps[AST.Statement.Let]] =
-    ps {
-      (kw(Keyword.`let`) ~> ps(name) ~ binding.eqInst).map {
-        case name ~ binding => AST.Statement.Let(name, binding)
-      }
-    }
-
-  lazy val varStmt: P[Ps[AST.Statement.Var]] =
-    ps {
-      (kw(Keyword.`var`) ~> ps(name) ~ binding.eqVal).map {
-        case name ~ binding => AST.Statement.Var(name, binding)
-      }
-    }
-
-  lazy val ifStmt: P[Ps[AST.Statement.If]] =
+  lazy val ifStmt: P[Ps[AST.SingleStatement.If]] =
     ps {
       ((kw(Keyword.`if`) ~> pn(Punctuation.`(`) ~> expression <~ pn(Punctuation.`)`))
       ~ block
       ~ opt(kw(Keyword.`else`) ~> block))
       .map {
         case condition ~ thenBlock ~ elseBlockOpt =>
-          AST.Statement.If(condition, thenBlock, elseBlockOpt)
+          AST.SingleStatement.If(condition, thenBlock, elseBlockOpt)
       }
     }
 
-  lazy val callStmt: P[Ps[AST.Statement.Call]] =
+  lazy val callStmt: P[Ps[AST.SingleStatement.Call]] =
     ps {
       (kw(Keyword.`call`) ~> path ~ parentheses(commaSep(callArg))).map {
         case path ~ arguments =>
-          AST.Statement.Call(path, arguments.toList)
+          AST.SingleStatement.Call(path, arguments.toList)
       }
     }
 
-  lazy val deferStmt: P[Ps[AST.Statement.Defer]] =
+  lazy val deferStmt: P[Ps[AST.SingleStatement.Defer]] =
     ps {
-      kw(Keyword.defer) ~> ps(name).map(AST.Statement.Defer(_))
+      kw(Keyword.defer) ~> ps(name).map(AST.SingleStatement.Defer(_))
     }
 
-  lazy val returnStmt: P[Ps[AST.Statement.Return]] =
+  lazy val returnStmt: P[Ps[AST.SingleStatement.Return]] =
     ps {
-      kw(Keyword.`return`) ~> binding.noEqVal.map(AST.Statement.Return(_))
+      kw(Keyword.`return`) ~> binding.noEqVal.map(AST.SingleStatement.Return(_))
     }
 
-  lazy val eitherStmt: P[Ps[AST.Statement.Either]] =
+  lazy val eitherStmt: P[Ps[AST.SingleStatement.Either]] =
     ps {
       (kw(Keyword.either) ~> block ~ rep(kw(Keyword.or) ~> block)).map {
         case firstBlock ~ restBlock =>
-          AST.Statement.Either(NonEmptyList(firstBlock, restBlock.toList))
+          AST.SingleStatement.Either(NonEmptyList(firstBlock, restBlock.toList))
       }
     }
 
-  lazy val forkStmt: P[Ps[AST.Statement.Fork]] =
+  lazy val forkStmt: P[Ps[AST.SingleStatement.Fork]] =
     ps {
       (kw(Keyword.fork) ~> opt(parentheses(comma1Sep(quantifierBound))) ~ rep1sep(block, kw(Keyword.and))).map {
         case qbsOpt ~ blocks =>
-          AST.Statement.Fork(qbsOpt.fold(List.empty)(_.toList), blocks.toNonEmptyList)
+          AST.SingleStatement.Fork(qbsOpt.fold(List.empty)(_.toList), blocks.toNonEmptyList)
       }
     }
 
-  lazy val spawnStmt: P[Ps[AST.Statement.Spawn]] =
+  lazy val spawnStmt: P[Ps[AST.SingleStatement.Spawn]] =
     ps {
       (kw(Keyword.spawn) ~> opt(parentheses(comma1Sep(quantifierBound))) ~ block).map {
         case qbsOpt ~ block =>
-          AST.Statement.Spawn(qbsOpt.fold(List.empty)(_.toList), block)
+          AST.SingleStatement.Spawn(qbsOpt.fold(List.empty)(_.toList), block)
       }
     }
 
-  lazy val assertStmt: P[Ps[AST.Statement.Assert]] =
+  lazy val assertStmt: P[Ps[AST.SingleStatement.Assert]] =
     ps {
-      (kw(Keyword.assert) ~> expression).map(AST.Statement.Assert(_))
+      (kw(Keyword.assert) ~> expression).map(AST.SingleStatement.Assert(_))
     }
 
-  lazy val assumeStmt: P[Ps[AST.Statement.Assume]] =
+  lazy val assumeStmt: P[Ps[AST.SingleStatement.Assume]] =
     ps {
-      (kw(Keyword.assume) ~> expression).map(AST.Statement.Assume(_))
+      (kw(Keyword.assume) ~> expression).map(AST.SingleStatement.Assume(_))
     }
 
-  lazy val statement: P[Ps[AST.Statement]] =
+  private lazy val restStmts: P[Option[Ps[AST.Statements]]] =
+    opt(opt(pn(Punctuation.`;`)) ~>? statements)
+
+  lazy val letStmt: P[Ps[AST.Statements.Let]] =
+    ps {
+      (kw(Keyword.`let`) ~> ps(name) ~ binding.eqInst ~ restStmts).map {
+        case name ~ binding ~ restOpt => AST.Statements.Let(name, binding, restOpt)
+      }
+    }
+
+  lazy val varStmt: P[Ps[AST.Statements.Var]] =
+    ps {
+      (kw(Keyword.`var`) ~> ps(name) ~ binding.eqVal ~ restStmts).map {
+        case name ~ binding ~ restOpt => AST.Statements.Var(name, binding, restOpt)
+      }
+    }
+
+  lazy val statements: P[Ps[AST.Statements]] =
+    lzy {
+      letStmt
+      | varStmt
+      | ps((singleStatement ~ restStmts).map { case firstStmt ~ restOpt => AST.Statements.Single(firstStmt, restOpt) })
+    }
+
+  lazy val singleStatement: P[Ps[AST.SingleStatement]] =
     lzy {
       await
       | assignment
-      | letStmt
-      | varStmt
       | ifStmt
       | callStmt
       | deferStmt
@@ -490,11 +531,11 @@ object Parser {
       | assertStmt
       | assumeStmt
       | block
-      | ps(definition.map(AST.Statement.LocalDefinition(_)))
+      | ps(definition.map(AST.SingleStatement.LocalDefinition(_)))
     }
 
-  lazy val block: P[Ps[AST.Statement.Block]] =
-    ps(blockLike(statement).map(AST.Statement.Block(_)))
+  lazy val block: P[Ps[AST.SingleStatement.Block]] =
+    ps(braces(opt(statements)).map(AST.SingleStatement.Block(_)))
 
   lazy val `import`: P[Ps[AST.Import]] =
     ps(ps(name).map(AST.Import.Name(_)))

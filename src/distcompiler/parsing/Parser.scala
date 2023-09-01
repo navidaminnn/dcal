@@ -46,8 +46,15 @@ enum Parser[Elem, Input, Error, +T] {
             cache.put(lz.handle, false)
             Eval.defer(impl(pFn()))
           case Constrain(p, _) => Eval.defer(impl(p))
-          case Or(left, right) => (Eval.defer(impl(left)), Eval.defer(impl(right))).mapN(_ && _)
-          case Ap(ff, fa) => (Eval.defer(impl(ff)), Eval.defer(impl(fa))).mapN(_ || _)
+          case Or(left, right) =>
+            // don't need short-circuit so much here because if it's false we'll crash anyway
+            (Eval.defer(impl(left)), Eval.defer(impl(right))).mapN(_ && _)
+          case Ap(ff, fa) => 
+            // short-circuit to save work (bias to the "early" side so we stop at the "first" progress and ignore irrelevant later manipulations)
+            Eval.defer(impl(ff)).flatMap {
+              case true => Eval.True
+              case false => impl(fa)
+            }
           case AndThen(pt, _) => Eval.defer(impl(pt))
         }
 
@@ -74,15 +81,16 @@ enum Parser[Elem, Input, Error, +T] {
     Log(name, this)
 
   def parse(input: Input)(using inputOps: InputOps[Elem, Input, Error], errorOps: ErrorOps[Elem, Error]): Either[NonEmptyList[Error], (T, Input)] = {
+    type Anchor = (Parser.Handle, Int)
+
     enum Result[+T] derives CanEqual {
-      case Ok(value: T, nextInput: Input, recoveredErrors: Chain[Error])
+      case Ok(value: T, nextInput: Input, recoveredErrors: Chain[Error], anchorTrace: Set[Anchor])
       case Backtrack(errors: Chain[Error], idx: Int) extends Result[Nothing]
       case Fatal(errors: Chain[Error], idx: Int) extends Result[Nothing]
     }
 
     extension (input: Input) def idx: Int = inputOps.tellIdx(input)
 
-    type Anchor = (Parser.Handle, Int)
     val leftRecTable = mutable.HashMap[Anchor, Option[Any]]()
     val leftRecReached = mutable.HashSet[Anchor]()
 
@@ -96,7 +104,7 @@ enum Parser[Elem, Input, Error, +T] {
               case Left(error) =>
                 Eval.now(Result.Fatal(Chain.one(error), input.idx))
               case Right(Some(elem, nextInput)) =>
-                Eval.now(Result.Ok(elem, nextInput, Chain.nil)) 
+                Eval.now(Result.Ok(elem, nextInput, Chain.nil, Set.empty)) 
               case Right(None) =>
                 Eval.now(Result.Backtrack(
                   Chain.one(errorOps.unexpectedEOF(inputOps.nextSourceLocation(input))),
@@ -111,17 +119,17 @@ enum Parser[Elem, Input, Error, +T] {
                   Chain.one(errorOps.expectedEOF(inputOps.lastSourceLocation(nextInput), elem)),
                   input.idx))
               case Right(None) =>
-                Eval.now(Result.Ok((), input, Chain.nil))
+                Eval.now(Result.Ok((), input, Chain.nil, Set.empty))
             }
           case Input() => 
-            Eval.now(Result.Ok(input, input, Chain.nil))
+            Eval.now(Result.Ok(input, input, Chain.nil, Set.empty))
           case Trivial(value) =>
-            Eval.now(Result.Ok(value, input, Chain.nil))
+            Eval.now(Result.Ok(value, input, Chain.nil, Set.empty))
           case AssertProgress(p, assertion) =>
             assertion.productR(Eval.defer(impl(p, input)))
           case Peek(p) =>
             Eval.defer(impl(p, input)).map {
-              case result @ Result.Ok(_, _, _) => result
+              case result @ Result.Ok(_, _, _, _) => result
               case Result.Backtrack(errors, _) => Result.Backtrack(errors, input.idx)
               case result @ Result.Fatal(_, _) => result
             }
@@ -129,8 +137,8 @@ enum Parser[Elem, Input, Error, +T] {
             println(s"[$name @ ${input.idx}] enter")
             Eval.defer(impl(p, input)).map { result =>
               result match {
-                case Result.Ok(value, nextInput, recoveredErrors) =>
-                  println(s"[$name ${input.idx}] success w/ $value")
+                case Result.Ok(value, nextInput, _, _) =>
+                  println(s"[$name ${input.idx}] success w/ $value ending at ${nextInput.idx}")
                 case Result.Backtrack(errors, idx) =>
                   println(s"[$name ${input.idx}] backtrack @ $idx")
                 case Result.Fatal(errors, idx) =>
@@ -145,31 +153,41 @@ enum Parser[Elem, Input, Error, +T] {
             leftRecTable.get(anchor) match {
               case None =>
                 leftRecTable.update(anchor, None)
-                def grow(result: Result[T], smallerValue: Option[T], prevInput: Input, prevRecoveredErrors: Chain[Error], anchor: Anchor): Eval[Result[T]] =
+                leftRecReached += anchor
+
+                def grow(result: Result[T], smallerValue: Option[T], prevInput: Input, prevRecoveredErrors: Chain[Error], anchor: Anchor, prevAnchorTrace: Set[Anchor]): Eval[Result[T]] =
                   result match {
-                    case result @ Result.Ok(value, nextInput, recoveredErrors) =>
-                      if(leftRecReached(anchor)) {
-                        leftRecReached.remove(anchor)
+                    case result @ Result.Ok(value, nextInput, recoveredErrors, anchorTrace) =>
+                      if(leftRecReached(anchor) || anchorTrace(anchor)) {
                         leftRecTable.remove(anchor)
+                        leftRecReached.remove(anchor)
 
                         val nextAnchor = (handle, nextInput.idx)
                         leftRecTable.update(nextAnchor, Some(value))
 
-                        assert(prevInput.idx < nextInput.idx)
+                        // this is not always true, for instance in the case of rep().
+                        // we can consume no input after failing a recursive case, at which point
+                        // we will attempt to grow, see that we get a trivial non-recursive input again
+                        // (without leftRecReached this time), and end with our trivial output
+                        if(anchorTrace(anchor)) {
+                          // instead, assert it's true for the growth case _where we reached a rec case and consumed no input anyway_
+                          // ... that would never be reasonable, would it?
+                          assert(prevInput.idx < nextInput.idx)
+                        }
                         Eval.defer(impl(pp, nextInput))
-                          .flatMap(grow(_, Some(value), nextInput, recoveredErrors, nextAnchor))
+                          .flatMap(grow(_, Some(value), nextInput, recoveredErrors, nextAnchor, prevAnchorTrace ++ anchorTrace.excl(anchor)))
                           .productL(Eval.always {
-                            leftRecReached.remove(nextAnchor)
+                            leftRecReached.remove(anchor)
                             leftRecTable.remove(nextAnchor)
                           })
                       } else {
-                        // if we didn't reach ourselves recursively but did get a value, it means we use a non-rec case.
+                        // if we didn't reach ourselves recursively but did get a value, it means we used a non-rec case.
                         // don't return that, because we shouldn't have tried that from this position. just pretend
                         // we stopped at the prev value
                         smallerValue match {
-                          case None => Eval.now(result)
+                          case None => Eval.now(result.copy(anchorTrace = prevAnchorTrace ++ anchorTrace))
                           case Some(value) => 
-                            Eval.now(Result.Ok(value, prevInput, prevRecoveredErrors))
+                            Eval.now(Result.Ok(value, prevInput, prevRecoveredErrors, prevAnchorTrace ++ anchorTrace.excl(anchor)))
                         }
                       }
                     case Result.Backtrack(errors, _) =>
@@ -177,27 +195,26 @@ enum Parser[Elem, Input, Error, +T] {
                         case None =>
                           Eval.now(result)
                         case Some(value) =>
-                          Eval.now(Result.Ok(value, prevInput, recoveredErrors = errors))
+                          Eval.now(Result.Ok(value, prevInput, recoveredErrors = errors, prevAnchorTrace))
                       }
                     case result @ Result.Fatal(_, _) => Eval.now(result)
                   }
 
                 Eval.defer(impl(pp, input))
-                  .flatMap(grow(_, None, input, Chain.nil, anchor))
+                  .flatMap(grow(_, None, input, Chain.nil, anchor, Set.empty))
                   .productL(Eval.always { 
                     leftRecReached.remove(anchor)
                     leftRecTable.remove(anchor)
                   })
               case Some(None) =>
-                leftRecReached.add(anchor)
+                leftRecReached += anchor
                 Eval.now(Result.Backtrack(Chain.nil, input.idx))
               case Some(Some(value)) =>
-                leftRecReached.add(anchor)
-                Eval.now(Result.Ok(value.asInstanceOf[T], input, Chain.nil))
+                Eval.now(Result.Ok(value.asInstanceOf[T], input, Chain.nil, Set(anchor)))
             }
           case Constrain(p, pred) =>
             Eval.defer(impl(p, input)).map {
-              case Result.Ok(value, nextInput, recoveredErrors) =>
+              case result @ Result.Ok(value, nextInput, recoveredErrors, _) =>
                 pred(value) match {
                   case Left(error) =>
                     // if we're constraining a length 1 parse, special-case that we backtrack with no progress.
@@ -210,19 +227,19 @@ enum Parser[Elem, Input, Error, +T] {
                       }
                     Result.Backtrack(recoveredErrors :+ error, nextIdx)
                   case Right(value) =>
-                    Result.Ok(value, nextInput, recoveredErrors)
+                    result.copy(value = value)
                 }
               case result @ (Result.Backtrack(_, _) | Result.Fatal(_, _)) => result
             }
           case Or(left, right) =>
             Eval.defer(impl(left, input)).flatMap {
-              case result @ Result.Ok(_, _, _) =>
+              case result @ Result.Ok(_, _, _, _) =>
                 Eval.now(result)
               case Result.Backtrack(errors, idx) if idx == input.idx =>
                 val outerIdx = idx
                 val outerErrors = errors
                 Eval.defer(impl(right, input)).map {
-                  case result @ Result.Ok(value, nextInput, recoveredErrors) if nextInput.idx == idx => 
+                  case result @ Result.Ok(value, nextInput, recoveredErrors, _) if nextInput.idx == idx => 
                     result.copy(recoveredErrors = outerErrors ++ recoveredErrors)
                   case result @ Result.Backtrack(errors, `outerIdx`) =>
                     result.copy(errors = outerErrors ++ errors)
@@ -237,14 +254,18 @@ enum Parser[Elem, Input, Error, +T] {
             }
           case Ap(ff, fa) =>
             Eval.defer(impl(ff, input)).flatMap {
-              case Result.Ok(ff, nextInput, recoveredErrors) =>
+              case Result.Ok(ff, nextInput, recoveredErrors, anchorTrace) =>
                 val outerIdx = nextInput.idx
                 val outerErrors = recoveredErrors
+                val outerAnchorTrace = anchorTrace
                 Eval.defer(impl(fa, nextInput)).map {
-                  case Result.Ok(fa, nextInput, recoveredErrors) if nextInput.idx == outerIdx =>
-                    Result.Ok(ff(fa), nextInput, outerErrors ++ recoveredErrors)
-                  case result @ Result.Ok(fa, _, _) =>
-                    result.copy(value = ff(fa))
+                  case result @ Result.Ok(fa, nextInput, recoveredErrors, anchorTrace) if nextInput.idx == outerIdx =>
+                    result.copy(
+                      value = ff(fa),
+                      recoveredErrors = outerErrors ++ recoveredErrors,
+                      anchorTrace = outerAnchorTrace ++ anchorTrace)
+                  case result @ Result.Ok(fa, _, _, anchorTrace) =>
+                    result.copy(value = ff(fa), anchorTrace = outerAnchorTrace ++ anchorTrace)
                   case result @ Result.Backtrack(errors, `outerIdx`) =>
                     result.copy(errors = outerErrors ++ errors)
                   case result @ Result.Fatal(errors, `outerIdx`) =>
@@ -257,17 +278,22 @@ enum Parser[Elem, Input, Error, +T] {
             }
           case AndThen(pt, fn) =>
             Eval.defer(impl(pt, input)).flatMap {
-              case Result.Ok(t, nextInput, recoveredErrors) =>
+              case Result.Ok(t, nextInput, recoveredErrors, anchorTrace) =>
                 val outerIdx = nextInput.idx
                 val outerErrors = recoveredErrors
+                val outerAnchorTrace = anchorTrace
                 Eval.defer(impl(fn(t), nextInput)).map {
-                  case result @ Result.Ok(fa, nextInput, recoveredErrors) if nextInput.idx == outerIdx =>
-                    result.copy(recoveredErrors = outerErrors ++ recoveredErrors)
+                  case result @ Result.Ok(_, _, recoveredErrors, anchorTrace) if nextInput.idx == outerIdx =>
+                    result.copy(
+                      recoveredErrors = outerErrors ++ recoveredErrors,
+                      anchorTrace = outerAnchorTrace ++ anchorTrace)
+                  case result @ Result.Ok(_, _, _, anchorTrace) =>
+                    result.copy(anchorTrace = outerAnchorTrace ++ anchorTrace)
                   case result @ Result.Backtrack(errors, `outerIdx`) =>
                     result.copy(errors = outerErrors ++ errors)
                   case result @ Result.Fatal(errors, `outerIdx`) =>
                     result.copy(errors = outerErrors ++ errors)
-                  case result @ (Result.Ok(_, _, _) | Result.Backtrack(_, _) | Result.Fatal(_, _)) =>
+                  case result @ (Result.Backtrack(_, _) | Result.Fatal(_, _)) =>
                     result
                 }
               case result @ (Result.Backtrack(_, _) | Result.Fatal(_, _)) =>
@@ -291,7 +317,7 @@ enum Parser[Elem, Input, Error, +T] {
     }
       
     impl(this, input).value match {
-      case Result.Ok(value, nextInput, _) =>
+      case Result.Ok(value, nextInput, _, _) =>
         Right((value, nextInput))
       case Result.Backtrack(errors, _) =>
         Left(NonEmptyList.fromListUnsafe(errors.toList))

@@ -60,6 +60,39 @@ class ParserTests extends munit.FunSuite {
     testP(pp)(List('a', 'b', 'c', 'd'), "abcd")
   }
 
+  test("leftrec (bug: parsing an unexpected sequence)") {
+    val pp: P[String] = localRec[String] { rec =>
+      (rec ~ elem('x')).map { case a ~ b => a :+ b }
+      | elem('x').map(_.toString())
+      | elem('y').map(_.toString())
+    }
+
+    testP(pp)(
+      List('x'),
+      "x",
+    )
+    testP(pp)(
+      List('x', 'x'),
+      "xx",
+    )
+    testP(pp)(
+      List('y', 'x'),
+      "yx",
+    )
+    testP(pp)(
+      List('x', 'x', 'x'),
+      "xxx",
+    )
+    testP(pp)(
+      List('y', 'x', 'x'),
+      "yxx",
+    )
+    testP(rep(pp).map(_.toList))(
+      List('x', 'x', 'y'),
+      List("xx", "y"),
+    )
+  }
+
   test("leftrec (left-associative op)") {
     enum Tree {
       case Leaf(ch: Char)
