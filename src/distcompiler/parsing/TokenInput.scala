@@ -24,8 +24,6 @@ final class TokenInput[Elem, Error] private (val lastSourceLocation: SourceLocat
 }
 
 object TokenInput {
-  private case class Fns[Elem, Error](elemLocation: Elem => SourceLocation, errLocation: Error => SourceLocation)
-
   def apply[Elem, Error](tokens: EvalList[Either[Error, Elem]], initialSourceLocation: SourceLocation, elemLocation: Elem => SourceLocation): TokenInput[Elem, Error] =
     new TokenInput[Elem, Error](
       lastSourceLocation = initialSourceLocation,

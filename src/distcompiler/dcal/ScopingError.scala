@@ -1,6 +1,6 @@
 package distcompiler.dcal
 
-import distcompiler.parsing.PsK
+//import distcompiler.parsing.PsK
 
 enum ScopingError {
   case TODO

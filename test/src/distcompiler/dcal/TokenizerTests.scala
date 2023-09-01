@@ -73,7 +73,6 @@ class TokenizerTests extends munit.FunSuite {
             }
           ++ Iterator.single('"')
         case Token.Name(name) => name
-        case Token.BinaryOperator(op) => op.name
         case Token.Keyword(kw) => kw.name
         case Token.Punctuation(pn) => pn.name
       }
@@ -90,6 +89,8 @@ class TokenizerTests extends munit.FunSuite {
         case (Token.Name(_), Token.Keyword(_) | Token.IntLiteral(_) | Token.Name(_)) => false
         // putting an int just before alphanumerics looks like a name
         case (Token.IntLiteral(_), Token.Keyword(_) | Token.Name(_)) => false
+        // if two elements of punctuation concatenate to form also valid punctuation, they need a space separating them
+        case (Token.Punctuation(l), Token.Punctuation(r)) if Punctuation.values.iterator.map(_.name).contains(l.name ++ r.name) => false
         case _ => true
       }
     }

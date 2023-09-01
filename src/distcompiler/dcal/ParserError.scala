@@ -9,5 +9,4 @@ enum ParserError {
   case ExpectedAbstract(category: String, actualTok: Ps[Token])
   case ExpectedKeyword(expectedKeyword: Keyword, actualTok: Ps[Token])
   case ExpectedPunctuation(expectedPunctuation: Punctuation, actualTok: Ps[Token])
-  case ExpectedBinaryOperator(expectedOperator: BinaryOperator, actualTok: Ps[Token])
 }

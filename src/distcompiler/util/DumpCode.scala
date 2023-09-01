@@ -33,17 +33,6 @@ object DumpCode {
       builder += '\n'
     }
 
-    def commaSep[T](list: List[T], fn: T => Unit): Unit = {
-      var atStart = true
-      list.foreach { v =>
-        if(atStart) {
-          atStart = false
-        } else {
-          put(", ")
-        }
-      }
-    }
-
     def tryToShowTerm(term: Term): Unit =
       term match {
         case Inlined(_, bindings, term) =>

@@ -4,7 +4,7 @@ import distcompiler.util.EvalList
 import distcompiler.parsing.{Ps, SourceLocation}
 
 import cats.*
-import cats.syntax.all.given
+//import cats.syntax.all.given
 import cats.data.*
 
 object Tokenizer {
@@ -90,7 +90,8 @@ object Tokenizer {
 
   private def mkLiteralSet[T](options: Iterator[(String, (SourceLocation ?=> T))]): P[T] =
     options.toArray
-      .sortWith(_._1 > _._1)
+      .sortWith(_._1.length() > _._1.length)
+      .iterator
       .map {
         case (name, fn) =>
           capturingPosition(str(name))
@@ -100,9 +101,8 @@ object Tokenizer {
 
   private val fixedTokens: P[Ps[Token]] =
     mkLiteralSet {
-      Keyword.values.iterator.map(kw => (kw.productPrefix, (loc: SourceLocation) ?=> Ps(Token.Keyword(kw))))
-      ++ Punctuation.values.iterator.map(p => (p.productPrefix, (loc: SourceLocation) ?=> Ps(Token.Punctuation(p))))
-      ++ BinaryOperator.values.iterator.map(op => (op.productPrefix, (loc: SourceLocation) ?=> Ps(Token.BinaryOperator(op))))
+      Keyword.values.iterator.map(kw => (kw.name, (loc: SourceLocation) ?=> Ps(Token.Keyword(kw))))
+      ++ Punctuation.values.iterator.map(p => (p.name, (loc: SourceLocation) ?=> Ps(Token.Punctuation(p))))
     }
 
   private val whitespace: P[Unit] =

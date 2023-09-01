@@ -1,7 +1,7 @@
 package distcompiler.transform
 
-import cats.*
-import cats.syntax.all.given
+//import cats.*
+//import cats.syntax.all.given
 
 import java.time.{Instant, Duration}
 import scala.collection.mutable
@@ -72,6 +72,7 @@ object Checker {
       var lastExample: Option[Example[T]] = None
       var roundStart = Instant.now()
       var lastInterimReport = roundStart
+      var totalCheckTime = Duration.ZERO
 
       extension (str: fansi.Str) def checkANSI: String =
         if(disableANSI) {
@@ -89,13 +90,20 @@ object Checker {
           println()
         }
 
+      def printTimeStats(): Unit =
+        if(countExplored != 0 && countExploredSinceLast != 0) {
+          print(s" taking avg ${humanDuration(totalCheckTime.dividedBy(countExplored))} to check examples.")
+        }
+
       try {
         gen
           .examplesIterator
           .map {
             case example @ Example(_, depth) =>
               if(depth > maxDepth) {
-                println(s"reached depth $depth: took ${humanDuration(Duration.between(roundStart, Instant.now()))} and covered ${humanNum(countExplored)} states so far (${humanNum(countExploredSinceLast)} since last msg)")
+                print(s"reached depth $depth: took ${humanDuration(Duration.between(roundStart, Instant.now()))} and covered ${humanNum(countExplored)} states so far (${humanNum(countExploredSinceLast)} since last msg).")
+                printTimeStats()
+                println()
                 countExploredSinceLast = 0
                 printExample()
                 roundStart = Instant.now()
@@ -118,7 +126,9 @@ object Checker {
               val now = Instant.now()
               if(Duration.between(lastInterimReport, now).toSeconds() > 30) {
                 lastInterimReport = now
-                println(s"  ... still exploring after ${humanDuration(Duration.between(roundStart, now))}. found ${humanNum(countExploredSinceLast)} examples this level.")
+                print(s"  ... still exploring after ${humanDuration(Duration.between(roundStart, now))}. found ${humanNum(countExploredSinceLast)} examples this level.")
+                printTimeStats()
+                println()
                 printExample()
               }
             }
@@ -133,7 +143,9 @@ object Checker {
             countExplored += 1
             countExploredSinceLast += 1
 
+            val checkStartTime = Instant.now()
             streamChecker.check(example)
+            totalCheckTime = totalCheckTime.plus(Duration.between(checkStartTime, Instant.now()))
           }
 
         assert(streamChecker.isSatisfied, s"checking unsatisfied after exhausting all states")

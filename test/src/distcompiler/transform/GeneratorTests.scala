@@ -202,8 +202,6 @@ class GeneratorTests extends munit.FunSuite {
     val tree2 = Tree.Branch(Tree.Leaf(List(5, 6, 7)), tree1)
     val tree3 = Tree.Branch(Tree.Leaf(List(0, -1, 8)), tree1)
 
-    val listWithNegs: List[Int] => Boolean = _.exists(_ < 0)
-
     def countListsWithNegs(tree: Tree): Count =
       Transformable[Tree]
         .combining[Count]

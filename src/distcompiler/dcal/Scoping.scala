@@ -1,16 +1,15 @@
 package distcompiler.dcal
 
-import cats.derived.*
-import cats.data.*
-import cats.*
-import cats.syntax.all.given
+// import cats.data.*
+// import cats.*
+// import cats.syntax.all.given
 
-import Chain.{:==, ==:}
+// import Chain.{:==, ==:}
 
-import cats.collections.*
-import cats.collections.syntax.all.given
+// import cats.collections.*
+// import cats.collections.syntax.all.given
 
-import distcompiler.parsing.{Ps, PsK}
+// import distcompiler.parsing.{Ps, PsK}
 
 object Scoping {
   // import AST.*

@@ -8,7 +8,6 @@ enum Token derives CanEqual, Transformable {
   case Name(name: String)
   case Keyword(keyword: distcompiler.dcal.Keyword)
   case Punctuation(punctuation: distcompiler.dcal.Punctuation)
-  case BinaryOperator(operator: distcompiler.dcal.BinaryOperator)
 }
 object Token {
   transparent trait Meta { self: Product =>
@@ -30,6 +29,24 @@ enum Keyword extends Token.Meta derives CanEqual, Transformable {
   case `impl`
   case `pure`
   case `async`
+  case `check`
+  case `alias`
+  case `override`
+  case `abstract`
+  case `interface`
+  case `extends`
+  case `assume`
+  case `assert`
+  case `either`
+  case `or`
+  case `defer`
+  case `return`
+  case `fork`
+  case `and`
+  case `spawn`
+
+  case `CHOOSE`
+  case `EXCEPT`
 }
 
 object Keyword {
@@ -47,12 +64,23 @@ enum Punctuation extends Token.Meta derives CanEqual, Transformable {
   case `}`
   case `:=`
   case `||`
-  case `.`
   case `;`
+  case `<<`
+  case `>>`
+  case `:`
+  case `\\E`
+  case `\\A`
+  case `!`
+  case `|->`
+  case `@!`
+
+  case `\\in` extends Punctuation with BinaryOperator(Precedence(5, 5))
+  case `\\notin` extends Punctuation with BinaryOperator(Precedence(5, 5))
+  case `=` extends Punctuation with BinaryOperator(Precedence(5, 5))
+  case `.` extends Punctuation with BinaryOperator(Precedence(17, 17), leftAssociative = true)
 }
 
-enum BinaryOperator extends Token.Meta derives CanEqual, Transformable {
-  case `\\in`
-  case `\\notin`
-  case `=`
+sealed trait BinaryOperator(val precedence: Precedence, val leftAssociative: Boolean = false) derives CanEqual, Transformable { self: Punctuation =>
+  def asOperator: Punctuation = self
 }
+

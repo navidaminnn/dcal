@@ -1,9 +1,8 @@
 package distcompiler.transform
 
-import distcompiler.util.{SummonTuple, EvalList}
+import distcompiler.util.EvalList
 
 import scala.annotation.targetName
-import scala.util.Try
 import scala.collection.mutable
 
 import cats.data.*

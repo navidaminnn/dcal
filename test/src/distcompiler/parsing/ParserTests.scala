@@ -109,6 +109,35 @@ class ParserTests extends munit.FunSuite {
     testP(pp2)(List('a', '*', 'b', '*', 'c'), Branch2(Branch2(Leaf('a'), Leaf('b')), Leaf('c')))
   }
 
+  test("mustMakeProgress") {
+    lazy val pp1: P[Unit] = lzy {
+      anyElem.as(()) <~ pp1
+      | anyElem.as(())
+    }
+
+    assert(anyElem.mustMakeProgress)
+    assert(pp1.mustMakeProgress)
+
+    lazy val pp2: P[Unit] = lzy(pp2)
+
+    assert(!pp2.mustMakeProgress)
+
+    val pp3: P[Unit] = localRec { rec =>
+      anyElem.as(()) <~ rec
+      | anyElem.as(())
+    }
+
+    assert(pp3.mustMakeProgress)
+
+    val pp4: P[Unit] = localRec { rec =>
+      anyElem.as(())
+      | rec
+      | anyElem.as(())
+    }
+
+    assert(!pp4.mustMakeProgress)
+  }
+
   test("precedenceTree") {
     given Order[Set[Int]] = Order.fromLessThan(_.subsetOf(_))
 
@@ -127,7 +156,7 @@ class ParserTests extends munit.FunSuite {
           }
         }
         .levelRec(Set(1)) { rec => lower =>
-          (rec ~ elem('1') ~ lower)
+          (rec ~? elem('1') ~ lower)
             .map { case lhs ~ _ ~ rhs => Branch(Set(1), lhs, rhs) }
         }
         .levelRec(Set(2)) { rec => lower =>
@@ -156,22 +185,22 @@ class ParserTests extends munit.FunSuite {
     testP(pp)(List('x', '4', 'y', '4', 'z'), Branch(Set(1, 2, 4), Leaf('x'), Branch(Set(1, 2, 4), Leaf('y'), Leaf('z'))))
 
     testP(pp)(
-      List('x', '1', 'y', '3', 'z', '2', 'p'),
-      Branch(Set(1, 2, 3), Branch(Set(1), Leaf('x'), Leaf('y')), Branch(Set(2), Leaf('z'), Leaf('p'))),
+      List('x', '3', 'y', '1', 'z', '4', 'p'),
+      Branch(Set(1), Branch(Set(1, 2, 3), Leaf('x'), Leaf('y')), Branch(Set(1, 2, 4), Leaf('z'), Leaf('p'))),
     )
     testP(pp)(
-      List('x', '1', 'y', '4', 'z', '2', 'p'),
-      Branch(Set(1, 2, 4), Branch(Set(1), Leaf('x'), Leaf('y')), Branch(Set(2), Leaf('z'), Leaf('p'))),
-    )
-
-    testP(pp)(
-      List('x', '1', 'y', '3', 'z', '2', 'p', '2', 'q'),
-      Branch(Set(1, 2, 3), Branch(Set(1), Leaf('x'), Leaf('y')), Branch(Set(2), Leaf('z'), Branch(Set(2), Leaf('p'), Leaf('q')))),
+      List('x', '3', 'y', '2', 'z', '4', 'p'),
+      Branch(Set(2), Branch(Set(1, 2, 3), Leaf('x'), Leaf('y')), Branch(Set(1, 2, 4), Leaf('z'), Leaf('p'))),
     )
 
     testP(pp)(
-      List('w', '1', 'x', '1', 'y', '3', 'z', '2', 'p', '2', 'q'),
-      Branch(Set(1, 2, 3), Branch(Set(1), Branch(Set(1), Leaf('w'), Leaf('x')), Leaf('y')), Branch(Set(2), Leaf('z'), Branch(Set(2), Leaf('p'), Leaf('q')))),
+      List('x', '3', 'y', '1', 'z', '4', 'p', '4', 'q'),
+      Branch(Set(1), Branch(Set(1, 2, 3), Leaf('x'), Leaf('y')), Branch(Set(1, 2, 4), Leaf('z'), Branch(Set(1, 2, 4), Leaf('p'), Leaf('q')))),
+    )
+
+    testP(pp)(
+      List('w', '3', 'x', '2', 'y', '2', 'z', '4', 'p', '4', 'q'),
+      Branch(Set(2), Branch(Set(1, 2, 3), Leaf('w'), Leaf('x')), Branch(Set(2), Leaf('y'), Branch(Set(1, 2, 4), Leaf('z'), Branch(Set(1, 2, 4), Leaf('p'), Leaf('q'))))),
     )
   }
 }

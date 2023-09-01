@@ -1,13 +1,13 @@
 package test.distcompiler.dcal
 
-import scala.collection.immutable.ListMap
+// import scala.collection.immutable.ListMap
 
-import cats.data.Chain
-import cats.*
-import cats.syntax.all.given
+// import cats.data.Chain
+// import cats.*
+// import cats.syntax.all.given
 
-import distcompiler.dcal.{AST, Scoping, ScopingError}
-import distcompiler.parsing.{SourceLocation, Ps, PsK}
+// import distcompiler.dcal.{AST, Scoping, ScopingError}
+// import distcompiler.parsing.{SourceLocation, Ps, PsK}
 
 class ScopingTests extends munit.FunSuite {
   override val munitTimeout = scala.concurrent.duration.Duration(1, scala.concurrent.duration.HOURS)
