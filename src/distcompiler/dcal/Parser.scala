@@ -350,12 +350,12 @@ object Parser {
 
   lazy val pathSegment: P[Ps[AST.PathSegment]] =
     ps(name).map(AST.PathSegment.fromName)
-    | anyTok
-        .constrain {
-          case ps @ Ps(Token.Punctuation(op: BinaryOperator)) => Right(ps.as(op))
-          case actualTok => Left(ParserError.ExpectedAbstract("binary operator", actualTok))
-        }
-        .map(AST.PathSegment.fromPunctuation)
+    // | anyTok
+    //     .constrain {
+    //       case ps @ Ps(Token.Punctuation(op: BinaryOperator)) => Right(ps.as(op))
+    //       case actualTok => Left(ParserError.ExpectedAbstract("binary operator", actualTok))
+    //     }
+    //     .map(AST.PathSegment.fromPunctuation)
 
   lazy val path: P[Ps[AST.Path]] =
     ps(rep1sep(pathSegment, pn(Punctuation.`.`)).map(parts => AST.Path(parts.toNonEmptyList)))
@@ -415,7 +415,7 @@ object Parser {
           ps(pn(Punctuation.`\\in`) ~> lzy(inner).map(AST.ValBinding.Selection(_)))
           | ps(callOrExpr)
         
-        (if(needEq) ps(pn(Punctuation.`=`) ~> callOrExpr) else ps(callOrExpr))
+        (if(needEq) ps(pn(Punctuation.`=`) ~>? callOrExpr) else ps(callOrExpr))
         | ps(pn(Punctuation.`\\in`) ~> inner.map(AST.ValBinding.Selection(_)))
       }
 
@@ -425,7 +425,7 @@ object Parser {
 
     lazy val eqInst: P[Ps[AST.Binding]] =
       ps {
-        (pn(Punctuation.`=`) ~> kw(Keyword.instance) ~> instanceDecl.map(AST.Binding.Instance(_)))
+        (pn(Punctuation.`=`) ~>? kw(Keyword.instance) ~> instanceDecl.map(AST.Binding.Instance(_)))
         | eqVal.map(AST.Binding.Val(_))
       }
   }
@@ -494,7 +494,7 @@ object Parser {
     }
 
   private lazy val restStmts: P[Option[Ps[AST.Statements]]] =
-    opt(opt(pn(Punctuation.`;`)) ~>? statements)
+    opt(pn(Punctuation.`;`)) ~>? opt(statements) // allow trailing semicolon
 
   lazy val letStmt: P[Ps[AST.Statements.Let]] =
     ps {

@@ -1,5 +1,7 @@
 package test.distcompiler.transform
 
+import cats.*
+
 import distcompiler.transform.*
 
 class TransformTests extends munit.FunSuite {
@@ -17,16 +19,16 @@ class TransformTests extends munit.FunSuite {
   test("deepen tree by one") {
     import Data2.*
     val fn = Transformable[Data2]
-      .rewriting
+      .rewriting[Eval]
       .refine[Data2] { rec => {
-        case Leaf => Branch(Leaf, Leaf)
+        case Leaf => Eval.now(Branch(Leaf, Leaf))
         case other => rec(other)
       }}
-      .apply
+      .make
 
-    assertEquals(fn(Leaf), Branch(Leaf, Leaf))
+    assertEquals(fn(Leaf).value, Branch(Leaf, Leaf))
     assertEquals(
-      fn(Branch(Leaf, Branch(Leaf, Leaf))),
+      fn(Branch(Leaf, Branch(Leaf, Leaf))).value,
       Branch(Branch(Leaf, Leaf), Branch(Branch(Leaf, Leaf), Branch(Leaf, Leaf))),
     )
   }
@@ -35,19 +37,19 @@ class TransformTests extends munit.FunSuite {
     import Data1.*
 
     val fn = Transformable[Data1]
-      .rewriting
-      .replace[Int](_ + 1)
-      .apply
+      .rewriting[Eval]
+      .replace[Int](i => Eval.now(i + 1))
+      .make
 
-    assertEquals(Leaf, fn(Leaf))
+    assertEquals(fn(Leaf).value, Leaf)
 
     assertEquals(
-      fn(IntOpt(Some((1, IntOpt(Some((2, Leaf))))))),
+      fn(IntOpt(Some((1, IntOpt(Some((2, Leaf))))))).value,
       IntOpt(Some(2, IntOpt(Some((3, Leaf))))),
     )
 
     assertEquals(
-      fn(Branch(List(Leaf, Branch(List(IntOpt(None), IntOpt(Some((7, Leaf))))), IntOpt(Some((-1, Leaf)))))),
+      fn(Branch(List(Leaf, Branch(List(IntOpt(None), IntOpt(Some((7, Leaf))))), IntOpt(Some((-1, Leaf)))))).value,
       Branch(List(Leaf, Branch(List(IntOpt(None), IntOpt(Some((8, Leaf))))), IntOpt(Some((0, Leaf))))),
     )
   }

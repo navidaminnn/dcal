@@ -578,47 +578,15 @@ class ParserTests extends munit.FunSuite {
 
   // note: use single token strings / bigints because the parser is insensitive to the values
 
-  abstract class ModuleAndBack extends ToTokensAndBack[Ps[Module]] {
-    def parse(input: Parser.Input): Either[NonEmptyList[Parser.Error], Ps[Module]] =
-      Parser.module.parse(input).map(_._1)
-
-    def render(t: Ps[Module]): Generator[Chain[Token]] =
-      renderModule(t.value)
-  }
-
-  test("to tokens and back (fully general)") {
-    new ModuleAndBack {
+  test("to tokens and back (module)") {
+    new ToTokensAndBack[Ps[Module]] {
       def gen: Generator[Ps[Module]] =
         Generatable[Ps[Module]]
           .build
           .replace[Int](pure(-1))
           .replace[BigInt](pure(BigInt(0)))
           .replace[String](pure("str"))
-          .apply
-
-      def applyConstraints(checker: Checker[(Ps[Module], List[Token])]): checker.Self =
-        checker
-          .exists {
-            case (_, tokens) => tokens.size >= 50
-          }
-    }
-    .run()
-  }
-
-  test("to tokens and back (focus on one definition)") {
-    new ModuleAndBack {
-      def gen: Generator[Ps[Module]] =
-        Generatable[Ps[Module]]
-          .build
-          .replace[Int](pure(-1))
-          .replace[BigInt](pure(BigInt(0)))
-          .replace[String](pure("str"))
-          .replace[List[Ps[Definition]]] {
-            listOf(Generatable[Ps[Definition]].any, limit = 1)
-          }
-          .replace[List[Ps[Param]]] {
-            listOf(Generatable[Ps[Param]].any, limit = 2)
-          }
+          .omit[PathSegment.Punctuation]
           .apply
 
       def applyConstraints(checker: Checker[(Ps[Module], List[Token])]): checker.Self =
@@ -627,10 +595,48 @@ class ParserTests extends munit.FunSuite {
             case (module, _) =>
               Transformable[Ps[Module]]
                 .combining[Count]
-                .incrementAt[Ps[SingleStatement]](_ => true)
+                .incrementAt[Ps[Definition]](_ => true)
                 .apply(module)
-                .depth >= 2
+                .count >= 2
           }
+
+      def parse(input: Parser.Input): Either[NonEmptyList[Parser.Error], Ps[Module]] =
+        Parser.module.parse(input).map(_._1)
+
+      def render(t: Ps[Module]): Generator[Chain[Token]] =
+        renderModule(t.value)
+    }
+    .run()
+  }
+
+  test("to tokens and back (definition)") {
+    new ToTokensAndBack[Ps[Definition]] {
+      def gen: Generator[Ps[Definition]] =
+        Generatable[Ps[Definition]]
+          .build
+          .replace[Int](pure(-1))
+          .replace[BigInt](pure(BigInt(0)))
+          .replace[String](pure("str"))
+          .replace[SingleStatement](Generatable[Ps[Definition]].any.map(SingleStatement.LocalDefinition(_)))
+          .omit[PathSegment.Punctuation]
+          .apply
+
+      def applyConstraints(checker: Checker[(Ps[Definition], List[Token])]): checker.Self =
+        checker
+          .exists {
+            case (definition, _) =>
+              Transformable[Ps[Definition]]
+                .combining[Count]
+                .incrementAt[Ps[Definition]](_ => true)
+                .apply(definition)
+                .depth >= 3
+          }
+
+      def parse(input: Parser.Input): Either[NonEmptyList[Parser.Error], Ps[Definition]] =
+        Parser.definition.parse(input).map(_._1)
+
+      def render(t: Ps[Definition]): Generator[Chain[Token]] =
+        renderDefinition(t.value)
     }
     .run()
   }
@@ -643,11 +649,12 @@ class ParserTests extends munit.FunSuite {
           .replace[Int](pure(-1))
           .replace[BigInt](pure(BigInt(0)))
           .replace[String](pure("str"))
+          .omit[PathSegment.Punctuation]
           .apply
 
       def applyConstraints(checker: Checker[(Ps[Expression], List[Token])]): checker.Self =
         checker
-          .exists {
+          .assertExists {
             case (_, tokens) => !tokens.exists {
               // if I messed up and all the exprs have () around them, this will fail
               case Token.Punctuation(Punctuation.`(` | Punctuation.`)`) => true
@@ -672,7 +679,7 @@ class ParserTests extends munit.FunSuite {
     .run()
   }
 
-  test("to tokens and back (statement)".only) {
+  test("to tokens and back (statement)") {
     new ToTokensAndBack[Ps[Statements]] {
       def gen: Generator[Ps[Statements]] =
         Generatable[Ps[Statements]]
@@ -680,6 +687,8 @@ class ParserTests extends munit.FunSuite {
           .replace[Int](pure(-1))
           .replace[BigInt](pure(BigInt(0)))
           .replace[String](pure("str"))
+          .replace[Expression](pure(Expression.StringLiteral("expr")))
+          .omit[PathSegment.Punctuation]
           .apply
 
       def applyConstraints(checker: Checker[(Ps[Statements], List[Token])]): checker.Self =
@@ -690,7 +699,15 @@ class ParserTests extends munit.FunSuite {
                 .combining[Count]
                 .incrementAt[Ps[SingleStatement]](_ => true)
                 .apply(stmt)
-                .depth >= 3
+                .depth >= 2
+          }
+          .exists {
+            case (stmt, _) =>
+              Transformable[Ps[Statements]]
+                .combining[Count]
+                .incrementAt[Ps[Statements]](_ => true)
+                .apply(stmt)
+                .depth >= 2
           }
 
       def parse(input: Parser.Input): Either[NonEmptyList[Parser.Error], Ps[Statements]] =

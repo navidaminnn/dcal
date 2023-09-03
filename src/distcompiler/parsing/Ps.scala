@@ -18,7 +18,7 @@ object Ps {
       Ps(f(fa))(using fa.sourceLocation)
 
     def traverse[G[_]: Applicative, A, B](fa: Ps[A])(f: A => G[B]): G[Ps[B]] =
-      f(fa.extract).map(fa.as)
+      Applicative[G].map(f(fa.value))(Ps(_)(using fa.sourceLocation))
 
     def foldLeft[A, B](fa: Ps[A], b: B)(f: (B, A) => B): B = f(b, fa.extract)
 

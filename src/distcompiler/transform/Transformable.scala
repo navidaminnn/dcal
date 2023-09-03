@@ -2,92 +2,106 @@ package distcompiler.transform
 
 import scala.compiletime.*
 import scala.deriving.*
+import scala.collection.mutable
 
 import cats.*
+import cats.data.*
 import cats.syntax.all.given
 
 import izumi.reflect.Tag
 
-trait Transformable[T] {
-  def doCombine[U: Monoid](t: T, fn: [TT] => (TT => U) => Tag[TT] ?=> TT => U): U
+final class Transformable[T](private val transformFns: Transformable.TransformFns[T])(using val tag: Tag[T]) {
+  private def makeCombine[U: Monoid](spliceFn: [TT] => Tag[TT] => (TT => Eval[U]) => TT => Eval[U]): T => U = {
+    val cache = mutable.HashMap[Transformable[?], Any => Eval[U]]()
+    val visited = mutable.HashSet[Transformable[?]]()
 
-  def doRewrite(t: T, fn: [TT] => (TT => TT) => Tag[TT] ?=> TT => TT): T
+    given Transformable.CombineCtx[U] with {
+      extension [T](self: Transformable[T]) def recurse: T => Eval[U] = impl(self)
+    }
 
-  def doRewriteA[F[_]: Applicative](t: T, fn: [TT] => (TT => F[TT]) => Tag[TT] ?=> TT => F[TT]): F[T]
+    def impl[T](self: Transformable[T]): T => Eval[U] =
+      if(visited(self)) {
+        t => cache(self).apply(t)
+      } else {
+        visited += self
+        val result = spliceFn[T](self.tag)(self.transformFns.combine)
+        cache.update(self, result.asInstanceOf[Any => Eval[U]])
+        result
+      }
 
-  private given Transformable[T] = this
+    t => impl(this)(t).value
+  }
 
-  def combining[U: Monoid]: Transformable.CombineBuilder[T, U] =
-    Transformable.CombineBuilder[T, U]([TT] => (defaultRec: TT => U) => defaultRec)
+  private def makeRewrite[F[_]: Applicative: Defer](spliceFn: [TT] => Tag[TT] => (TT => F[TT]) => TT => F[TT]): T => F[T] = {
+    val cache = mutable.HashMap[Transformable[?], Any => F[Any]]()
+    val visited = mutable.HashSet[Transformable[?]]()
 
-  def rewriting: Transformable.RewriteBuilder[T] =
-    Transformable.RewriteBuilder[T]([TT] => (defaultRec: TT => TT) => defaultRec)
+    given Transformable.RewriteCtx[F] with {
+      extension [T](self: Transformable[T]) def recurse: T => F[T] = impl(self)
+    }
 
-  def rewritingA[F[_]: Applicative]: Transformable.RewriteABuilder[T, F] =
-    Transformable.RewriteABuilder[T, F]([TT] => (defaultRec: TT => F[TT]) => defaultRec)
+    def impl[T](self: Transformable[T]): T => F[T] =
+      if(visited(self)) {
+        t => cache(self).asInstanceOf[T => F[T]].apply(t)
+      } else {
+        visited += self
+        val result = spliceFn[T](self.tag)(self.transformFns.rewrite)
+        cache.update(self, result.asInstanceOf)
+        result
+      }
+
+    impl(this)
+  }
+
+  def combining[U: Monoid]: Transformable.CombineBuilder[T, U] = {
+    given Transformable[T] = this
+    Transformable.CombineBuilder[T, U]([TT] => (_: Tag[TT]) => identity[TT => Eval[U]])
+  }
+
+  def rewriting[F[_]: Applicative: Defer]: Transformable.RewriteBuilder[T, F] = {
+    given Transformable[T] = this
+    Transformable.RewriteBuilder[T, F]([TT] => (_: Tag[TT]) => identity[TT => F[TT]])
+  }
 }
 
-object Transformable {
+object Transformable extends TransformableLowPrio {
+  trait CombineCtx[U] {
+    extension [T] (self: Transformable[T]) def recurse: T => Eval[U]
+  }
+
+  trait RewriteCtx[F[_]] {
+    extension [T] (self: Transformable[T]) def recurse: T => F[T]
+  }
+
+  trait TransformFns[T] {
+    def combine[U: Monoid](using CombineCtx[U]): T => Eval[U]
+    def rewrite[F[_]: Applicative: Defer](using RewriteCtx[F]): T => F[T]
+  }
+
+  def fromFns[T: Tag](transformFns: TransformFns[T]): Transformable[T] = new Transformable[T](transformFns)
+
   def apply[T](using trans: Transformable[T]): Transformable[T] = trans
 
   inline def derived[T: Tag]: Transformable[T] =
     summonFrom {
-      case given Mirror.ProductOf[T] => derivedProduct[T]
+      case given Mirror.ProductOf[T & Product] => derivedProduct[T & Product].asInstanceOf[Transformable[T]]
       case mirror: Mirror.SumOf[T] => derivedSum[T, mirror.MirroredElemTypes](mirror.ordinal)
     }
 
-  inline def derivedSum[T: Tag, Elems <: Tuple](inline ordinal: T => Int): Transformable[T] = {
-    lazy val elemTransforms = summonAll[Tuple.Map[Elems, Transformable]]
-    new Transformable[T] {
-      def theTransformable(t: T): Transformable[T] =
-        elemTransforms
-          .productElement(ordinal(t))
-          .asInstanceOf[Transformable[T]]
+  inline def derivedSum[T: Tag, Elems <: Tuple](ordinal: T => Int): Transformable[T] = {
+    lazy val elemTransforms =
+      summonAll[Tuple.Map[Elems, Transformable]]
+        .productIterator
+        .asInstanceOf[Iterator[Transformable[T]]]
+        .toArray
+    
+    Transformable.fromFns(new TransformFns[T] {
+      def combine[U](using Monoid[U], CombineCtx[U]): T => Eval[U] =
+        t => Eval.defer(elemTransforms(ordinal(t)).recurse(t))
 
-      def doCombine[U](t: T, fn: [TT] => (TT => U) => Tag[TT] ?=> TT => U)(using Monoid[U]): U =
-        fn[T](t => theTransformable(t).doCombine(t, fn))(t)
-
-      def doRewrite(t: T, fn: [TT] => (TT => TT) => Tag[TT] ?=> TT => TT): T =
-        fn[T](t => theTransformable(t).doRewrite(t, fn))(t)
-
-      def doRewriteA[F[_]](t: T, fn: [TT] => (TT => F[TT]) => Tag[TT] ?=> TT => F[TT])(using Applicative[F]): F[T] =
-        fn[T](t => theTransformable(t).doRewriteA(t, fn))(t)
-    }
-  }
-
-  inline given derivedProduct[T: Tag](using mirror: Mirror.ProductOf[T]): Transformable[T] = {
-    lazy val elemTransforms = summonAll[Tuple.Map[mirror.MirroredElemTypes, Transformable]]
-    new Transformable[T] {
-      def doCombine[U](t: T, fn: [TT] => (TT => U) => Tag[TT] ?=> TT => U)(using Monoid[U]): U =
-        fn[T] { t =>
-          (elemTransforms.productIterator `zip` t.asInstanceOf[T & Product].productIterator)
-            .asInstanceOf[Iterator[(Transformable[Any], Any)]]
-            .map(_.doCombine[U](_, fn))
-            .foldLeft(Monoid[U].empty)(_ `combine` _)
-        }(t)
-
-      def doRewrite(t: T, fn: [TT] => (TT => TT) => Tag[TT] ?=> TT => TT): T =
-        fn[T] { t =>
-          mirror.fromProduct(Tuple.fromArray {
-            (elemTransforms.productIterator `zip` t.asInstanceOf[T & Product].productIterator)
-              .asInstanceOf[Iterator[(Transformable[Any], Any)]]
-              .map(_.doRewrite(_, fn))
-              .toArray
-          })
-        }(t)
-
-      def doRewriteA[F[_]](t: T, fn: [TT] => (TT => F[TT]) => Tag[TT] ?=> TT => F[TT])(using Applicative[F]): F[T] =
-        fn[T] { t =>
-          (elemTransforms.productIterator `zip` t.asInstanceOf[T & Product].productIterator)
-              .asInstanceOf[Iterator[(Transformable[Any], Any)]]
-              .map(_.doRewriteA[F](_, fn))
-              .toList
-              .sequence
-              .map { elems =>
-                mirror.fromProduct(Tuple.fromArray(elems.toArray))
-              }
-        }(t)
-    }
+      def rewrite[F[_]](using Applicative[F], Defer[F], RewriteCtx[F]): T => F[T] =
+        t => Defer[F].defer(elemTransforms(ordinal(t)).recurse(t))
+    })
   }
 
   // cats defines Traverse on Tuple2, which is troublesome here because it means Transform
@@ -95,87 +109,102 @@ object Transformable {
   given transformTuple2[T1: Tag, T2: Tag](using =>Transformable[T1], =>Transformable[T2]): Transformable[Tuple2[T1, T2]] =
     derivedProduct[Tuple2[T1, T2]]
 
-  given transformTraverse[T, F[_]: Traverse](using trans: =>Transformable[T])(using Tag[F[T]]): Transformable[F[T]] with {
-    def doCombine[U](t: F[T], fn: [TT] => (TT => U) => Tag[TT] ?=> TT => U)(using Monoid[U]): U =
-      fn[F[T]](_.foldMap(trans.doCombine(_, fn)))(t)
+  given transformTraverse[T, F[_]: Traverse](using trans: =>Transformable[T])(using Tag[F[T]]): Transformable[F[T]] =
+    Transformable.fromFns(new TransformFns[F[T]] {
+      def combine[U](using Monoid[U], CombineCtx[U]): F[T] => Eval[U] =
+        _.foldMap(trans.recurse)
 
-    def doRewrite(t: F[T], fn: [TT] => (TT => TT) => Tag[TT] ?=> TT => TT): F[T] =
-      fn[F[T]](_.map(trans.doRewrite(_, fn)))(t)
+      def rewrite[FF[_]](using Applicative[FF], Defer[FF], RewriteCtx[FF]): F[T] => FF[F[T]] =
+        _.traverse(trans.recurse)
+    })
 
-    def doRewriteA[FF[_]](t: F[T], fn: [TT] => (TT => FF[TT]) => Tag[TT] ?=> TT => FF[TT])(using Applicative[FF]): FF[F[T]] =
-      fn[F[T]](_.traverse(trans.doRewriteA[FF](_, fn)))(t)
-  }
+  given transformPrimitive[T: Tag: IsPrimitive]: Transformable[T] =
+    Transformable.fromFns(new TransformFns[T] {
+      def combine[U](using Monoid[U], CombineCtx[U]): T => Eval[U] =
+        _ => Eval.now(Monoid[U].empty)
 
-  given transformPrimitive[T: Tag: IsPrimitive]: Transformable[T] with {
-    def doCombine[U](t: T, fn: [TT] => (TT => U) => Tag[TT] ?=> TT => U)(using Monoid[U]): U =
-      fn[T](t => Monoid[U].empty)(t)
+      def rewrite[F[_]](using Applicative[F], Defer[F], RewriteCtx[F]): T => F[T] =
+        Applicative[F].pure
+    })
 
-    def doRewrite(t: T, fn: [TT] => (TT => TT) => Tag[TT] ?=> TT => TT): T =
-      fn[T](identity)(t)
-
-    def doRewriteA[F[_]](t: T, fn: [TT] => (TT => F[TT]) => Tag[TT] ?=> TT => F[TT])(using Applicative[F]): F[T] =
-      fn[T](_.pure)(t)
-  }
-
-  final class CombineBuilder[T: Transformable, U: Monoid](default: [TT] => (TT => U) => Tag[TT] ?=> TT => U) {
-    def refine[I: Tag](fn: (I => U) => I => U): CombineBuilder[T, U] =
-      CombineBuilder { [TT] => (defaultRec: (TT => U)) => (_: Tag[TT]) ?=> (tt: TT) =>
-        default[TT] { tt =>
-          if(Tag[TT] <:< Tag[I]) {
-            fn(defaultRec.asInstanceOf[I => U])(tt.asInstanceOf[I])
-          } else {
-            defaultRec(tt)
-          }
-        }(tt)
+  final class CombineBuilder[T: Transformable, U: Monoid](default: [TT] => Tag[TT] => (TT => Eval[U]) => TT => Eval[U]) {
+    def refineEval[I: Tag](fn: (I => Eval[U]) => I => Eval[U]): CombineBuilder[T, U] =
+      CombineBuilder { [TT] => (tagTT: Tag[TT]) => 
+        if(tagTT <:< Tag[I]) {
+          (defaultRec: TT => Eval[U]) => fn.asInstanceOf[(TT => Eval[U]) => TT => Eval[U]](default[TT](tagTT)(defaultRec))
+        } else {
+          default[TT](tagTT)
+        }
       }
+    
+    def refine[I: Tag](fn: (I => U) => I => U): CombineBuilder[T, U] =
+      refineEval[I] { rec =>
+        fn(rec.andThen(_.value)).andThen(Eval.now)
+      }
+
+    def replaceEval[I: Tag](fn: I => Eval[U]): CombineBuilder[T, U] =
+      refineEval[I](_ => fn)
 
     def replace[I: Tag](fn: I => U): CombineBuilder[T, U] =
       refine[I](_ => fn)
 
     def incrementAt[I: Tag](using ev: U =:= Count)(pred: I => Boolean): CombineBuilder[T, U] =
-      refine[I] { rec => i => 
-        if(pred(i)) ev.flip(rec(i).inc) else rec(i)
+      refineEval[I] { rec => i => 
+        if(pred(i)) rec(i).map(c => ev.flip(ev(c).inc)) else rec(i)
       }
 
     def apply(t: T): U =
-      Transformable[T].doCombine(t, default)
+      make.apply(t)
+
+    def make: T => U =
+      Transformable[T].makeCombine(default)
   }
 
-  final class RewriteBuilder[T: Transformable](default: [TT] => (TT => TT) => Tag[TT] ?=> TT => TT) {
-    def refine[I: Tag](fn: (I => I) => I => I): RewriteBuilder[T] =
-      RewriteBuilder { [TT] => (defaultRec: (TT => TT)) => (_: Tag[TT]) ?=> (tt: TT) =>
-        default[TT] { tt =>
-          if(Tag[TT] <:< Tag[I]) {
-            fn(defaultRec.asInstanceOf[I => I])(tt.asInstanceOf[I]).asInstanceOf[TT]
-          } else {
-            defaultRec(tt)
-          }
-        }(tt)
+  final class RewriteBuilder[T: Transformable, F[_]: Applicative: Defer](default: [TT] => Tag[TT] => (TT => F[TT]) => TT => F[TT]) {
+    def refine[I: Tag](fn: (I => F[I]) => I => F[I]): RewriteBuilder[T, F] =
+      RewriteBuilder { [TT] => (tagTT: Tag[TT]) =>
+        if(tagTT <:< Tag[I]) {
+          (defaultRec: TT => F[TT]) => fn.asInstanceOf[(TT => F[TT]) => TT => F[TT]](default[TT](tagTT)(defaultRec))
+        } else {
+          default[TT](tagTT)
+        }
       }
 
-    def replace[I: Tag](fn: I => I): RewriteBuilder[T] =
-      refine[I](_ => fn)
-
-    def apply(t: T): T =
-      Transformable[T].doRewrite(t, default)
-  }
-
-  final class RewriteABuilder[T: Transformable, F[_]: Applicative](default: [TT] => (TT => F[TT]) => Tag[TT] ?=> TT => F[TT]) {
-    def refine[I: Tag](fn: (I => F[I]) => I => F[I]): RewriteABuilder[T, F] =
-      RewriteABuilder { [TT] => (defaultRec: (TT => F[TT])) => (_: Tag[TT]) ?=> (tt: TT) =>
-        default[TT] { tt =>
-          if(Tag[TT] <:< Tag[I]) {
-            fn(defaultRec.asInstanceOf[I => F[I]])(tt.asInstanceOf[I]).asInstanceOf[F[TT]]
-          } else {
-            defaultRec(tt)
-          }
-        }(tt)
-      }
-
-    def replace[I: Tag](fn: I => F[I]): RewriteABuilder[T, F] =
+    def replace[I: Tag](fn: I => F[I]): RewriteBuilder[T, F] =
       refine[I](_ => fn)
 
     def apply(t: T): F[T] =
-      Transformable[T].doRewriteA[F](t, default)
+      make.apply(t)
+
+    def make: T => F[T] =
+      Transformable[T].makeRewrite(default)
+  }
+}
+
+transparent trait TransformableLowPrio { self: Transformable.type =>
+  inline given derivedProduct[T <: Product : Tag](using mirror: Mirror.ProductOf[T]): Transformable[T] = {
+    lazy val elemTransforms =
+      summonAll[Tuple.Map[mirror.MirroredElemTypes, Transformable]]
+        .productIterator
+        .asInstanceOf[Iterator[Transformable[Any]]]
+        .toArray
+
+    Transformable.fromFns(new TransformFns[T] {
+      def combine[U](using Monoid[U], CombineCtx[U]): T => Eval[U] =
+        { t =>
+          (elemTransforms.iterator zip t.productIterator)
+            .map((f, t) => Eval.defer(f.recurse(t)))
+            .foldLeft(Monoid[Eval[U]].empty)(Monoid[Eval[U]].combine)
+        }
+
+      def rewrite[F[_]](using Applicative[F], Defer[F], RewriteCtx[F]): T => F[T] =
+        { t =>
+          Chain.traverseViaChain((elemTransforms.iterator zip t.productIterator).toIndexedSeq) {
+            case (trans, t) => Defer[F].defer(trans.recurse(t))
+          }.map { elems =>
+            mirror.fromProduct(Tuple.fromArray(elems.iterator.toArray))
+          }
+        }
+    })
   }
 }

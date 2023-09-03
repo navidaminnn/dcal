@@ -27,6 +27,11 @@ sealed trait Checker[T] { self =>
       )
     }
 
+  final def assertExists(pred: T => Boolean): Self { type Self = self.Self } =
+    replaceStreamChecker {
+      StreamChecker.combine(streamChecker, StreamChecker.assertExists(pred))
+    }
+
   final def exists(pred: T => Boolean): Self { type Self = self.Self } =
     replaceStreamChecker {
       StreamChecker.combine(streamChecker, StreamChecker.exists(pred))
@@ -177,54 +182,80 @@ object Checker {
   trait StreamChecker[T] {
     def check(example: Example[T]): Unit
     def isSatisfied: Boolean
+    def isSatisfiedFinal: Boolean
   }
 
   object StreamChecker {
     def empty[T]: StreamChecker[T] =
       new StreamChecker[T] {
-        override def check(example: Example[T]): Unit = ()
-        override def isSatisfied: Boolean = true
+        def check(example: Example[T]): Unit = ()
+        def isSatisfied: Boolean = true
+
+        def isSatisfiedFinal: Boolean = true
       }
 
     def requireDepth[T](depth: Int): StreamChecker[T] =
       new StreamChecker[T] {
         var isSatisfied: Boolean = false
-        override def check(example: Example[T]): Unit =
+        def check(example: Example[T]): Unit =
           if(example.maxDepth >= depth) {
             isSatisfied = true
           }
+
+        def isSatisfiedFinal: Boolean = isSatisfied
       }
 
     def forall[T](fn: T => Unit): StreamChecker[T] =
       new StreamChecker[T] {
         override def check(example: Example[T]): Unit = fn(example.value)
         override def isSatisfied: Boolean = true
+
+        def isSatisfiedFinal: Boolean = true
+      }
+
+    def assertExists[T](pred: T => Boolean): StreamChecker[T] =
+      new StreamChecker[T] {
+        var isSatisfiedFinal = false
+
+        def check(example: Example[T]): Unit =
+          if(pred(example.value)) {
+            isSatisfiedFinal = true
+          }
+
+        def isSatisfied: Boolean = true
       }
 
     def exists[T](pred: T => Boolean): StreamChecker[T] =
       new StreamChecker[T] {
         var isSatisfied = false
-        override def check(example: Example[T]): Unit = {
+        def check(example: Example[T]): Unit = {
           if(pred(example.value)) {
             isSatisfied = true
           }
         }
+
+        def isSatisfiedFinal: Boolean = isSatisfied
       }
 
     def combine[T](left: StreamChecker[T], right: StreamChecker[T]): StreamChecker[T] =
       new StreamChecker[T] {
-        override def check(example: Example[T]): Unit = {
+        def check(example: Example[T]): Unit = {
           left.check(example)
           right.check(example)
         }
-        override def isSatisfied: Boolean =
+        def isSatisfied: Boolean =
           left.isSatisfied && right.isSatisfied
+
+        def isSatisfiedFinal: Boolean =
+          left.isSatisfiedFinal && right.isSatisfiedFinal
       }
 
     def transform[T, U](transFn: T => U, innerChecker: StreamChecker[U]): StreamChecker[T] =
       new StreamChecker[T] {
-        override def check(example: Example[T]): Unit = innerChecker.check(Example(transFn(example.value), example.maxDepth))
-        override def isSatisfied: Boolean = innerChecker.isSatisfied
+        def check(example: Example[T]): Unit = innerChecker.check(Example(transFn(example.value), example.maxDepth))
+        def isSatisfied: Boolean = innerChecker.isSatisfied
+
+        def isSatisfiedFinal: Boolean = innerChecker.isSatisfiedFinal
       }
   }
 
