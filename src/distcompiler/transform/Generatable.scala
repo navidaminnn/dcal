@@ -57,7 +57,7 @@ object Generatable {
         new Fn {
           def apply[TT](defaultRec: Eval[Generator[TT]])(using Tag[TT], Cache): Eval[Generator[TT]] =
             Eval.defer {
-              if(Tag[TT] <:< Tag[I]) {
+              if(Tag[I] =:= Tag[TT]) {
                 gen(using this).asInstanceOf[Eval[Generator[TT]]]
               } else {
                 defaultFn(defaultRec)

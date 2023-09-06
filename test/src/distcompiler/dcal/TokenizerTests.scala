@@ -25,7 +25,6 @@ class TokenizerTests extends munit.FunSuite {
       val anyNameChars: Generator[String] =
         listOf(anyNameChar, limit = 3)
           .map(_.mkString)
-          .filter(name => !Keyword.values.iterator.map(_.name).exists(name.contains))
       val anyStringChar: Generator[Char] =
         anyNameChar
         | anyFromSeq("\"\n\t\\")
@@ -40,6 +39,7 @@ class TokenizerTests extends munit.FunSuite {
           anyNameChars
             .filter(_.nonEmpty)
             .filter(_.exists(Character.isAlphabetic))
+            .filter(name => !Keyword.stringSet(name))
             .map(Token.Name(_))
         }
         .replace[Token.StringLiteral] {

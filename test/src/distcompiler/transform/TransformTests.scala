@@ -53,4 +53,25 @@ class TransformTests extends munit.FunSuite {
       Branch(List(Leaf, Branch(List(IntOpt(None), IntOpt(Some((8, Leaf))))), IntOpt(Some((0, Leaf))))),
     )
   }
+
+  test("count subtrees") {
+    import Data1.*
+
+    val fn = Transformable[Data1]
+      .combining[Count]
+      .incrementAt[Data1](_ => true)
+      .make
+
+    assertEquals(fn(Leaf), Count(count = 1, depth = 1))
+
+    assertEquals(
+      fn(IntOpt(Some((1, IntOpt(Some((2, Leaf))))))),
+      Count(count = 3, depth = 3),
+    )
+
+    assertEquals(
+      fn(Branch(List(Leaf, Branch(List(IntOpt(None), IntOpt(Some((7, Leaf))))), IntOpt(Some((-1, Leaf)))))),
+      Count(count = 8, depth = 4),
+    )
+  }
 }
