@@ -85,6 +85,8 @@ class TokenizerTests extends munit.FunSuite {
       (tokensOrSpace.iterator zip tokensOrSpace.tail).forall {
         // that's just one number at that point
         case (Token.IntLiteral(_), Token.IntLiteral(_)) => false
+        // a keyword followed by a name, int literal, or other keyword will be tokenized as a longer name, not the keyword
+        case (Token.Keyword(_), Token.Keyword(_) | Token.IntLiteral(_) | Token.Name(_)) => false
         // names will just "eat" ints, keywords, or token literals after them
         case (Token.Name(_), Token.Keyword(_) | Token.IntLiteral(_) | Token.Name(_)) => false
         // putting an int just before alphanumerics looks like a name

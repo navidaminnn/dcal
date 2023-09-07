@@ -282,14 +282,14 @@ object Parser {
   lazy val expression: P[Ps[AST.Expression]] =
     lzy {
       precedenceTree[Precedence, Ps[AST.Expression]]
-        .levelRec(Precedence(16, 16)) { rec => _ =>
+        .levelAssoc(Precedence(16, 16)) { rec => _ =>
           ps {
             (rec ~? brackets(expression)).map {
               case function ~ argument => AST.Expression.FunctionApplication(function, argument)
             }
           }
         }
-        .levelRec(Precedence.max) { rec => _ =>
+        .levelAssoc(Precedence.max) { rec => _ =>
           ps {
             (pn(Punctuation.@!) ~> ps(name) ~ rec).map {
               case name ~ expression => AST.Expression.SubstitutionPoint(name, expression)
@@ -311,7 +311,7 @@ object Parser {
               }
             }
         }
-        .levelsRec {
+        .levelsAssoc {
           Punctuation
             .values
             .iterator

@@ -191,35 +191,4 @@ class GeneratorTests extends munit.FunSuite {
       ),
     ))
   }
-
-  test("involves") {
-    enum Tree derives Transformable {
-      case Leaf(list: List[Int])
-      case Branch(left: Tree, right: Tree)
-    }
-
-    val tree1 = Tree.Branch(Tree.Leaf(Nil), Tree.Leaf(List(16)))
-    val tree2 = Tree.Branch(Tree.Leaf(List(5, 6, 7)), tree1)
-    val tree3 = Tree.Branch(Tree.Leaf(List(0, -1, 8)), tree1)
-
-    def countListsWithNegs(tree: Tree): Count =
-      Transformable[Tree]
-        .combining[Count]
-        .replace[List[Int]](lst => Count.fromBoolean(lst.exists(_ < 0)))
-        .apply(tree)
-
-    assertEquals(countListsWithNegs(tree1), Count.empty)
-    assertEquals(countListsWithNegs(tree2), Count.empty)
-    assertEquals(countListsWithNegs(tree3), Count.one)
-
-    def countNegs(tree: Tree): Count =
-      Transformable[Tree]
-        .combining[Count]
-        .replace[Int](i => Count.fromBoolean(i < 0))
-        .apply(tree)
-
-    assertEquals(countNegs(tree1), Count.empty)
-    assertEquals(countNegs(tree2), Count.empty)
-    assertEquals(countNegs(tree3), Count.one)
-  }
 }

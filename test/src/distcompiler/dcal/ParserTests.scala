@@ -594,8 +594,9 @@ class ParserTests extends munit.FunSuite {
           .exists {
             case (module, _) =>
               Transformable[Ps[Module]]
-                .combining[Count]
+                .combining[Id, Count]
                 .incrementAt[Definition](_ => true)
+                .make
                 .apply(module)
                 .count >= 2
           }
@@ -626,16 +627,18 @@ class ParserTests extends munit.FunSuite {
           .exists {
             case (definition, _) =>
               Transformable[Ps[Definition]]
-                .combining[Count]
+                .combining[Id, Count]
                 .incrementAt[Definition](_ => true)
+                .make
                 .apply(definition)
                 .depth >= 2
           }
           .exists {
             case (definition, _) =>
               Transformable[Ps[Definition]]
-                .combining[Count]
+                .combining[Id, Count]
                 .incrementAt[Definition](_ => true)
+                .make
                 .apply(definition)
                 .count >= 3
           }
@@ -672,8 +675,9 @@ class ParserTests extends munit.FunSuite {
           .exists {
             case (expr, _) =>
               Transformable[Ps[Expression]]
-                .combining[Count]
+                .combining[Id, Count]
                 .incrementAt[Expression](_ => true)
+                .make
                 .apply(expr)
                 .depth >= 2
           }
@@ -704,16 +708,18 @@ class ParserTests extends munit.FunSuite {
           .exists {
             case (stmt, _) =>
               Transformable[Ps[Statements]]
-                .combining[Count]
+                .combining[Id, Count]
                 .incrementAt[SingleStatement](_ => true)
+                .make
                 .apply(stmt)
                 .depth >= 2
           }
           .exists {
             case (stmt, _) =>
               Transformable[Ps[Statements]]
-                .combining[Count]
+                .combining[Id, Count]
                 .incrementAt[Statements](_ => true)
+                .make
                 .apply(stmt)
                 .depth >= 2
           }

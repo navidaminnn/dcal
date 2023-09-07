@@ -24,6 +24,7 @@ enum Parser[Elem, Input, Error, +T] {
   case Lazy(pFn: () => Parser[Elem, Input, Error, T])
   case Constrain[Elem, Input, Error, T, U](p: Parser[Elem, Input, Error, T], pred: T => Either[Error, U]) extends Parser[Elem, Input, Error, U]
   case Or[Elem, Input, Error, T, U](left: Parser[Elem, Input, Error, T], right: Parser[Elem, Input, Error, U]) extends Parser[Elem, Input, Error, T | U]
+  case OrLongest[Elem, Input, Error, T, U](left: Parser[Elem, Input, Error, T], right: Parser[Elem, Input, Error, U]) extends Parser[Elem, Input, Error, T | U]
   case Ap[Elem, Input, Error, T, U](ff: Parser[Elem, Input, Error, T => U], fa: Parser[Elem, Input, Error, T]) extends Parser[Elem, Input, Error, U]
   case AndThen[Elem, Input, Error, T, U](pt: Parser[Elem, Input, Error, T], fn: T => Parser[Elem, Input, Error, U]) extends Parser[Elem, Input, Error, U]
 
@@ -48,6 +49,8 @@ enum Parser[Elem, Input, Error, +T] {
           case Constrain(p, _) => Eval.defer(impl(p))
           case Or(left, right) =>
             // don't need short-circuit so much here because if it's false we'll crash anyway
+            (Eval.defer(impl(left)), Eval.defer(impl(right))).mapN(_ && _)
+          case OrLongest(left, right) =>
             (Eval.defer(impl(left)), Eval.defer(impl(right))).mapN(_ && _)
           case Ap(ff, fa) => 
             // short-circuit to save work (bias to the "early" side so we stop at the "first" progress and ignore irrelevant later manipulations)
@@ -231,19 +234,49 @@ enum Parser[Elem, Input, Error, +T] {
                 }
               case result @ (Result.Backtrack(_, _) | Result.Fatal(_, _)) => result
             }
-          case Or(left, right) =>
+          case self @ (Or(_, _) | OrLongest(_, _)) =>
+            val (left, right, keepLongest) = self match {
+              case Or(left, right) => (left, right, false)
+              case OrLongest(left, right) => (left, right, true)
+            }
+
             Eval.defer(impl(left, input)).flatMap {
-              case result @ Result.Ok(_, _, _, _) =>
-                Eval.now(result)
+              case result @ Result.Ok(_, _, recoveredErrors, _) =>
+                if(keepLongest) {
+                  val outerErrors = recoveredErrors
+                  Eval.defer(impl(right, input)).map {
+                    case result2 @ Result.Ok(_, _, recoveredErrors, _) =>
+                      val chosenResult = 
+                        if(result.nextInput.idx < result2.nextInput.idx) {
+                          result2
+                        } else {
+                          result
+                        }
+                      if(result.nextInput.idx == result2.nextInput.idx) {
+                        chosenResult.copy(recoveredErrors = outerErrors ++ recoveredErrors)
+                      } else {
+                        chosenResult
+                      }
+                    case Result.Backtrack(errors, idx) if idx == input.idx =>
+                      result.copy(recoveredErrors = outerErrors ++ errors)
+                    case Result.Backtrack(errors, idx) =>
+                      Result.Fatal(errors, idx)
+                    case result @ Result.Fatal(_, _) => result
+                  }
+                } else {
+                  Eval.now(result)
+                }
               case Result.Backtrack(errors, idx) if idx == input.idx =>
-                val outerIdx = idx
+                val inputIdx = input.idx
                 val outerErrors = errors
                 Eval.defer(impl(right, input)).map {
                   case result @ Result.Ok(value, nextInput, recoveredErrors, _) if nextInput.idx == idx => 
                     result.copy(recoveredErrors = outerErrors ++ recoveredErrors)
-                  case result @ Result.Backtrack(errors, `outerIdx`) =>
+                  case result @ Result.Backtrack(errors, `inputIdx`) =>
                     result.copy(errors = outerErrors ++ errors)
-                  case result @ Result.Fatal(errors, `outerIdx`) =>
+                  case Result.Backtrack(errors, idx) =>
+                    Result.Fatal(errors, idx)
+                  case result @ Result.Fatal(errors, `inputIdx`) =>
                     result.copy(errors = outerErrors ++ errors)
                   case result => result
                 }
@@ -349,6 +382,9 @@ enum Parser[Elem, Input, Error, +T] {
   def map[U](fn: T => U): P[U] =
     Ap(Trivial(fn), this)
 
+  def as[U](u: U): P[U] =
+    this.map(_ => u)
+
   def mapPositioned[U, V](using ev: T <:< (U, SourceLocation))(fn: SourceLocation ?=> U => V): P[V] =
     this.map(pair => fn(using ev(pair)._2)(ev(pair)._1))
 
@@ -373,6 +409,10 @@ enum Parser[Elem, Input, Error, +T] {
   @targetName("or")
   def |[U](other: P[U]): P[T | U] =
     Or(this, other)
+
+  @targetName("orLongest")
+  def |||[U](other: P[U]): P[T | U] =
+    OrLongest(this, other)
 }
 
 object Parser {
@@ -489,8 +529,16 @@ object Parser {
           pairs = pairs :+ Case.LevelRec(precedence, fn),
           minPrecedence = minPrecedence)
 
+      def levelAssoc(precedence: K)(fn: P[T] => P[T] => P[T]): PrecedenceTree[K, T] =
+        PrecedenceTree(
+          pairs = pairs :+ Case.LevelAssoc(precedence, fn),
+          minPrecedence = minPrecedence)
+
       def levelsRec(lvls: IterableOnce[(K, P[T] => P[T] => P[T])]): PrecedenceTree[K, T] =
         lvls.iterator.foldLeft(this)((acc, pair) => acc.levelRec(pair._1)(pair._2))
+
+      def levelsAssoc(lvls: IterableOnce[(K, P[T] => P[T] => P[T])]): PrecedenceTree[K, T] =
+        lvls.iterator.foldLeft(this)((acc, pair) => acc.levelAssoc(pair._1)(pair._2))
 
       def bottomLevel(p: P[T]): PrecedenceTree[K, T] =
         PrecedenceTree(
@@ -518,27 +566,33 @@ object Parser {
                   cse match {
                     case Case.Level(_, fn) => body(fn)
                     case Case.LevelRec(_, fn) => localRec(rec => body(fn(rec)))
+                    case Case.LevelAssoc(_, fn) =>
+                      body { higher =>
+                        localRec { rec =>
+                          fn(rec | higher)(higher)
+                        }
+                      }
                   }
 
-                def findHigher(pairs: List[Case[K, T]])(using keysIncluded: mutable.ArrayBuffer[K]): P[T] =
+                def findHigher(pairs: List[Case[K, T]], root: K)(using keysIncluded: mutable.ArrayBuffer[K]): P[T] =
                   pairs match {
                     case Nil => bottomParser
                     case cse :: restPairs =>
-                      if(keysIncluded.nonEmpty && keysIncluded.forall(cse.precedence > _)) {
+                      if(keysIncluded.forall(cse.precedence > _)) {
                         impl(pairs)
-                      } else if(keysIncluded.exists(cse.precedence > _)) {
-                        findHigher(restPairs)
+                      } else if(keysIncluded.exists(cse.precedence > _) || !(cse.precedence > root)) {
+                        findHigher(restPairs, root)
                       } else {
                         keysIncluded += cse.precedence
                         withFn(cse) { fn =>
-                          fn(findHigher(restPairs)(using mutable.ArrayBuffer()))
-                          | findHigher(restPairs)
+                          fn(findHigher(restPairs, cse.precedence)(using mutable.ArrayBuffer(cse.precedence)))
+                          | findHigher(restPairs, root)
                         }
                       }
                   }
                 
                 withFn(cse) { fn =>
-                  fn(findHigher(restPairs)(using mutable.ArrayBuffer()))
+                  fn(findHigher(restPairs, cse.precedence)(using mutable.ArrayBuffer(cse.precedence)))
                   | impl(restPairs)
                 }
               })
@@ -552,6 +606,7 @@ object Parser {
       enum Case[K, T] {
         case Level(precedence: K, fn: P[T] => P[T])
         case LevelRec(precedence: K, fn: P[T] => P[T] => P[T])
+        case LevelAssoc(precedence: K, fn: P[T] => P[T] => P[T])
 
         def precedence: K
       }

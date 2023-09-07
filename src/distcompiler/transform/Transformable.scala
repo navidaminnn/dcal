@@ -14,44 +14,48 @@ final class Transformable[T](private val transformFns: Transformable.TransformFn
   private[Transformable] def markAsSum: Transformable[T] =
     new Transformable[T](transformFns, isSum = true)
 
-  private def makeCombine[U: Monoid](spliceFn: [TT] => Option[Tag[TT]] => (TT => Eval[U]) => TT => Eval[U]): T => U = {
-    val cache = mutable.HashMap[Transformable[?], Any => Eval[U]]()
+  private def makeCombine[C[_]: Comonad, U: Monoid](spliceFn: [TT] => Option[Tag[TT]] => (C[TT] => Eval[U]) => C[TT] => Eval[U]): C[T] => U = {
+    val cache = mutable.HashMap[Transformable[?], C[Any] => Eval[U]]()
     val visited = mutable.HashSet[Transformable[?]]()
 
-    given Transformable.CombineCtx[U] with {
-      extension [T](self: Transformable[T]) def recurse: T => Eval[U] = impl(self)
+    given Transformable.CombineCtx[C, U] with {
+      extension [T](self: Transformable[T]) def recurse: C[T] => Eval[U] = impl(self)
     }
 
-    def impl[T](self: Transformable[T]): T => Eval[U] =
+    def impl[T](self: Transformable[T]): C[T] => Eval[U] =
       if(visited(self)) {
         if(cache.contains(self)) {
-          cache(self)
+          cache(self).asInstanceOf[C[T] => Eval[U]]
         } else {
           // if not in cache yet, make a new fn that looks in the cache later
-          t => cache(self).apply(t)
+          t => cache(self).apply(t.widen)
         }
       } else {
         visited += self
         val tagOpt = if(self.isSum) None else Some(self.tag)
         val result = spliceFn[T](tagOpt)(self.transformFns.combine)
-        cache.update(self, result.asInstanceOf[Any => Eval[U]])
+        cache.update(self, result.asInstanceOf[C[Any] => Eval[U]])
         result
       }
 
     t => impl(this)(t).value
   }
 
-  private def makeRewrite[F[_]: Applicative: Defer](spliceFn: [TT] => Tag[TT] => (TT => F[TT]) => TT => F[TT]): T => F[T] = {
-    val cache = mutable.HashMap[Transformable[?], Any => F[Any]]()
+  private def makeRewrite[C[_]: Comonad, F[_]: Applicative: Defer](spliceFn: [TT] => Tag[TT] => (C[TT] => F[TT]) => C[TT] => F[TT]): C[T] => F[T] = {
+    val cache = mutable.HashMap[Transformable[?], C[Any] => F[Any]]()
     val visited = mutable.HashSet[Transformable[?]]()
 
-    given Transformable.RewriteCtx[F] with {
-      extension [T](self: Transformable[T]) def recurse: T => F[T] = impl(self)
+    given Transformable.RewriteCtx[C, F] with {
+      extension [T](self: Transformable[T]) def recurse: C[T] => F[T] = impl(self)
     }
 
-    def impl[T](self: Transformable[T]): T => F[T] =
+    def impl[T](self: Transformable[T]): C[T] => F[T] =
       if(visited(self)) {
-        t => cache(self).asInstanceOf[T => F[T]].apply(t)
+        if(cache.contains(self)) {
+          cache(self).asInstanceOf[C[T] => F[T]]
+        } else {
+          t => cache(self).asInstanceOf[C[T] => F[T]].apply(t)
+        }
       } else {
         visited += self
         val result = spliceFn[T](self.tag)(self.transformFns.rewrite)
@@ -62,29 +66,29 @@ final class Transformable[T](private val transformFns: Transformable.TransformFn
     impl(this)
   }
 
-  def combining[U: Monoid]: Transformable.CombineBuilder[T, U] = {
+  def combining[C[_]: Comonad, U: Monoid]: Transformable.CombineBuilder[C, T, U] = {
     given Transformable[T] = this
-    Transformable.CombineBuilder[T, U]([TT] => (_: Option[Tag[TT]]) => identity[TT => Eval[U]])
+    Transformable.CombineBuilder[C, T, U]([TT] => (_: Option[Tag[TT]]) => identity[C[TT] => Eval[U]])
   }
 
-  def rewriting[F[_]: Applicative: Defer]: Transformable.RewriteBuilder[T, F] = {
+  def rewriting[C[_]: Comonad, F[_]: Applicative: Defer]: Transformable.RewriteBuilder[C, T, F] = {
     given Transformable[T] = this
-    Transformable.RewriteBuilder[T, F]([TT] => (_: Tag[TT]) => identity[TT => F[TT]])
+    Transformable.RewriteBuilder[C, T, F]([TT] => (_: Tag[TT]) => identity[C[TT] => F[TT]])
   }
 }
 
 object Transformable extends TransformableLowPrio {
-  trait CombineCtx[U] {
-    extension [T] (self: Transformable[T]) def recurse: T => Eval[U]
+  trait CombineCtx[C[_], U] {
+    extension [T] (self: Transformable[T]) def recurse: C[T] => Eval[U]
   }
 
-  trait RewriteCtx[F[_]] {
-    extension [T] (self: Transformable[T]) def recurse: T => F[T]
+  trait RewriteCtx[C[_], F[_]] {
+    extension [T] (self: Transformable[T]) def recurse: C[T] => F[T]
   }
 
   trait TransformFns[T] {
-    def combine[U: Monoid](using CombineCtx[U]): T => Eval[U]
-    def rewrite[F[_]: Applicative: Defer](using RewriteCtx[F]): T => F[T]
+    def combine[C[_]: Comonad, U: Monoid](using CombineCtx[C, U]): C[T] => Eval[U]
+    def rewrite[C[_]: Comonad, F[_]: Applicative: Defer](using RewriteCtx[C, F]): C[T] => F[T]
   }
 
   def fromFns[T: Tag](transformFns: TransformFns[T]): Transformable[T] = new Transformable[T](transformFns, isSum = false)
@@ -97,11 +101,11 @@ object Transformable extends TransformableLowPrio {
     given derivedSum[T: Tag](using mirror: Mirror.SumOf[T])(using elemTransforms: =>SummonTuple[Tuple.Map[mirror.MirroredElemTypes, Transformable]]): TransformableDerived[T] =
       Transformable
         .fromFns(new TransformFns[T] {
-          def combine[U](using Monoid[U], CombineCtx[U]): T => Eval[U] =
-            t => Eval.defer(elemTransforms.value.productElement(mirror.ordinal(t)).asInstanceOf[Transformable[T]].recurse(t))
+          def combine[C[_], U](using Comonad[C], Monoid[U], CombineCtx[C, U]): C[T] => Eval[U] =
+            t => Eval.defer(elemTransforms.value.productElement(mirror.ordinal(t.extract)).asInstanceOf[Transformable[T]].recurse(t))
 
-          def rewrite[F[_]](using Applicative[F], Defer[F], RewriteCtx[F]): T => F[T] =
-            t => Defer[F].defer(elemTransforms.value.productElement(mirror.ordinal(t)).asInstanceOf[Transformable[T]].recurse(t))
+          def rewrite[C[_], F[_]](using Comonad[C], Applicative[F], Defer[F], RewriteCtx[C, F]): C[T] => F[T] =
+            t => Defer[F].defer(elemTransforms.value.productElement(mirror.ordinal(t.extract)).asInstanceOf[Transformable[T]].recurse(t))
         })
         .markAsSum
 
@@ -119,72 +123,66 @@ object Transformable extends TransformableLowPrio {
 
   given transformTraverse[T, F[_]: Traverse](using trans: =>Transformable[T])(using Tag[F[T]]): Transformable[F[T]] =
     Transformable.fromFns(new TransformFns[F[T]] {
-      def combine[U](using Monoid[U], CombineCtx[U]): F[T] => Eval[U] =
-        _.foldMap(trans.recurse)
+      def combine[C[_], U](using Comonad[C], Monoid[U], CombineCtx[C, U]): C[F[T]] => Eval[U] =
+        cft => cft.extract.foldMap(t => trans.recurse(cft.as(t)))
 
-      def rewrite[FF[_]](using Applicative[FF], Defer[FF], RewriteCtx[FF]): F[T] => FF[F[T]] =
-        _.traverse(trans.recurse)
+      def rewrite[C[_], FF[_]](using Comonad[C], Applicative[FF], Defer[FF], RewriteCtx[C, FF]): C[F[T]] => FF[F[T]] =
+        cft => cft.extract.traverse(t => trans.recurse(cft.as(t)))
     })
 
   given transformPrimitive[T: Tag: IsPrimitive]: Transformable[T] =
     Transformable.fromFns(new TransformFns[T] {
-      def combine[U](using Monoid[U], CombineCtx[U]): T => Eval[U] =
+      def combine[C[_], U](using Comonad[C], Monoid[U], CombineCtx[C, U]): C[T] => Eval[U] =
         _ => Eval.now(Monoid[U].empty)
 
-      def rewrite[F[_]](using Applicative[F], Defer[F], RewriteCtx[F]): T => F[T] =
-        Applicative[F].pure
+      def rewrite[C[_], F[_]](using Comonad[C], Applicative[F], Defer[F], RewriteCtx[C, F]): C[T] => F[T] =
+        ct => Applicative[F].pure(ct.extract)
     })
 
-  final class CombineBuilder[T: Transformable, U: Monoid](default: [TT] => Option[Tag[TT]] => (TT => Eval[U]) => TT => Eval[U]) {
-    def refineEval[I: Tag](fn: (I => Eval[U]) => I => Eval[U]): CombineBuilder[T, U] =
+  final class CombineBuilder[C[_]: Comonad, T: Transformable, U: Monoid](default: [TT] => Option[Tag[TT]] => (C[TT] => Eval[U]) => C[TT] => Eval[U]) {
+    def refineEval[I: Tag](fn: (C[I] => Eval[U]) => C[I] => Eval[U]): CombineBuilder[C, T, U] =
       CombineBuilder { [TT] => (tagTTOpt: Option[Tag[TT]]) =>
         if(tagTTOpt.exists(_ <:< Tag[I])) {
-          (defaultRec: TT => Eval[U]) => fn.asInstanceOf[(TT => Eval[U]) => TT => Eval[U]](default[TT](tagTTOpt)(defaultRec))
+          (defaultRec: C[TT] => Eval[U]) => fn.asInstanceOf[(C[TT] => Eval[U]) => C[TT] => Eval[U]](default[TT](tagTTOpt)(defaultRec))
         } else {
           default[TT](tagTTOpt)
         }
       }
     
-    def refine[I: Tag](fn: (I => U) => I => U): CombineBuilder[T, U] =
+    def refine[I: Tag](fn: (C[I] => U) => C[I] => U): CombineBuilder[C, T, U] =
       refineEval[I] { rec =>
         fn(rec.andThen(_.value)).andThen(Eval.now)
       }
 
-    def replaceEval[I: Tag](fn: I => Eval[U]): CombineBuilder[T, U] =
+    def replaceEval[I: Tag](fn: C[I] => Eval[U]): CombineBuilder[C, T, U] =
       refineEval[I](_ => fn)
 
-    def replace[I: Tag](fn: I => U): CombineBuilder[T, U] =
+    def replace[I: Tag](fn: C[I] => U): CombineBuilder[C, T, U] =
       refine[I](_ => fn)
 
-    def incrementAt[I: Tag](using ev: U =:= Count)(pred: I => Boolean): CombineBuilder[T, U] =
+    def incrementAt[I: Tag](using ev: U =:= Count)(pred: C[I] => Boolean): CombineBuilder[C, T, U] =
       refineEval[I] { rec => i => 
         if(pred(i)) rec(i).map(c => ev.flip(ev(c).inc)) else rec(i)
       }
 
-    def apply(t: T): U =
-      make.apply(t)
-
-    def make: T => U =
+    def make: C[T] => U =
       Transformable[T].makeCombine(default)
   }
 
-  final class RewriteBuilder[T: Transformable, F[_]: Applicative: Defer](default: [TT] => Tag[TT] => (TT => F[TT]) => TT => F[TT]) {
-    def refine[I: Tag](fn: (I => F[I]) => I => F[I]): RewriteBuilder[T, F] =
+  final class RewriteBuilder[C[_]: Comonad, T: Transformable, F[_]: Applicative: Defer](default: [TT] => Tag[TT] => (C[TT] => F[TT]) => C[TT] => F[TT]) {
+    def refine[I: Tag](fn: (C[I] => F[I]) => C[I] => F[I]): RewriteBuilder[C, T, F] =
       RewriteBuilder { [TT] => (tagTT: Tag[TT]) =>
         if(tagTT <:< Tag[I]) {
-          (defaultRec: TT => F[TT]) => fn.asInstanceOf[(TT => F[TT]) => TT => F[TT]](default[TT](tagTT)(defaultRec))
+          (defaultRec: C[TT] => F[TT]) => fn.asInstanceOf[(C[TT] => F[TT]) => C[TT] => F[TT]](default[TT](tagTT)(defaultRec))
         } else {
           default[TT](tagTT)
         }
       }
 
-    def replace[I: Tag](fn: I => F[I]): RewriteBuilder[T, F] =
+    def replace[I: Tag](fn: C[I] => F[I]): RewriteBuilder[C, T, F] =
       refine[I](_ => fn)
 
-    def apply(t: T): F[T] =
-      make.apply(t)
-
-    def make: T => F[T] =
+    def make: C[T] => F[T] =
       Transformable[T].makeRewrite(default)
   }
 }
@@ -195,17 +193,17 @@ transparent trait TransformableLowPrio { self: Transformable.type =>
       private def elemTransformsIter: Iterator[Transformable[Any]] =
         elemTransforms.value.productIterator.asInstanceOf[Iterator[Transformable[Any]]]
 
-      def combine[U](using Monoid[U], CombineCtx[U]): T => Eval[U] =
+      def combine[C[_], U](using Comonad[C], Monoid[U], CombineCtx[C, U]): C[T] => Eval[U] =
         { t =>
-          (elemTransformsIter zip t.productIterator)
-            .map((f, t) => Eval.defer(f.recurse(t)))
+          (elemTransformsIter zip t.extract.productIterator)
+            .map((f, tt) => Eval.defer(f.recurse(t.as(tt))))
             .foldLeft(Monoid[Eval[U]].empty)(Monoid[Eval[U]].combine)
         }
 
-      def rewrite[F[_]](using Applicative[F], Defer[F], RewriteCtx[F]): T => F[T] =
+      def rewrite[C[_], F[_]](using Comonad[C], Applicative[F], Defer[F], RewriteCtx[C, F]): C[T] => F[T] =
         { t =>
-          Chain.traverseViaChain((elemTransformsIter zip t.productIterator).toIndexedSeq) {
-            case (trans, t) => Defer[F].defer(trans.recurse(t))
+          Chain.traverseViaChain((elemTransformsIter zip t.extract.productIterator).toIndexedSeq) {
+            case (trans, tt) => Defer[F].defer(trans.recurse(t.as(tt)))
           }.map { elems =>
             mirror.fromProduct(Tuple.fromArray(elems.iterator.toArray))
           }

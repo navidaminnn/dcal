@@ -114,8 +114,7 @@ object Tokenizer {
 
   private val singleTokenOpt: P[Option[Ps[Token]]] =
     ( stringLiteral
-    | fixedTokens
-    | name
+    | (fixedTokens ||| name) // if a name is longer, take that even if it contains a token e.g. "ifgnobitz" is a name not the keyword "if" and a name
     | intLiteral
     ).map(Some(_))
     | whitespace.map(_ => None)
