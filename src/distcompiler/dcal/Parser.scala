@@ -6,7 +6,7 @@ import cats.data.*
 
 import distcompiler.parsing.{Ps, SourceLocation}
 import distcompiler.util.EvalList
-import AST.*
+import ParsedAST as AST
 
 object Parser {
   type Elem = Ps[Token]
@@ -259,7 +259,7 @@ object Parser {
     ps {
       val subst: P[Ps[AST.FunctionSubstitutionBranch]] =
         ps {
-          val index: P[Ps[Expression]] =
+          val index: P[Ps[AST.Expression]] =
             (pn(Punctuation.`.`) ~> ps(name.map(AST.Expression.StringLiteral(_))))
             | brackets(expression)
 
@@ -267,9 +267,9 @@ object Parser {
             case ps @ Ps(indices ~ value) =>
               AST.FunctionSubstitutionBranch(
                 indices.toNonEmptyList,
-                AST.FunctionSubstitutionBody(
-                  AST.FunctionSubstitutionAnchor(ps.sourceLocation, value),
-                ),
+                Ps(AST.FunctionSubstitutionBody(
+                  Ps(AST.FunctionSubstitutionAnchor(ps.sourceLocation, value))(using ps.sourceLocation),
+                ))(using ps.sourceLocation),
               )
           }
         }
@@ -408,7 +408,7 @@ object Parser {
     private def valImpl(needEq: Boolean): P[Ps[AST.ValBinding]] =
       lzy {
         lazy val callOrExpr: P[AST.ValBinding] =
-          callStmt.map(AST.ValBinding.Call(_))
+          callStmt.map(call => AST.ValBinding.Call(call.value))
           | expression.map(AST.ValBinding.Value(_))
 
         lazy val inner: P[Ps[AST.ValBinding]] =

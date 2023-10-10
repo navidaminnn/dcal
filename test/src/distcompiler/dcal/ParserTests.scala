@@ -436,7 +436,7 @@ class ParserTests extends munit.FunSuite {
           tok(Token.Name(alias.value))
         }
         ++ tok(Token.Keyword(Keyword.impl))
-        ++ renderPath(interface.value)
+        ++ renderInterfaceRef(interface.value)
     }
 
   private def renderQualifier(qualifier: Definition.Qualifier): GC[Token] =

@@ -1,8 +1,11 @@
 package distcompiler.dcal
 
+import cats.*
+import cats.derived.*
+
 import distcompiler.transform.Transformable
 
-enum Token derives CanEqual, Transformable {
+enum Token derives CanEqual, Transformable, Order {
   case IntLiteral(value: BigInt)
   case StringLiteral(value: String)
   case Name(name: String)
@@ -15,7 +18,7 @@ object Token {
   }
 }
 
-enum Keyword extends Token.Meta derives CanEqual, Transformable {
+enum Keyword extends Token.Meta derives CanEqual, Transformable, Order {
   case `call`
   case `await`
   case `if`
@@ -54,7 +57,7 @@ object Keyword {
     Keyword.values.iterator.map(_.name).toSet
 }
 
-enum Punctuation extends Token.Meta derives CanEqual, Transformable {
+enum Punctuation extends Token.Meta derives CanEqual, Transformable, Order {
   case `,`
   case `(`
   case `)`
@@ -81,7 +84,7 @@ enum Punctuation extends Token.Meta derives CanEqual, Transformable {
   case `.` extends Punctuation, BinaryOperator(Precedence(17, 17), leftAssociative = true)
 }
 
-sealed trait BinaryOperator(val precedence: Precedence, val leftAssociative: Boolean = false) derives CanEqual, Transformable { self: Punctuation =>
+sealed trait BinaryOperator(val precedence: Precedence, val leftAssociative: Boolean = false) derives CanEqual, Transformable, Order { self: Punctuation =>
   def asPunctuation: Punctuation = self
 }
 

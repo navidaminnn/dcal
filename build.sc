@@ -8,9 +8,12 @@ object dcal extends RootModule with ScalaModule {
     "-deprecation",
     "-Werror", "-Wunused:all",
     "-language:strictEquality",
+    "-Ykind-projector:underscores",
+    "-explain",
     "-Xmax-inlines", "64",
     //"-Ximplicit-search-limit", "100000",
-    //"-Xprompt", "-Xprint-types", "-Xprint-inline",
+    //"-Xprompt",
+    "-Xprint-types", "-Xprint-inline",
   )
 
   def ivyDeps = Agg(

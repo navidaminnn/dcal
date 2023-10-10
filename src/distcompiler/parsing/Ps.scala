@@ -3,7 +3,7 @@ package distcompiler.parsing
 import cats.*
 import cats.syntax.all.given
 
-final case class Ps[+T](value: T)(using val sourceLocation: SourceLocation) {
+final case class Ps[+T](value: T)(using val sourceLocation: SourceLocation) extends SourceLocated {
   def map[U](fn: T => U): Ps[U] =
     copy(value = fn(value))
 
@@ -11,6 +11,8 @@ final case class Ps[+T](value: T)(using val sourceLocation: SourceLocation) {
 }
 
 object Ps {
+  given order[T](using Order[T]): Order[Ps[T]] = Order.by(_.value)
+
   given comonadTraverse: Comonad[Ps] with Traverse[Ps] with {
     def extract[A](x: Ps[A]): A = x.value
 
