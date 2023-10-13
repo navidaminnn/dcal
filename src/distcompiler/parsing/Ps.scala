@@ -7,7 +7,8 @@ final case class Ps[+T](value: T)(using val sourceLocation: SourceLocation) exte
   def map[U](fn: T => U): Ps[U] =
     copy(value = fn(value))
 
-  def toPsK: PsK[T] = PsK(value, sourceLocation)
+  def combineSourceLocation(sourceLocation: SourceLocation): Ps[T] =
+    copy()(using this.sourceLocation `combine` sourceLocation)
 }
 
 object Ps {

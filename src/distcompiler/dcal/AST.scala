@@ -5,25 +5,27 @@ import cats.data.*
 //import cats.syntax.all.given
 
 import distcompiler.transform.Poly
-import distcompiler.parsing.{Ps, SourceLocation}
+import distcompiler.parsing.Ps
 
 trait AST {
   type Expression
   type FunctionSubstitutionBranch
   type FunctionSubstitutionAnchor
-  type DefinitionQualifier
   type AssignPair
   type Punctuation
   type BinaryOperator
+  type QuantifierBound
   type String
   type BigInt
+  type Node
+  type ScopeRoot
 
-  sealed trait NNode
+  sealed trait NNode {
+    def isScopeRoot: Boolean = false
+  }
 
-  sealed trait NScopeRoot
-
-  enum NDefinitionQualifier extends NNode {
-    case Pure, Async
+  sealed trait NScopeRoot extends NNode {
+    override def isScopeRoot: Boolean = true
   }
 
   final case class NAssignPair(lhsBase: String, lhsIndices: List[Expression], rhs: Expression) extends NNode
@@ -34,19 +36,17 @@ trait AST {
   }
 
   enum NExpression extends NNode {
-    case Module(name: String, body: Expression) extends NScopeRoot, NExpression
+    case Module(name: String, body: Expression) extends NExpression, NScopeRoot
 
     case Seq(first: Expression, second: Expression)
 
-    case Let(name: String, valueOpt: Option[Expression]) extends NScopeRoot, NExpression
-    case Var(name: String, valueOpt: Option[Expression]) extends NScopeRoot, NExpression
-    case Def(qualifierOpt: Option[DefinitionQualifier], name: String, params: List[ParamT], bodyOpt: Option[Expression]) extends NScopeRoot, NExpression
+    case Let(name: String, setOpt: Option[Expression], valueOpt: Option[Expression]) extends NExpression, NScopeRoot
+    case Var(name: String, setOpt: Option[Expression], valueOpt: Option[Expression]) extends NExpression, NScopeRoot
+    case Def(name: String, params: List[(String, Option[Expression])], setOpt: Option[Expression], bodyOpt: Option[Expression]) extends NExpression, NScopeRoot
 
-    case Check(name: String, body: Expression) extends NScopeRoot, NExpression
-    case Override(existing: Expression, replacement: Expression)
+    case Check(name: String, body: Expression) extends NExpression, NScopeRoot
 
-    case Interface(body: Expression) extends NScopeRoot, NExpression
-    case Struct(body: Expression) extends NScopeRoot, NExpression
+    case New(superOpt: Option[Expression], body: Expression) extends NExpression, NScopeRoot
 
     case Return(valueOpt: Option[Expression])
 
@@ -58,10 +58,10 @@ trait AST {
     case Either(branches: NonEmptyList[Expression])
     case All(branches: NonEmptyList[Expression])
 
-    case Later(label: String, next: Expression)
+    case Yield(label: String)
 
-    case Exists(bindings: NonEmptyList[QuantifierBound], body: Expression) extends NScopeRoot, NExpression
-    case Forall(bindings: NonEmptyList[QuantifierBound], body: Expression) extends NScopeRoot, NExpression
+    case Exists(bindings: NonEmptyList[QuantifierBound], body: Expression) extends NExpression, NScopeRoot
+    case Forall(bindings: NonEmptyList[QuantifierBound], body: Expression) extends NExpression, NScopeRoot
 
     case SubstitutionPoint(name: String, expr: Expression)
     case IntLiteral(value: BigInt)
@@ -72,55 +72,30 @@ trait AST {
     case BinaryOpCall(op: BinaryOperator, lhs: Expression, rhs: Expression)
     //case UnaryOpCall(op: Either[Tokens.PrefixOperator, Tokens.PostfixOperator], operand: ExpressionT)
     case SetConstructor(members: List[Expression])
-    case SetRefinement(binding: QuantifierBound, body: Expression) extends MScopeRoot, NExpression
-    case SetComprehension(body: Expression, binds: NonEmptyList[QuantifierBound]) extends NScopeRoot, NExpression
+    case SetRefinement(binding: QuantifierBound, body: Expression) extends NExpression, NScopeRoot
+    case SetComprehension(body: Expression, binds: NonEmptyList[QuantifierBound]) extends NExpression, NScopeRoot
     case TupleConstructor(elements: List[Expression])
     case RecordConstructor(fields: NonEmptyList[(String, Expression)])
     case RecordSet(fields: NonEmptyList[(String, Expression)])
-    case Choose(binding: QuantifierBoundT, body: ExpressionT) extends NScopeRoot, NExpression
-    case FunctionConstructor(bindings: NonEmptyList[QuantifierBound], body: Expression) extends NScopeRoot, NExpression
+    case Choose(binding: QuantifierBound, body: Expression) extends NExpression, NScopeRoot
+    case FunctionConstructor(bindings: NonEmptyList[QuantifierBound], body: Expression) extends NExpression, NScopeRoot
     case FunctionSubstitution(function: Expression, substitutions: NonEmptyList[FunctionSubstitutionBranch])
   }
 
-  final case class NFunctionSubstitutionBranch(indexPath: NonEmptyList[ExpressionT], body: Expression) extends NScopeRoot, NNode
+  final case class NFunctionSubstitutionBranch(indexPath: NonEmptyList[Expression], body: Expression) extends NNode, NScopeRoot 
 }
 
 transparent trait ASTF[F[_]] extends AST {
-  type NodeT = F[Node]
-  type StringT = F[String]
-  type BigIntT = F[BigInt]
-  type PunctuationT = F[Punctuation]
-  type BinaryOperatorT = F[BinaryOperator]
-  type NameBinderT = F[NameBinder]
-  type PathRefT = F[PathRef]
-  type ScopeRootT = F[ScopeRoot]
-  type ImportT = F[Import]
-  type ModuleT = F[Module]
-  type ParamT = F[Param]
-  type CheckBlockT = F[CheckBlock]
-  type InterfaceBlockT = F[InterfaceBlock]
-  type ImplBlockT = F[ImplBlock]
-  type InterfaceRefT = F[InterfaceRef]
-  type DefinitionT = F[Definition]
-  type DefinitionQualifierT = F[Definition.Qualifier]
-  type InterfaceMemberT = F[InterfaceMember]
-  type InstanceDeclT = F[InstanceDecl]
-  type CallArgT = F[CallArg]
-  type PathT = F[Path]
-  type PathSegmentT = F[PathSegment]
-  type ValBindingT = F[ValBinding]
-  type BindingT = F[Binding]
-  type StatementsT = F[Statements]
-  type BlockT = F[SingleStatement.Block]
-  type SingleStatementT = F[SingleStatement]
-  type AssignLhsT = F[AssignLhs]
-  type AssignPairT = F[AssignPair]
-  type QuantifierBoundT = F[QuantifierBound]
-  type ExpressionT = F[Expression]
-  type FunctionSubstitutionAnchorT = F[FunctionSubstitutionAnchor]
-  type FunctionSubstitutionBodyT = F[FunctionSubstitutionBody]
-  type FunctionSubstitutionBranchT = F[FunctionSubstitutionBranch]
-  type CheckDirectiveT = F[CheckDirective]
+  type Expression = F[NExpression]
+  type FunctionSubstitutionBranch = F[NFunctionSubstitutionBranch]
+  type AssignPair = F[NAssignPair]
+  type Punctuation = F[distcompiler.dcal.Punctuation]
+  type BinaryOperator = F[distcompiler.dcal.BinaryOperator]
+  type QuantifierBound = F[NQuantifierBound]
+  type String = F[Predef.String]
+  type BigInt = F[scala.BigInt]
+  type Node = F[NNode]
+  type ScopeRoot = F[NScopeRoot]
 }
 
 object IdAST extends ASTF[Id] {

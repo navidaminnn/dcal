@@ -1,6 +1,6 @@
 package distcompiler.transform
 
-import distcompiler.util.{SummonTuple, SummonFallback}
+import distcompiler.util.SummonTuple
 
 import cats.*
 import scala.deriving.Mirror
