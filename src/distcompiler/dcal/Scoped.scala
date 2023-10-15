@@ -31,7 +31,12 @@ object Scoped {
   object AST extends ASTF[Scoped]
 
   type RootPath = List[IdAST.ScopeRoot]
+  
   type NameRef = (Scoped.RootPath, String)
+  // object NameRef {
+  //   extension (self: NameRef)
+  // }
+
   type ExprRef = (Scoped.RootPath, IdAST.Expression)
 
   def scopeExpr[F[+_] <: SourceLocated : Comonad](src: ASTF[F])(expr: src.Expression): AST.Expression = {

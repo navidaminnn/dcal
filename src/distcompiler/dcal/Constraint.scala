@@ -6,7 +6,6 @@ import cats.syntax.all.given
 
 import distcompiler.util.!!!
 import distcompiler.parsing.{SourceLocation, SourceLocated}
-import cats.StackSafeMonad
 
 enum Constraint[+T] {
   case NameExprAscribe(id: Scoped.NameRef, expr: Scoped.AST.Expression, sourceLocation: SourceLocation) extends Constraint[Unit]
@@ -34,6 +33,8 @@ enum Constraint[+T] {
 }
 
 object Constraint {
+  import Scoped.{NameRef, ExprRef}
+
   // TODO: purity checking
   // TODO: effects tracking (assignments, impure calls, asynchrony, and async assignments)
   // TODO: infer invariants needed for sound compilation
@@ -91,6 +92,7 @@ object Constraint {
   }
 
   enum StructDecl extends SourceLocated {
+    // TOOD: use NameRef, so we can unambiguously cross-reference field decls (e.g. in effects logic)
     case Var(`abstract`: Boolean, name: String, set: Set)(val sourceLocation: SourceLocation)
     case Let(`abstract`: Boolean, name: String, set: Set)(val sourceLocation: SourceLocation)
     case Def(`abstract`: Boolean, name: String, argSets: List[(String, Set)], resultSet: Set)(val sourceLocation: SourceLocation)
@@ -100,7 +102,7 @@ object Constraint {
   
   // maybe we need check vs build (or whatever it's called)
   enum Set {
-    case Universe
+    case Unknown
     case Atom(name: String)
     case Struct(decls: List[StructDecl])
     case Method(argSets: List[(String, Set)], resultSet: Set)
@@ -132,6 +134,23 @@ object Constraint {
     val TRUE: Set = Set.Atom("TRUE")
     val FALSE: Set = Set.Atom("FALSE")
     val BOOL: Set = Set.Elements(List(TRUE, FALSE))
+  }
+
+  enum Effect {
+    case AllocVar(nameRef: NameRef)
+    case DupVar(nameRef: NameRef)
+    case FreeVar(nameRef: NameRef) // emit on scope end if corresponding AllocVar is present; mark which expr it refers to.
+    case WriteVar(nameRef: NameRef)
+    case ReadVar(nameRef: NameRef)
+    case Call(nameRef: NameRef)
+    case Return(set: Set)
+    case TailCall(set: Set, nameRef: NameRef) // generate TC if detected (Call last + Return first)
+    case Defer(deferredEffects: Effects)
+    case Spawn(spawnedEffects: Effects)
+  }
+
+  final case class Effects(effects: List[Effect], lastEffects: List[Effect]) {
+
   }
 
   def inheritDefns(superDefns: List[StructDecl], defns: List[StructDecl]): Constraint[List[StructDecl]] = ???
@@ -213,7 +232,7 @@ object Constraint {
     def implLetVar(mkLetVar: MkLetVar)(name: String, setOpt: Option[Expression], valueOpt: Option[Expression]): Constraint[Chain[StructDecl]] = {
       val `abstract` = valueOpt.isEmpty
       setOpt
-      .fold(pure(Set.Universe))(exprEvalSet)
+      .fold(pure(Set.Unknown))(exprEvalSet)
       .andThen { set =>
         valueOpt.traverse_ { value =>
           exprSet(value).andThen(_.checkSubsetOf(set)(expr.sourceLocation))
@@ -235,14 +254,14 @@ object Constraint {
           val paramSets =
             params.traverse { (name, setOpt) =>
               setOpt
-              .fold(pure(Set.Universe))(exprEvalSet)
+              .fold(pure(Set.Unknown))(exprEvalSet)
               .andThenPar { set =>
                 Constraint.NameSetAscribe(name.refThisName, set, setOpt.fold(name.sourceLocation)(_.sourceLocation))
               }
               .map((name.extract, _))
             }
           val resultSet =
-            setOpt.fold(pure(Set.Universe))(exprEvalSet)
+            setOpt.fold(pure(Set.Unknown))(exprEvalSet)
             .andThenPar { set =>
               bodyOpt match {
                 case None => ().pure
@@ -279,7 +298,7 @@ object Constraint {
     def letVarSet(name: String, setOpt: Option[Expression], valueOpt: Option[Expression]): Constraint[Set] =
       (setOpt, valueOpt) match {
         case (None, None) =>
-          Constraint.NameSetAscribe(expr.refName(name.extract), Set.Universe, expr.sourceLocation)
+          Constraint.NameSetAscribe(expr.refName(name.extract), Set.Unknown, expr.sourceLocation)
           *> Set.empty.pure
         case (None, Some(valueExpr)) =>
           exprSet(valueExpr)
