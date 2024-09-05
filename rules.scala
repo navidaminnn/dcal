@@ -280,11 +280,9 @@ object Rule:
     case Progress(nextUntouchedIdx: Int)
 end Rule
 
-trait Pass:
-  val name: String
-
+trait Pass(using NamespaceCtx) extends Named:
+  protected given pass: Pass = this
   private val rules = mutable.ArrayBuffer.empty[Rule[?]]
-  protected final given pass: Pass = this
 
   final def apply(top: Node): Unit =
     def applyRules(parent: Node, startIdx: Int): Rule.Result =
@@ -334,7 +332,7 @@ trait Pass:
     end while
 end Pass
 
-object Pass:
+case object Pass extends NamespaceObj:
   def rule[T](using pass: Pass)(guard: Pattern[T])(
       action: T => Rule.ActionResult
   ): Unit =
@@ -359,8 +357,6 @@ object Pass:
   end ResolveBuiltins
 end Pass
 
-trait PassObj extends Pass:
+trait PassObj extends Pass, NamedObj:
   self: Singleton & Product =>
-
-  final override val name: String = productPrefix
 end PassObj

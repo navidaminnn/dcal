@@ -3,9 +3,7 @@ package distcompiler
 import scala.collection.mutable
 import scala.collection.MapView
 
-trait Token(using ns: Namespace) extends Equals:
-  ns.checkName(tailName)
-
+trait Token extends Equals, Named, NamespaceRequired:
   final override def canEqual(that: Any): Boolean =
     that.isInstanceOf[Token]
 
@@ -14,11 +12,6 @@ trait Token(using ns: Namespace) extends Equals:
 
   final override def hashCode(): Int =
     System.identityHashCode(this)
-
-  final def fullName: String =
-    ns.withPrefix(tailName)
-
-  def tailName: String
 end Token
 
 object Token:
@@ -39,24 +32,21 @@ object Token:
       Node(token, mutable.ArrayBuffer.from(handles))
 end Token
 
-transparent trait TokenObj(shape: TokenObj.ShapeSrc)(using ns: Namespace)
-    extends Token:
+trait TokenObj(shape: TokenObj.ShapeSrc) extends Token, NamedObj:
   self: Singleton & Product =>
   locally:
     import TokenObj.ShapeSrc
     shape match
       case ShapeSrc.None => // skip
       case ShapeSrc.Immediate(shape) =>
-        require(ns.isInstanceOf[Wellformed])
-        given Wellformed = ns.asInstanceOf[Wellformed]
+        require(namespaceCtx.isInstanceOf[Wellformed])
+        given Wellformed = namespaceCtx.asInstanceOf[Wellformed]
         this ::= shape
       case ShapeSrc.Deferred(shapeFn) =>
-        require(ns.isInstanceOf[Wellformed])
-        given wf: Wellformed = ns.asInstanceOf[Wellformed]
+        require(namespaceCtx.isInstanceOf[Wellformed])
+        given wf: Wellformed = namespaceCtx.asInstanceOf[Wellformed]
         wf.deferBuildStep:
           this ::= shapeFn()
-
-  final override def tailName: String = productPrefix
 end TokenObj
 
 object TokenObj:
@@ -105,60 +95,59 @@ object Wellformed:
     self.shapeMapBuilder.addAll(other.shapes)
 end Wellformed
 
+trait WellformedObj(using NamespaceCtx) extends Wellformed, NamespaceObj:
+  self: Singleton & Product =>
+end WellformedObj
+
 sealed trait Shape
 
 object Shape:
   extension (shape: => Shape)
     def defer: TokenObj.ShapeSrc =
       TokenObj.ShapeSrc.Deferred(() => shape)
+
+  case object AnyShape extends Shape
+
+  final case class Atom(
+      isLookup: Boolean = false,
+      isLookdown: Boolean = false,
+      hasScope: Boolean = false,
+      showSource: Boolean = false
+  ) extends Shape
+
+  final case class Fields(fields: List[Choice]) extends Shape
+
+  object Fields:
+    def apply(fields: Choice*): Fields =
+      Fields(fields.toList)
+  end Fields
+
+  final class Choice(choices: Set[Token]) extends Shape:
+    @scala.annotation.alpha("or")
+    def |(other: Token): Choice =
+      Choice(choices + other)
+
+    def extend(choices: Token*): Choice =
+      Choice(this.choices ++ choices)
+
+    def restrict(choices: Token*): Choice =
+      Choice(this.choices -- choices)
+  end Choice
+
+  object Choice:
+    given tokenAsChoice: Conversion[Token, Choice] with
+      def apply(token: Token): Choice =
+        Choice(Set(token))
+  end Choice
+
+  final case class Repeated(choice: Choice) extends Shape
 end Shape
 
-case object AnyShape extends Shape
-
-final case class Atom(
-    isLookup: Boolean = false,
-    isLookdown: Boolean = false,
-    hasScope: Boolean = false,
-    showSource: Boolean = false
-) extends Shape
-
-final case class Fields(fields: List[Choice]) extends Shape
-
-object Fields:
-  def apply(fields: Choice*): Fields =
-    Fields(fields.toList)
-end Fields
-
-final class Choice(choices: Set[Token]) extends Shape:
-  @scala.annotation.alpha("or")
-  def |(other: Token): Choice =
-    Choice(choices + other)
-
-  def extend(choices: Token*): Choice =
-    Choice(this.choices ++ choices)
-
-  def restrict(choices: Token*): Choice =
-    Choice(this.choices -- choices)
-end Choice
-
-object Choice:
-  given tokenAsChoice: Conversion[Token, Choice] with
-    def apply(token: Token): Choice =
-      Choice(Set(token))
-end Choice
-
-final case class Repeated(choice: Choice) extends Shape
-
-transparent trait WellformedObj(using NamespaceCtx)
-    extends Wellformed,
-      NamespaceObj:
-  self: Singleton & Product =>
-end WellformedObj
-
 case object Builtin extends WellformedObj:
-  import Wellformed.*
+  import Shape.*
 
   case object top extends TokenObj(AnyShape)
+  
   case object error extends TokenObj(Fields(errorMsg, errorAST)):
     def apply(msg: String, ast: Node): Node =
       error(

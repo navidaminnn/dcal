@@ -2,7 +2,21 @@ package distcompiler
 
 import scala.collection.mutable
 
-trait Namespace(using ctx: NamespaceCtx):
+transparent trait Named(using protected val namespaceCtx: NamespaceCtx):
+  namespaceCtx.checkName(name)
+
+  def name: String
+end Named
+
+transparent trait NamespaceRequired(using Namespace) extends Named
+
+trait NamedObj extends Named:
+  self: Singleton & Product =>
+
+  final override def name: String = productPrefix
+end NamedObj
+
+trait Namespace extends Named:
   protected given ns: Namespace = this
   private val registeredNames = mutable.HashSet.empty[String]
 
@@ -11,33 +25,37 @@ trait Namespace(using ctx: NamespaceCtx):
     registeredNames.add(name)
 
   @scala.annotation.tailrec
-  final def withPrefix(name: String): String =
-    ctx.withPrefix(s"$tailName.$name")
+  final def withPrefix(nameToPrefix: String): String =
+    namespaceCtx.withPrefix(s"$name.$nameToPrefix")
 
   final def fullName: String =
-    ctx.withPrefix(tailName)
+    namespaceCtx.withPrefix(name)
 
-  def tailName: String
+  def name: String
 end Namespace
 
-transparent trait NamespaceObj extends Namespace:
+transparent trait NamespaceObj extends Namespace, NamedObj:
   self: Singleton & Product =>
-
-  final override def tailName: String = productPrefix
 end NamespaceObj
 
 opaque type NamespaceCtx = Namespace | Unit
 
 object NamespaceCtx:
-  def none: NamespaceCtx = ()
+  val none: NamespaceCtx = ()
 
-  inline given find: NamespaceCtx =
-    scala.compiletime.summonFrom {
+  opaque type Find = NamespaceCtx
+
+  inline given apply: NamespaceCtx =
+    scala.compiletime.summonFrom:
       case ns: Namespace => ns
       case _             => ()
-    }
 
   extension (self: NamespaceCtx)
+    inline def checkName(name: String): Unit =
+      self match
+        case _: Unit => // pass
+        case ns: Namespace => ns.checkName(name)
+
     inline def withPrefix(name: String): String =
       self match
         case _: Unit       => name
