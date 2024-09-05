@@ -4,6 +4,7 @@ target/
 .DS_Store
 .metals
 .vscode
+.scala-build/
 .bloop
 **/project/metals.sbt
 /out
