@@ -6,6 +6,9 @@ transparent trait Named(using protected val namespaceCtx: NamespaceCtx):
   namespaceCtx.checkName(name)
 
   def name: String
+
+  final def fullName: String =
+    namespaceCtx.withPrefix(name)
 end Named
 
 transparent trait NamespaceRequired(using Namespace) extends Named
@@ -27,9 +30,6 @@ trait Namespace extends Named:
   @scala.annotation.tailrec
   final def withPrefix(nameToPrefix: String): String =
     namespaceCtx.withPrefix(s"$name.$nameToPrefix")
-
-  final def fullName: String =
-    namespaceCtx.withPrefix(name)
 
   def name: String
 end Namespace
@@ -53,7 +53,7 @@ object NamespaceCtx:
   extension (self: NamespaceCtx)
     inline def checkName(name: String): Unit =
       self match
-        case _: Unit => // pass
+        case _: Unit       => // pass
         case ns: Namespace => ns.checkName(name)
 
     inline def withPrefix(name: String): String =

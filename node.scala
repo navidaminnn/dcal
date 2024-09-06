@@ -4,14 +4,18 @@ import scala.collection.mutable
 
 final class Node private[distcompiler] (
     val token: Token,
-    private val childrenImpl: mutable.ArrayBuffer[Node.Handle]
+    private val childrenImpl: mutable.ArrayBuffer[Node.Child]
 ):
   thisNode =>
 
   private var parentOpt: Node | Null = null
   private var idxInParentOpt: Int = -1
   Node.onWorkQueue:
-    childrenImpl.mapInPlace(_.ensureParent(thisNode))
+    var idxInParent = 0
+    childrenImpl.mapInPlace: child =>
+      val idx = idxInParent
+      idxInParent += 1
+      child.ensureParent(thisNode, idx)
 
   def ensureParent(parent: Node, idxInParent: Int): Node =
     if (parentOpt eq parent)
@@ -28,6 +32,7 @@ final class Node private[distcompiler] (
           .ensureParent(parent, idxInParent)
 
   def reparent: this.type =
+    // TODO: adjust symbol tables
     parentOpt = null
     idxInParentOpt = -1
     this
@@ -59,7 +64,6 @@ final class Node private[distcompiler] (
     else at(other.sourceRangeOpt.nn)
 
   def sourceRange: SourceRange =
-    ensureMaterialized
     if sourceRange ne null
     then sourceRange
     else
@@ -74,117 +78,75 @@ final class Node private[distcompiler] (
         then range <+>= node.sourceRangeOpt.nn
         end if
 
-        queue.enqueueAll(node.children.iteratorNodes)
+        queue.enqueueAll:
+          node.children.iterator
+            .collect:
+              case node: Node => node
       end while
 
       range
 
-  def ensureMaterialized: this.type =
-    if children.nonEmpty
-    then
-      Node.onWorkQueue:
-        children.foreach(_.ensureMaterialized)
-      this
-    else this
+  object children
+      extends IterableOnce[Node.Child],
+        PartialFunction[Int, Node.Child]:
+    export childrenImpl.{length, indices, iterator, isDefinedAt, forall, exists}
 
-  object children extends IterableOnce[Node], PartialFunction[Int, Node]:
-    private def materializedChild(idx: Int): Node =
-      val child = childrenImpl(idx)
-      require(!child.isEmbed)
-      val materializedChild =
-        child.materialized.asNode
-          .ensureParent(thisNode, idx)
-      childrenImpl(idx) = materializedChild
-      materializedChild
+    override def apply(idx: Int): Node.Child =
+      childrenImpl(idx)
 
-    def iteratorNodes: Iterator[Node] =
-      (0 until length).iterator
-        .filterNot: i =>
-          childrenImpl(i).isEmbed
-        .map(materializedChild)
-
-    override def iterator: Iterator[Node] =
-      (0 until length).iterator
-        .map(apply)
-
-    def length = childrenImpl.length
-
-    def isEmbedAt(idx: Int): Boolean =
-      childrenImpl(idx).isEmbed
-
-    def embedAt[T](idx: Int): T =
-      val child = childrenImpl(idx)
-      require(child.isEmbed)
-      child.asEmbed[T]
-
-    override def isDefinedAt(idx: Int): Boolean =
-      0 <= idx && idx < length
-
-    override def apply(idx: Int): Node =
-      val child = childrenImpl(idx)
-      if child.isMaterialized
-      then
-        // embeds end up here as they are always evaluated; we lazily generate the nodes if asked
-        child.asNode
-      else materializedChild(idx)
-    end apply
-
-    def update(idx: Int, handle: Node.Handle): Unit =
-      childrenImpl(idx) = handle
+    def update(idx: Int, child: Node.Child): Unit =
+      childrenImpl(idx) = child.ensureParent(thisNode, idx)
 
     def patchInPlace(
         from: Int,
-        patch: IterableOnce[Node.Handle],
+        patch: IterableOnce[Node.Child],
         replaced: Int
     ): this.type =
-      childrenImpl.patchInPlace(from, patch, replaced)
+      childrenImpl.patchInPlace(
+        from,
+        patch.iterator.zipWithIndex
+          .map: (child, idx) =>
+            child.ensureParent(thisNode, from + idx),
+        replaced
+      )
       this
   end children
 end Node
 
 object Node:
+  type Child = Node | Embed[?]
+
   final case class Embed[T](value: T)(using val nodeRepr: AsNode[T])
 
-  opaque type Handle = Node | (() => Node) | Embed[?]
-
-  object Handle:
-    given Conversion[Node, Handle] = identity
-  end Handle
-
-  extension (self: => Node) def lzy: Handle = () => self
-  extension [T: AsNode](self: T) def embed: Handle = Embed(self)
-
-  extension (self: Handle)
-    def ensureParent(parent: Node): Handle =
+  extension (self: Child)
+    def ensureParent(parent: Node, idxInParent: Int): Child =
       self match
-        case self: Node         => self.ensureParent(parent)
-        case self: (() => Node) => self
-        case self: Embed[?]     => self
+        case self: Node     => self.ensureParent(parent, idxInParent)
+        case self: Embed[?] => self
 
-    def isMaterialized: Boolean =
+    def reparent: Child =
       self match
-        case _: (Node | Embed[?]) => true
-        case _: (() => Node)      => false
+        case self: Node     => self.reparent
+        case self: Embed[?] => self
 
     def isEmbed: Boolean =
       self match
-        case _: Embed[?]              => true
-        case _: ((() => Node) | Node) => false
+        case _: Embed[?] => true
+        case _: Node     => false
+
+    def isNode: Boolean =
+      self match
+        case _: Node     => true
+        case _: Embed[?] => false
 
     def asEmbed[T]: T =
       require(self.isEmbed)
       self.asInstanceOf[Embed[T]].value
 
-    def materialized: Handle =
-      self match
-        case self: (() => Node)      => self()
-        case self: (Node | Embed[?]) => self
-
     def asNode: Node =
       self match
-        case self: Node         => self
-        case self: Embed[t]     => self.nodeRepr.asNode(self.value)
-        case self: (() => Node) => self()
+        case self: Node     => self
+        case self: Embed[t] => self.asNode
   end extension
 
   private val recursionBreakingWorkQueue =
@@ -214,4 +176,9 @@ object Node:
 
 trait AsNode[T]:
   extension (self: T) def asNode: Node
+end AsNode
+
+object AsNode:
+  given token: AsNode[Token] with
+    extension (self: Token) def asNode: Node = self()
 end AsNode

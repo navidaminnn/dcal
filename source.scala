@@ -161,5 +161,4 @@ object SourceRange:
       if ord == 0
       then Ordering[Int].compare(x.length, y.length)
       else ord
-  end ordering
 end SourceRange
