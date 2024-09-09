@@ -1,153 +1,241 @@
 package distcompiler
 
 import scala.collection.mutable
+import distcompiler.Node.RightSiblingSentinel
+import distcompiler.Node.Embed
+import distcompiler.Node.Top
 
-final class Node private[distcompiler] (
-    val token: Token,
-    private val childrenImpl: mutable.ArrayBuffer[Node.Child]
-):
+final case class NodeError(msg: String) extends RuntimeException(msg)
+
+final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child])
+    extends Node.Child,
+      Node.Sibling,
+      Node.Parent(childrenInit):
   thisNode =>
 
-  private var parentOpt: Node | Null = null
-  private var idxInParentOpt: Int = -1
-  Node.onWorkQueue:
-    var idxInParent = 0
-    childrenImpl.mapInPlace: child =>
-      val idx = idxInParent
-      idxInParent += 1
-      child.ensureParent(thisNode, idx)
+  private var _sourceRange: SourceRange | Null = null
 
-  def ensureParent(parent: Node, idxInParent: Int): Node =
-    if (parentOpt eq parent)
-    then this
-    else if parentOpt eq null
+  def at(sourceRange: SourceRange): this.type =
+    if _sourceRange eq null
     then
-      parentOpt = parent
-      idxInParentOpt = idxInParent
+      _sourceRange = sourceRange
       this
-    else
-      Node.withWorkQueue: _ =>
-        Node(token, mutable.ArrayBuffer.from(childrenImpl))
-          .like(thisNode)
-          .ensureParent(parent, idxInParent)
+    else throw NodeError("node source range already set")
 
-  def reparent: this.type =
-    // TODO: adjust symbol tables
-    parentOpt = null
-    idxInParentOpt = -1
-    this
-
-  def hasParent: Boolean =
-    parentOpt ne null
-
-  def parent: Node =
-    parentOpt.nn
-
-  def idxInParent: Int =
-    assert(idxInParentOpt != -1)
-    idxInParentOpt
-
-  private var sourceRangeOpt: SourceRange | Null = null
-
-  def at(sourceRange: SourceRange): Node =
-    if sourceRangeOpt eq null
-    then
-      sourceRangeOpt = sourceRange
-      this
-    else
-      new Node(token, mutable.ArrayBuffer.from(childrenImpl))
-        .at(sourceRange)
-
-  def like(other: Node): Node =
-    if other.sourceRangeOpt eq null
+  def like(other: Node): this.type =
+    if other._sourceRange eq null
     then this
-    else at(other.sourceRangeOpt.nn)
+    else at(other._sourceRange.nn)
 
   def sourceRange: SourceRange =
-    if sourceRange ne null
-    then sourceRange
-    else
-      var range = SourceRange.none
-      val queue = mutable.Queue(this)
+    @scala.annotation.tailrec
+    def impl(sibling: Node.Sibling, sourceRange: SourceRange): SourceRange =
+      sibling match
+        case node: Node =>
+          val nextSourceRange =
+            if node._sourceRange ne null
+            then sourceRange <+> node._sourceRange.nn
+            else sourceRange
 
-      while queue.nonEmpty
-      do
-        val node = queue.dequeue()
+          impl(node.firstChild, nextSourceRange)
+        case sentinel: RightSiblingSentinel =>
+          sentinel.parent match
+            case parentNode: Node =>
+              impl(parentNode.rightSibling, sourceRange)
+            case _: Top =>
+              sourceRange
+        case Embed(value) =>
+          impl(sibling.rightSibling, sourceRange)
 
-        if node.sourceRangeOpt ne null
-        then range <+>= node.sourceRangeOpt.nn
-        end if
+    impl(thisNode, sourceRange = SourceRange.none)
+  end sourceRange
 
-        queue.enqueueAll:
-          node.children.iterator
-            .collect:
-              case node: Node => node
-      end while
-
-      range
-
-  object children
-      extends IterableOnce[Node.Child],
-        PartialFunction[Int, Node.Child]:
-    export childrenImpl.{length, indices, iterator, isDefinedAt, forall, exists}
-
-    override def apply(idx: Int): Node.Child =
-      childrenImpl(idx)
-
-    def update(idx: Int, child: Node.Child): Unit =
-      childrenImpl(idx) = child.ensureParent(thisNode, idx)
-
-    def patchInPlace(
-        from: Int,
-        patch: IterableOnce[Node.Child],
-        replaced: Int
-    ): this.type =
-      childrenImpl.patchInPlace(
-        from,
-        patch.iterator.zipWithIndex
-          .map: (child, idx) =>
-            child.ensureParent(thisNode, from + idx),
-        replaced
-      )
-      this
-  end children
+  override def iteratorErrors: Iterator[Node] =
+    if token == Builtin.error
+    then Iterator.single(thisNode)
+    else children.iterator.foldLeft(Iterator.empty[Node])(_ ++ _.iteratorErrors)
 end Node
 
 object Node:
-  type Child = Node | Embed[?]
+  final class Top(childrenInit: IterableOnce[Node.Child])
+      extends Parent(childrenInit):
+    def this() = this(Nil)
+  end Top
+
+  sealed trait Parent(childrenInit: IterableOnce[Node.Child]):
+    thisParent =>
+
+    private val _children = mutable.ArrayBuffer.from[Node.Child](childrenInit)
+    locally:
+      _children.iterator.zipWithIndex
+        .foreach: (child, idx) =>
+          child.ensureParent(this, idx)
+
+    def firstChild: Node.Sibling =
+      children.headOption match
+        case None        => RightSiblingSentinel(this)
+        case Some(child) => child
+
+    def children_=(childrenInit: IterableOnce[Node.Child]): Unit =
+      children.iterator.foreach(_.unparent)
+      _children.clear()
+      _children.addAll(childrenInit)
+      _children.iterator.zipWithIndex
+        .foreach: (child, idx) =>
+          child.ensureParent(thisParent, idx)
+
+    def unparentedChildren: IterableOnce[Node.Child] =
+      children.iterator.foreach(_.unparent)
+      _children
+
+    object children
+        extends IterableOnce[Node.Child],
+          PartialFunction[Int, Node.Child]:
+      export _children.{
+        iterator,
+        length,
+        isDefinedAt,
+        forall,
+        exists,
+        head,
+        headOption,
+        last,
+        lastOption,
+        isEmpty,
+        nonEmpty
+      }
+      override def apply(idx: Int): Node.Child =
+        _children(idx)
+
+      def findSibling(idx: Int): Node.Sibling =
+        if _children.isDefinedAt(idx)
+        then apply(idx)
+        else if idx >= _children.length
+        then RightSiblingSentinel(thisParent)
+        else apply(idx) // negative idx
+
+      def addOne(child: Node.Child): Unit =
+        _children.addOne(child.ensureParent(thisParent, _children.length))
+
+      def update(idx: Int, child: Node.Child): Unit =
+        // make sure the old child doesn't think it can still refer up this tree
+        _children(idx).unparent
+        _children(idx) = child.ensureParent(thisParent, idx)
+
+      def patchInPlace(
+          from: Int,
+          patch: IterableOnce[Node.Child],
+          replaced: Int
+      ): this.type =
+        // unparent the children that will be removed
+        (from until from + replaced).foreach: idx =>
+          _children(idx).unparent
+
+        var patchLength = 0
+        _children.patchInPlace(
+          from,
+          patch.iterator
+            .tapEach: child =>
+              child.ensureParent(thisParent, from + patchLength)
+              patchLength += 1
+          ,
+          replaced
+        )
+
+        // If we changed the indices of any nodes after the patched section,
+        // make sure they know it (unparent first because we are reassigning, effectively)
+        if patchLength != replaced
+        then
+          (from + patchLength until _children.length).foreach: idx =>
+            _children(idx).unparent
+              .ensureParent(thisParent, idx)
+
+        this
+    end children
+  end Parent
+
+  sealed trait Sibling:
+    thisSibling =>
+
+    def isChild: Boolean = false
+
+    def parent: Parent
+    def idxInParent: Int
+
+    def rightSibling: Node.Sibling =
+      if parent.children.isDefinedAt(idxInParent + 1)
+      then parent.children(idxInParent + 1)
+      else RightSiblingSentinel(parent)
+
+    def parents: Iterator[Parent] =
+      Iterator.unfold(Some(parent): Option[Node.Parent]): curr =>
+        curr.flatMap: curr =>
+          curr match
+            case parentNode: Node =>
+              Some((parentNode, Some(parentNode.parent)))
+            case top: Top =>
+              Some((top, None))
+
+  end Sibling
+
+  final class RightSiblingSentinel private[Node] (val parent: Node.Parent)
+      extends Sibling:
+    override def idxInParent: Int = parent.children.length
+    override def rightSibling: Node.Sibling =
+      throw NodeError(
+        "tried to find the right sibling sentinel's right sibling"
+      )
+  end RightSiblingSentinel
+
+  sealed trait Child extends Sibling:
+    thisChild =>
+
+    override def isChild: Boolean = true
+
+    private var _parent: Parent | Null = null
+    private var _idxInParent: Int = -1
+
+    def ensureParent(parent: Parent, idxInParent: Int): this.type =
+      if (_parent eq parent) && _idxInParent == idxInParent
+      then this
+      else if _parent eq null
+      then
+        assert(_idxInParent == -1)
+        _parent = parent
+        _idxInParent = idxInParent
+        this
+      else throw NodeError("node already has a parent")
+
+    def unparent: this.type =
+      // TODO: adjust symbol tables
+      _parent = null
+      _idxInParent = -1
+      this
+
+    override def parent: Parent =
+      if parent eq null
+      then throw NodeError("tried to find a floating node's parent")
+      _parent.nn
+
+    def replaceThis(replacement: => Node.Child): Node.Child =
+      val parentTmp = parent
+      val idxInParentTmp = idxInParent
+      val computedReplacement = replacement
+      parentTmp.children(idxInParentTmp) = computedReplacement
+      computedReplacement
+
+    override def idxInParent: Int =
+      assert(_idxInParent != -1)
+      _idxInParent
+
+    def iteratorErrors: Iterator[Node]
+  end Child
 
   final case class Embed[T](value: T)(using val nodeRepr: AsNode[T])
-
-  extension (self: Child)
-    def ensureParent(parent: Node, idxInParent: Int): Child =
-      self match
-        case self: Node     => self.ensureParent(parent, idxInParent)
-        case self: Embed[?] => self
-
-    def reparent: Child =
-      self match
-        case self: Node     => self.reparent
-        case self: Embed[?] => self
-
-    def isEmbed: Boolean =
-      self match
-        case _: Embed[?] => true
-        case _: Node     => false
-
-    def isNode: Boolean =
-      self match
-        case _: Node     => true
-        case _: Embed[?] => false
-
-    def asEmbed[T]: T =
-      require(self.isEmbed)
-      self.asInstanceOf[Embed[T]].value
-
-    def asNode: Node =
-      self match
-        case self: Node     => self
-        case self: Embed[t] => self.asNode
-  end extension
+      extends Child,
+        Sibling:
+    override def iteratorErrors: Iterator[Node] = Iterator.empty
+  end Embed
 
   private val recursionBreakingWorkQueue =
     ThreadLocal.withInitial[mutable.Queue[() => Unit] | Null](() => null)
@@ -173,6 +261,7 @@ object Node:
   private def onWorkQueue(task: => Unit): Unit =
     withWorkQueue: workQueue =>
       workQueue.enqueue(() => task)
+end Node
 
 trait AsNode[T]:
   extension (self: T) def asNode: Node

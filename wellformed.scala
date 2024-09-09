@@ -28,8 +28,10 @@ object Token:
         Some(fn(shapeOpt.get))
 
   extension (token: Token)
-    def apply(handles: Node.Child*): Node =
-      Node(token, mutable.ArrayBuffer.from(handles))
+    def apply(children: Node.Child*): Node =
+      Node(token)(children)
+    def apply(children: IterableOnce[Node.Child]): Node =
+      Node(token)(children)
 end Token
 
 trait TokenObj(shape: TokenObj.ShapeSrc) extends Token, NamedObj:
@@ -58,6 +60,10 @@ object TokenObj:
 
   object ShapeSrc:
     given immediateShape: Conversion[Shape, ShapeSrc] = ShapeSrc.Immediate.apply
+    given immediateEmbed[T]: Conversion[Shape.Embed[T], ShapeSrc] with
+      def apply(embed: Shape.Embed[T]): ShapeSrc = immediateShape(
+        Shape.Choice(Set(embed))
+      )
   end ShapeSrc
 end TokenObj
 
@@ -85,117 +91,124 @@ trait Wellformed extends Namespace:
     deferredOps.nn.foreach(_.apply())
     deferredOps = null
 
-    // TODO: sanity check, all shapes covered?
+    import Shape.*
+
+    val queue = mutable.ArrayDeque[Token](Builtin.top)
+    def enqueueChoice(choice: Choice): Unit =
+      choice.choices.foreach:
+        case _: Shape.Embed[?] =>
+        case token: Token      => queue.addOne(token)
+
+    while queue.nonEmpty
+    do
+      val token = queue.removeHead()
+      require(shapeMapBuilder.contains(token))
+      shapeMapBuilder(token) match
+        case AnyShape         =>
+        case _: Atom          =>
+        case Fields(fields)   => fields.foreach(enqueueChoice)
+        case choice: Choice   => enqueueChoice(choice)
+        case Repeated(choice) => enqueueChoice(choice)
+    end while
 
     shapeMapBuilder.view
+  end shapes
 
-  final def checkNode(root: Node): Boolean =
-    require(root.token == Builtin.top)
+  final def checkTree(top: Node.Top): Boolean =
+    import Shape.*
 
-    import Builtin.{error, tuple}
+    def checkChoice(choice: Choice, sibling: Node.Sibling): Boolean =
+      sibling match
+        case _: Node.RightSiblingSentinel => false
+        case child: Node.Child =>
+          choice.choices.exists:
+            case embed: Shape.Embed[t] =>
+              child match
+                case _: Node                       => false
+                case Node.Embed(embed.typeable(_)) => true
+                case Node.Embed(_)                 => false
+
+            case token: Token =>
+              child match
+                case childNode: Node  => childNode.token == token
+                case _: Node.Embed[?] => false
+
+    def checkParent(parent: Node.Parent, shape: Shape): Boolean =
+      shape match
+        case _ if parent match
+              case parentNode: Node => parentNode.token == Builtin.error
+              case _                => false
+            =>
+          true // don't check error nodes
+        case AnyShape => true
+        case Atom(isLookup, isLookdown, hasScope, showSource) =>
+          parent.children.isEmpty
+        case Fields(fields) =>
+          if parent.children.length != fields.length
+          then false
+          else
+            fields.iterator
+              .zip(parent.children)
+              .forall(checkChoice)
+        case choice: Choice =>
+          checkChoice(choice, parent.firstChild)
+          && parent.children.length == 1
+        case Repeated(choice) =>
+          parent.children.forall(checkChoice(choice, _))
 
     @scala.annotation.tailrec
-    def impl(parent: Node, idx: Int, isOk: Boolean): Boolean =
-      import Shape.*
+    def impl(sibling: Node.Sibling, isOk: Boolean): Boolean =
+      sibling match
+        case node: Node =>
+          val shapeOpt = shapes.get(node.token)
+          import Shape.*
 
-      def flagError(msg: String)(using tokenBeingChecked: Token): Unit =
-        parent.children(idx) = error(
-          msg,
-          tuple(
-            Node.Embed(tokenBeingChecked),
-            parent.children(idx).reparent
-          )
-        )
+          val thisOneOk: Boolean =
+            shapeOpt match
+              case None =>
+                // if the shape isn't specified, flag an error
+                false
+              case Some(shape) =>
+                checkParent(node, shape)
 
-      inline def gotoSibling(isOk: Boolean): Boolean =
-        impl(parent, idx + 1, isOk)
+          if thisOneOk
+          then impl(node.firstChild, isOk)
+          else
+            val err =
+              node.replaceThis:
+                Builtin.error(
+                  if shapeOpt.isEmpty
+                  then "missing shape info"
+                  else "unexpected node here",
+                  node.unparent
+                )
 
-      inline def gotoFirstChild(isOk: Boolean): Boolean =
-        val child = parent.children(idx)
-        assert(child.isNode)
-        impl(child.asNode, 0, isOk)
+            impl(err.rightSibling, isOk = false)
 
-      def checkChoice(parent: Node, idx: Int, choice: Choice)(using
-          tokenBeingChecked: Token
-      ): Boolean =
-        val child = parent.children(idx)
-        def checkOne(option: Token | Embed[?]): Boolean =
-          option match
-            case expectedToken: Token =>
-              child match
-                case child: Node   => child.token == expectedToken
-                case Node.Embed(_) => false
-            case expectedEmbed: Embed[t] =>
-              child match
-                case _: Node                               => false
-                case Node.Embed(expectedEmbed.typeable(_)) => true
-                case Node.Embed(_)                         => false
+        case _: Node.RightSiblingSentinel =>
+          sibling.parent match
+            case parentNode: Node =>
+              impl(parentNode.rightSibling, isOk)
+            case _: Node.Top =>
+              isOk
 
-        if !choice.choices.exists(checkOne)
-        then
-          flagError(s"no cases matched at index $idx")
-          false
-        else true
+        case _: Node.Embed[?] =>
+          impl(sibling.rightSibling, isOk)
 
-      if !parent.children.isDefinedAt(idx)
-      then
-        assert(idx == parent.children.length)
-        if parent.hasParent
-        then impl(parent.parent, parent.idxInParent + 1, isOk)
-        else isOk
-      else
-        val node = parent.children(idx)
-        node match
-          case node: Node =>
-            import Shape.*
-            given tokenBeingChecked: Token = node.token
-            assert(shapes.contains(node.token))
-            shapes(node.token) match
-              case AnyShape =>
-                impl(parent, idx + 1, isOk)
-              case Atom(isLookup, isLookdown, hasScope, showSource) =>
-                if node.children.length == 0
-                then impl(parent, idx + 1, isOk)
-                else
-                  flagError("expected atom")
-                  gotoSibling(isOk = false)
-              case Fields(fields) =>
-                if node.children.length != fields.length
-                then
-                  flagError("wrong number of children")
-                  gotoSibling(isOk = false)
-                else if node.children.indices.iterator
-                    .zip(fields.iterator)
-                    // This weird pattern ensures we check all the children.
-                    // Yes, we'll still know if we stop early, but then we won't flag all the errors.
-                    // We'll check all of them on success anyway, which is more common; there's literally no upside to reporting the error case faster.
-                    .map: (idx, choice) =>
-                      checkChoice(parent, idx, choice)
-                    .foldLeft(true)(_ && _)
-                then gotoFirstChild(isOk)
-                else gotoSibling(isOk = false)
-              case choice: Choice =>
-                if node.children.length == 1
-                then
-                  if checkChoice(node, 0, choice)
-                  then gotoFirstChild(isOk)
-                  else gotoSibling(isOk = false)
-                else
-                  flagError("expected one child")
-                  gotoSibling(isOk = false)
-              case Repeated(choice) =>
-                val parentTmp = node
-                if node.children.iterator.zipWithIndex
-                    .map: (node, idx) =>
-                      checkChoice(parentTmp, idx, choice)
-                    .foldLeft(true)(_ && _)
-                then gotoFirstChild(isOk)
-                else gotoSibling(isOk = false)
-
-          case Node.Embed(_) =>
-            gotoSibling(isOk)
-
-    impl(root, 0, true)
+    shapes.get(Builtin.top) match
+      case None =>
+        false
+      case Some(shape) =>
+        if checkParent(top, shape)
+        then impl(top.firstChild, isOk = true)
+        else
+          top.children = List:
+            Builtin.error(
+              "unexpected node here",
+              Builtin.tuple(top.children.iterator.map(_.unparent))
+            )
+          impl(top.firstChild, isOk = false)
+  end checkTree
 end Wellformed
 
 object Wellformed:
@@ -276,6 +289,8 @@ case object Builtin extends WellformedObj:
   case object errorMsg extends TokenObj(Atom(showSource = true))
   case object errorAST extends TokenObj(AnyShape)
 
+  case object sourceMarker extends TokenObj(Atom())
+
   case object lift extends TokenObj(Fields(liftDest, liftNode, origNode)):
     def apply(dest: Token, node: Node, nodeInPlace: Node): Node =
       lift(
@@ -284,7 +299,7 @@ case object Builtin extends WellformedObj:
         origNode(nodeInPlace)
       )
   end lift
-  case object liftDest extends TokenObj(AnyShape)
+  case object liftDest extends TokenObj(Embed[Token])
   case object liftNode extends TokenObj(AnyShape)
   case object origNode extends TokenObj(AnyShape)
 end Builtin

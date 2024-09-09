@@ -1,6 +1,7 @@
 package distcompiler
 
 import scala.collection.mutable
+import distcompiler.Node.Top
 
 enum Pattern[+T]:
   case ThisToken(token: Token) extends Pattern[Node]
@@ -13,14 +14,14 @@ enum Pattern[+T]:
   // subsumes all of parent, child, lookup, lookdown, etc
   // e.g., for looking at parent, you pick Any, you filter .hasParent, and you use (.parent, .indexInParent)
   // ... same for any other transformation where you look at a node, somehow find more nodes, and want to match on them
-  case ForThis[T](srcPattern: Pattern[(Node, Int)], pattern: Pattern[T])
+  case ForThis[T](srcPattern: Pattern[Node.Sibling], pattern: Pattern[T])
       extends Pattern[T]
   case ForAny[T](
-      srcPattern: Pattern[IterableOnce[(Node, Int)]],
+      srcPattern: Pattern[IterableOnce[Node.Sibling]],
       pattern: Pattern[T]
   ) extends Pattern[List[T]]
   case ForAll[T](
-      srcPattern: Pattern[IterableOnce[(Node, Int)]],
+      srcPattern: Pattern[IterableOnce[Node.Sibling]],
       pattern: Pattern[T]
   ) extends Pattern[List[T]]
 
@@ -28,7 +29,7 @@ enum Pattern[+T]:
   case End extends Pattern[Unit]
   case Repeated[T](pattern: Pattern[T]) extends Pattern[List[T]]
 
-  case Find[T](pattern: Pattern[T]) extends Pattern[(Int, T)]
+  case Find[T](pattern: Pattern[T]) extends Pattern[T]
 
   case Lazy[T](patternFn: () => Pattern[T]) extends Pattern[T]
 
@@ -51,31 +52,52 @@ enum Pattern[+T]:
   def filter(pred: T => Boolean): Pattern[T] =
     Filter(this, pred)
 
-  def inspect[U](using T <:< Node)(pattern: Pattern[U]): Pattern[U] =
-    ForThis(
-      srcPattern = this.map: instance =>
-        (instance.parent, instance.idxInParent),
-      pattern = pattern
+  def inspect[U](pattern: Pattern[U])(using ev: T <:< Node.Child): Pattern[U] =
+    ForThis(this.map(ev), pattern)
+
+  def children[U](using T <:< Node.Parent)(pattern: Pattern[U]): Pattern[U] =
+    ForThis(this.map(_.firstChild), pattern)
+
+  def parent[U](using T <:< Node.Sibling)(pattern: Pattern[U]): Pattern[U] =
+    ForAny(
+      this.map: sibling =>
+        sibling.parent match
+          case parentNode: Node => Iterator.single(parentNode)
+          case _: Top           => Iterator.empty
+      ,
+      pattern
+    )
+      .filter(_.nonEmpty)
+      .map(_.head)
+
+  def ancestors[U](using
+      T <:< Node.Sibling
+  )(pattern: Pattern[U]): Pattern[List[U]] =
+    ForAny(
+      this.map(_.parents.collect:
+        case parentNode: Node => parentNode
+      ),
+      pattern
     )
 
-  def children[U](using T <:< Node)(pattern: Pattern[U]): Pattern[U] =
-    ForThis(this.map((_, 0)), pattern)
+  def firstAncestor[U](using T <:< Node.Sibling)(
+      pattern: Pattern[U]
+  ): Pattern[U] =
+    ancestors(pattern).map(_.head)
 
-  def apply(parent: Node, startIdx: Int): Pattern.Result[T] =
+  def apply(sibling: Node.Sibling): Pattern.Result[T] =
     import Pattern.Result
     import Result.*
 
-    def impl[T](self: Pattern[T], startIdx: Int)(using
-        parent: Node
-    ): Pattern.Result[T] =
-      def withValid[T](body: => Result[T]): Result[T] =
-        if parent.children.isDefinedAt(startIdx)
-        then body
-        else Rejected
+    def impl[T](self: Pattern[T], sibling: Node.Sibling): Pattern.Result[T] =
+      def withChild[T](fn: Node.Child => Result[T]): Result[T] =
+        sibling match
+          case _: Node.RightSiblingSentinel => Rejected
+          case child: Node.Child            => fn(child)
 
       def withNode[T](fn: Node => Result[T]): Result[T] =
-        withValid:
-          parent.children(startIdx) match
+        withChild: child =>
+          child match
             case node: Node    => fn(node)
             case Node.Embed(_) => Rejected
 
@@ -83,64 +105,64 @@ enum Pattern[+T]:
         case ThisToken(token) =>
           withNode: node =>
             if node.token == token
-            then Matched(1, node)
+            then Matched(node.rightSibling, node)
             else Rejected
         case Choose(first, second) =>
-          impl(first, startIdx) match
+          impl(first, sibling) match
             case m @ Matched(_, _) => m
             case Rejected =>
-              impl(second, startIdx)
+              impl(second, sibling)
 
         case Adjacent(first, second) =>
-          impl(first, startIdx) match
-            case Matched(length, bound1) =>
-              impl(second, startIdx + length) match
-                case Matched(length2, bound2) =>
-                  Matched(length + length2, (bound1, bound2))
+          impl(first, sibling) match
+            case Matched(nextSibling, bound1) =>
+              impl(second, nextSibling) match
+                case Matched(nextSibling2, bound2) =>
+                  Matched(nextSibling2, (bound1, bound2))
                 case Rejected =>
                   Rejected
             case Rejected => Rejected
 
         case And(first, second) =>
-          impl(first, startIdx) match
-            case Matched(length1, bound1) =>
-              impl(second, startIdx) match
-                case Matched(length2, bound2) =>
-                  Matched(length1.max(length2), (bound1, bound2))
+          impl(first, sibling) match
+            case Matched(nextSibling, bound1) =>
+              impl(second, sibling) match
+                case Matched(nextSibling2, bound2) =>
+                  val maxNextSibling =
+                    if nextSibling.idxInParent < nextSibling2.idxInParent
+                    then nextSibling2
+                    else nextSibling
+                  Matched(maxNextSibling, (bound1, bound2))
                 case Rejected => Rejected
 
             case Rejected => Rejected
 
         case ForThis(srcPattern, pattern) =>
-          impl(srcPattern, startIdx) match
-            case Matched(length, (parent, idxInParent)) =>
-              impl(pattern, idxInParent)(using parent) match
-                case Matched(_, bound) => Matched(length, bound)
+          impl(srcPattern, sibling) match
+            case Matched(nextSibling, siblingToMatch) =>
+              impl(pattern, siblingToMatch) match
+                case Matched(_, bound) => Matched(nextSibling, bound)
                 case Rejected          => Rejected
             case Rejected => Rejected
 
         case ForAny(srcPattern, pattern) =>
-          impl(srcPattern, startIdx) match
-            case Matched(length, pairs) =>
+          impl(srcPattern, sibling) match
+            case Matched(nextSibling, siblingsToMatch) =>
               val elems =
-                pairs.iterator
-                  .map:
-                    case (parent, idxInParent) =>
-                      impl(pattern, idxInParent)(using parent)
+                siblingsToMatch.iterator
+                  .map(impl(pattern, _))
                   .collect:
                     case Matched(_, bound) => bound
                   .toList
-              Matched(length, elems)
+              Matched(nextSibling, elems)
             case Rejected => Rejected
 
         case ForAll(srcPattern, pattern: Pattern[t]) =>
-          impl(srcPattern, startIdx) match
-            case Matched(length, pairs) =>
+          impl(srcPattern, sibling) match
+            case Matched(nextSibling, siblingsToMatch) =>
               val elems =
-                pairs.iterator
-                  .map:
-                    case (parent, idxInParent) =>
-                      impl(pattern, idxInParent)(using parent)
+                siblingsToMatch.iterator
+                  .map(impl(pattern, _))
                   .toList
 
               if elems.forall:
@@ -148,66 +170,65 @@ enum Pattern[+T]:
                   case Rejected      => false
               then
                 Matched(
-                  length,
+                  nextSibling,
                   elems.collect { case Matched(_, bound) => bound }
                 )
               else Rejected
             case Rejected => Rejected
 
         case AnyToken =>
-          withNode(Matched(1, _))
+          withNode(node => Matched(node.rightSibling, node))
         case End =>
-          if !parent.children.isDefinedAt(startIdx)
-          then
-            assert(startIdx == parent.children.length)
-            Matched(0, ())
-          else Rejected
+          sibling match
+            case _: Node.RightSiblingSentinel => Matched(sibling, ())
+            case _: Node.Child                => Rejected
         case Repeated(pattern: Pattern[t]) =>
           val buf = mutable.ListBuffer.empty[t]
-          @scala.annotation.tailrec
-          def repeatedImpl(startIdx: Int, length: Int): Result[T] =
-            impl(pattern, startIdx) match
-              case Matched(length, bound) =>
-                buf += bound
-                assert(length > 0) // or we cause an infinite loop
-                repeatedImpl(startIdx + length, length + 1)
-              case Rejected =>
-                Matched(length, buf.toList)
+          var lastSibling = sibling
 
-          repeatedImpl(startIdx, length = 0)
+          @scala.annotation.tailrec
+          def repeatedImpl(sibling: Node.Sibling): Result[T] =
+            impl(pattern, sibling) match
+              case Matched(nextSibling, bound) =>
+                buf += bound
+                assert(
+                  nextSibling ne lastSibling
+                ) // or we cause an infinite loop
+                lastSibling = nextSibling
+                repeatedImpl(nextSibling)
+              case Rejected =>
+                Matched(sibling, buf.toList)
+
+          repeatedImpl(sibling)
 
         case Find(pattern: Pattern[t]) =>
-          def findImpl(startIdx: Int, howManySkipped: Int): Result[(Int, t)] =
-            if startIdx == parent.children.length
-            then
-              impl(pattern, startIdx) match
-                case Matched(length, bound) =>
-                  Matched(length + howManySkipped, (howManySkipped, bound))
-                case Rejected => Rejected
-            else
-              impl(pattern, startIdx) match
-                case Matched(length, bound) =>
-                  Matched(length + howManySkipped, (howManySkipped, bound))
-                case Rejected => findImpl(startIdx + 1, howManySkipped + 1)
+          @scala.annotation.tailrec
+          def findImpl(sibling: Node.Sibling): Result[t] =
+            impl(pattern, sibling) match
+              case m: Matched[t] => m
+              case Rejected =>
+                if !sibling.isChild // means we are trying to go right from a sentinel
+                then Rejected
+                else findImpl(sibling.rightSibling)
 
-          findImpl(startIdx, howManySkipped = 0)
+          findImpl(sibling)
 
-        case Lazy(patternFn)  => impl(patternFn(), startIdx)
-        case Map(pattern, fn) => impl(pattern, startIdx).map(fn)
+        case Lazy(patternFn)  => impl(patternFn(), sibling)
+        case Map(pattern, fn) => impl(pattern, sibling).map(fn)
         case Filter(pattern, pred) =>
-          impl(pattern, startIdx) match
-            case m @ Matched(length, bound) =>
+          impl(pattern, sibling) match
+            case m @ Matched(_, bound) =>
               if pred(bound)
               then m
               else Rejected
             case Rejected => Rejected
 
         case Negated(pattern) =>
-          impl(pattern, startIdx) match
+          impl(pattern, sibling) match
             case Matched(_, _) => Rejected
-            case Rejected      => Matched(0, ())
+            case Rejected      => Matched(sibling, ())
 
-    impl(this, startIdx)(using parent)
+    impl(this, sibling)
 end Pattern
 
 object Pattern:
@@ -215,7 +236,7 @@ object Pattern:
     ThisToken(token)
 
   def find[T](pattern: Pattern[T]): Pattern[T] =
-    Find(pattern).map(_._2)
+    Find(pattern)
 
   given adjacentTuple[PatternTpl <: NonEmptyTuple]
       : Conversion[PatternTpl, Pattern[Tuple.InverseMap[PatternTpl, Pattern]]]
@@ -231,13 +252,13 @@ object Pattern:
         .asInstanceOf
 
   enum Result[+T]:
-    case Matched[T](length: Int, bound: T) extends Result[T]
+    case Matched[T](nextSibling: Node.Sibling, bound: T) extends Result[T]
     case Rejected
 
     def map[U](fn: T => U): Result[U] =
       this match
-        case Matched(length, bound) => Matched(length, fn(bound))
-        case Rejected               => Rejected
+        case Matched(nextSibling, bound) => Matched(nextSibling, fn(bound))
+        case Rejected                    => Rejected
 
   end Result
 end Pattern

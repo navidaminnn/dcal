@@ -1,6 +1,8 @@
 package distcompiler
 
+import scala.collection.mutable
 import scala.collection.Searching.{Found, InsertionPoint}
+import scala.collection.Searching
 
 final class Source(val bytes: IArray[Byte], val origin: String)
     extends IterableOnce[Byte],
@@ -69,8 +71,7 @@ object Source:
 end Source
 
 final class SourceRange(val source: Source, val start: Int, val length: Int)
-    extends IterableOnce[Byte],
-      PartialFunction[Int, Byte],
+    extends Seq[Byte],
       Equals:
   require(start >= 0)
   if length == 0
@@ -84,6 +85,14 @@ final class SourceRange(val source: Source, val start: Int, val length: Int)
 
   def lineColEnd: (Int, Int) =
     source.lineColAtIndex(start)
+
+  // override def head: Byte =
+  //   require(length >= 1)
+  //   source(start)
+
+  override def tail: SourceRange =
+    require(length >= 1)
+    SourceRange(source, start + 1, length - 1)
 
   override def canEqual(that: Any): Boolean =
     that.isInstanceOf[SourceRange]
@@ -138,7 +147,17 @@ final class SourceRange(val source: Source, val start: Int, val length: Int)
   def containsSourceIndex(idx: Int): Boolean =
     start <= idx && idx < end
 
-  def isDefinedAt(x: Int): Boolean = x >= 0 && x < length
+  override def slice(from: Int, until: Int): SourceRange =
+    require(isDefinedAt(from) && isDefinedAt(until))
+    SourceRange(source, start + from, until - from)
+
+  override def take(n: Int): SourceRange =
+    slice(0, n)
+
+  override def drop(n: Int): SourceRange =
+    slice(n, length - n)
+
+  // def isDefinedAt(x: Int): Boolean = x >= 0 && x < length
 
   def apply(idx: Int): Byte = source(start + idx)
 
@@ -161,4 +180,37 @@ object SourceRange:
       if ord == 0
       then Ordering[Int].compare(x.length, y.length)
       else ord
+
+  def unapplySeq(self: SourceRange): SourceRange = self
 end SourceRange
+
+extension (sc: StringContext)
+  def src: SourceRangeContext =
+    SourceRangeContext(sc)
+
+final class SourceRangeContext(val sc: StringContext) extends AnyVal:
+  def unapplySeq(src: SourceRange): Option[List[SourceRange]] =
+    assert(sc.parts.nonEmpty)
+    val part1 = sc.parts.head
+
+    val partBuffer = mutable.ListBuffer.empty[SourceRange]
+
+    @scala.annotation.tailrec
+    def impl(src: SourceRange, partIdx: Int): Option[List[SourceRange]] =
+      if sc.parts.isDefinedAt(partIdx)
+      then
+        val part = sc.parts(partIdx)
+        val partBytes = part.getBytes()
+        src.indexOfSlice(partBytes) match
+          case -1 => None
+          case idxAfterPart =>
+            val spanLength = idxAfterPart
+            partBuffer.addOne(src.take(spanLength))
+            impl(src.drop(spanLength), partIdx = partIdx + 1)
+      else Some(partBuffer.result())
+
+    val part1Bytes = part1.getBytes()
+    if src.startsWith(part1Bytes)
+    then impl(src, partIdx = 1)
+    else None
+end SourceRangeContext

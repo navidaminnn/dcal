@@ -1,25 +1,38 @@
 package distcompiler
 
 import scala.collection.mutable
+import distcompiler.Node.RightSiblingSentinel
+import distcompiler.Node.Embed
+import distcompiler.Node.Top
 
 final class Rule[T](guard: Pattern[T], action: Rule.Action[T]):
-  def apply(parent: Node, startIdx: Int): Rule.Result =
-    guard(parent, startIdx) match
-      case Pattern.Result.Matched(length, bound) =>
+  def apply(sibling: Node.Sibling): Rule.Result =
+    guard(sibling) match
+      case Pattern.Result.Matched(nextSibling, bound) =>
+        val spanLength = nextSibling.idxInParent - sibling.idxInParent
+
         action(bound) match
           case replacementNode: Node =>
-            parent.children.patchInPlace(
-              startIdx,
+            sibling.parent.children.patchInPlace(
+              sibling.idxInParent,
               Iterator.single(replacementNode),
-              length
+              spanLength
             )
-            Rule.Result.Progress(startIdx + 1)
+            Rule.Result.Progress(replacementNode)
           case Rule.Splice(nodes*) =>
-            parent.children.patchInPlace(startIdx, nodes, length)
-            Rule.Result.Progress(startIdx + nodes.length)
+            val parent = sibling.parent
+            val idxInParent = sibling.idxInParent
+            parent.children.patchInPlace(idxInParent, nodes, spanLength)
+            Rule.Result.Progress(parent.children.findSibling(idxInParent))
           case Rule.Empty =>
-            parent.children.patchInPlace(startIdx, Iterator.empty, length)
-            Rule.Result.Progress(startIdx)
+            val parent = sibling.parent
+            val idxInParent = sibling.idxInParent
+            parent.children.patchInPlace(
+              idxInParent,
+              Iterator.empty,
+              spanLength
+            )
+            Rule.Result.Progress(parent.children.findSibling(idxInParent))
           case Rule.TryNext =>
             Rule.Result.TryNext
 
@@ -39,17 +52,17 @@ object Rule:
 
   enum Result:
     case TryNext
-    case Progress(nextUntouchedIdx: Int)
+    case Progress(transformedSibling: Node.Sibling)
 end Rule
 
 trait Pass(using NamespaceCtx) extends Named:
   protected given pass: Pass = this
   private val rules = mutable.ArrayBuffer.empty[Rule[?]]
 
-  final def apply(top: Node): Unit =
-    def applyRules(parent: Node, startIdx: Int): Rule.Result =
+  final def apply(top: Node.Top): Unit =
+    def applyRules(sibling: Node.Sibling): Rule.Result =
       rules.iterator
-        .map(_.apply(parent, startIdx))
+        .map(_.apply(sibling))
         .collectFirst:
           case result: Rule.Result.Progress => result
         .getOrElse:
@@ -58,35 +71,33 @@ trait Pass(using NamespaceCtx) extends Named:
     var touched = false
 
     @scala.annotation.tailrec
-    def impl(parent: Node, startIdx: Int): Unit =
-      inline def skipToNextUntouchedSibling(nextUntouchedIdx: Int): Unit =
-        if !parent.children.isDefinedAt(startIdx)
-        then
-          assert(startIdx == parent.children.length)
-          if parent.hasParent
-          then impl(parent.parent, parent.idxInParent + 1)
-          else ()
-        else impl(parent, nextUntouchedIdx)
-
-      applyRules(parent, startIdx) match
-        case Rule.Result.Progress(nextUntouchedIdx) =>
-          // we did something. make note, and leave this subtree alone as it might
-          // be unstable. move onto the next one, which might independently do something
+    def impl(sibling: Node.Sibling): Unit =
+      applyRules(sibling) match
+        case Rule.Result.TryNext =>
+          if sibling.isChild
+          then impl(sibling.rightSibling)
+          else
+            sibling.parent match
+              case _: Node.Top => ()
+              case parent: Node =>
+                impl(parent.rightSibling)
+        case Rule.Result.Progress(transformedSibling) =>
           touched = true
 
-          skipToNextUntouchedSibling(nextUntouchedIdx)
+          transformedSibling match
+            case transformedNode: Node =>
+              impl(transformedNode.firstChild)
+            case transformedSentinel: RightSiblingSentinel =>
+              transformedSentinel.parent match
+                case parentNode: Node =>
+                  impl(parentNode.rightSibling)
+                case _: Top => ()
 
-        case Rule.Result.TryNext =>
-          // inspect children. maybe they match.
-          parent.children(startIdx) match
-            case child: Node =>
-              impl(child, 0)
-            case Node.Embed(_) =>
-              // unless it's an embed, in which case it cannot be matched
-              skipToNextUntouchedSibling(startIdx + 1)
+            case transformedEmbed: Embed[?] =>
+              impl(transformedEmbed.rightSibling)
 
     while
-      impl(top, 0)
+      impl(top.firstChild)
       touched
     do
       touched = false
@@ -111,12 +122,13 @@ case object Pass extends NamespaceObj:
         (tok(Builtin.liftDest), tok(Builtin.liftNode), tok(Builtin.origNode))
     ):
       case (dest, node, orig) =>
+        // TODO: actually find the ancestor
         dest.children.patchInPlace(
           dest.children.length,
-          Iterator.single(node.reparent),
+          Iterator.single(node.unparent),
           0
         )
-        orig.reparent
+        orig.unparent
   end ResolveBuiltins
 end Pass
 
