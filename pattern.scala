@@ -1,7 +1,6 @@
 package distcompiler
 
 import scala.collection.mutable
-import distcompiler.Node.Top
 
 enum Pattern[+T]:
   case ThisToken(token: Token) extends Pattern[Node]
@@ -42,9 +41,11 @@ enum Pattern[+T]:
   def |[U >: T](other: Pattern[U]): Pattern[U] =
     Choose(this, other)
 
-  @scala.annotation.alpha("and")
-  def &[U](other: Pattern[U]): Pattern[(T, U)] =
+  def and[U](other: Pattern[U]): Pattern[(T, U)] =
     And(this, other)
+
+  def nextTo[U](other: Pattern[U]): Pattern[(T, U)] =
+    Adjacent(this, other)
 
   def map[U](fn: T => U): Pattern[U] =
     Map(this, fn)
@@ -63,7 +64,7 @@ enum Pattern[+T]:
       this.map: sibling =>
         sibling.parent match
           case parentNode: Node => Iterator.single(parentNode)
-          case _: Top           => Iterator.empty
+          case _: Node.Root          => Iterator.empty
       ,
       pattern
     )
@@ -247,7 +248,7 @@ object Pattern:
         .foldLeft(None: Option[Pattern[NonEmptyTuple]]): (acc, elem) =>
           acc match
             case None             => Some(elem.map(Tuple1.apply))
-            case Some(accPattern) => Some((accPattern & elem).map(_ :* _))
+            case Some(accPattern) => Some((accPattern.nextTo(elem)).map(_ :* _))
         .get
         .asInstanceOf
 

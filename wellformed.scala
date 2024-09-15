@@ -12,6 +12,12 @@ trait Token extends Equals, Named, NamespaceRequired:
 
   final override def hashCode(): Int =
     System.identityHashCode(this)
+
+  final def canBeLookedUp: Boolean = lookedUpBy.nonEmpty
+
+  def symbolTableFor: List[Token] = Nil
+  def lookedUpBy: Option[Node => Option[Node]] = None
+  def showSource: Boolean = false
 end Token
 
 object Token:
@@ -105,7 +111,7 @@ trait Wellformed extends Namespace:
       require(shapeMapBuilder.contains(token))
       shapeMapBuilder(token) match
         case AnyShape         =>
-        case _: Atom          =>
+        case Atom          =>
         case Fields(fields)   => fields.foreach(enqueueChoice)
         case choice: Choice   => enqueueChoice(choice)
         case Repeated(choice) => enqueueChoice(choice)
@@ -141,7 +147,7 @@ trait Wellformed extends Namespace:
             =>
           true // don't check error nodes
         case AnyShape => true
-        case Atom(isLookup, isLookdown, hasScope, showSource) =>
+        case Atom =>
           parent.children.isEmpty
         case Fields(fields) =>
           if parent.children.length != fields.length
@@ -180,7 +186,7 @@ trait Wellformed extends Namespace:
                   if shapeOpt.isEmpty
                   then "missing shape info"
                   else "unexpected node here",
-                  node.unparent
+                  node.unparent()
                 )
 
             impl(err.rightSibling, isOk = false)
@@ -189,7 +195,7 @@ trait Wellformed extends Namespace:
           sibling.parent match
             case parentNode: Node =>
               impl(parentNode.rightSibling, isOk)
-            case _: Node.Top =>
+            case _: Node.Root =>
               isOk
 
         case _: Node.Embed[?] =>
@@ -205,7 +211,7 @@ trait Wellformed extends Namespace:
           top.children = List:
             Builtin.error(
               "unexpected node here",
-              Builtin.tuple(top.children.iterator.map(_.unparent))
+              Builtin.tuple(top.children.iterator.map(_.unparent()))
             )
           impl(top.firstChild, isOk = false)
   end checkTree
@@ -233,12 +239,7 @@ object Shape:
 
   case object AnyShape extends Shape
 
-  final case class Atom(
-      isLookup: Boolean = false,
-      isLookdown: Boolean = false,
-      hasScope: Boolean = false,
-      showSource: Boolean = false
-  ) extends Shape
+  case object Atom extends Shape
 
   final case class Fields(fields: List[Choice]) extends Shape
 
@@ -286,10 +287,11 @@ case object Builtin extends WellformedObj:
         errorAST(ast)
       )
   end error
-  case object errorMsg extends TokenObj(Atom(showSource = true))
+  case object errorMsg extends TokenObj(Atom):
+    override val showSource = true
   case object errorAST extends TokenObj(AnyShape)
 
-  case object sourceMarker extends TokenObj(Atom())
+  case object sourceMarker extends TokenObj(Atom)
 
   case object lift extends TokenObj(Fields(liftDest, liftNode, origNode)):
     def apply(dest: Token, node: Node, nodeInPlace: Node): Node =

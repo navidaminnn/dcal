@@ -1,9 +1,6 @@
 package distcompiler
 
 import scala.collection.mutable
-import distcompiler.Node.RightSiblingSentinel
-import distcompiler.Node.Embed
-import distcompiler.Node.Top
 
 final class Rule[T](guard: Pattern[T], action: Rule.Action[T]):
   def apply(sibling: Node.Sibling): Rule.Result =
@@ -78,7 +75,7 @@ trait Pass(using NamespaceCtx) extends Named:
           then impl(sibling.rightSibling)
           else
             sibling.parent match
-              case _: Node.Top => ()
+              case _: Node.Root => ()
               case parent: Node =>
                 impl(parent.rightSibling)
         case Rule.Result.Progress(transformedSibling) =>
@@ -87,13 +84,13 @@ trait Pass(using NamespaceCtx) extends Named:
           transformedSibling match
             case transformedNode: Node =>
               impl(transformedNode.firstChild)
-            case transformedSentinel: RightSiblingSentinel =>
+            case transformedSentinel: Node.RightSiblingSentinel =>
               transformedSentinel.parent match
                 case parentNode: Node =>
                   impl(parentNode.rightSibling)
-                case _: Top => ()
+                case _: Node.Root => ()
 
-            case transformedEmbed: Embed[?] =>
+            case transformedEmbed: Node.Embed[?] =>
               impl(transformedEmbed.rightSibling)
 
     while
@@ -118,17 +115,21 @@ case object Pass extends NamespaceObj:
 
   case object ResolveBuiltins extends PassObj:
     rule(
-      tok(Builtin.lift).children:
-        (tok(Builtin.liftDest), tok(Builtin.liftNode), tok(Builtin.origNode))
+      tok(Builtin.lift)
+        .children:
+          (tok(Builtin.liftDest), tok(Builtin.liftNode), tok(Builtin.origNode))
     ):
       case (dest, node, orig) =>
-        // TODO: actually find the ancestor
+        val destTok = dest.token
+
+        // TODO: ancestor search for token to add the node to
+
         dest.children.patchInPlace(
           dest.children.length,
-          Iterator.single(node.unparent),
+          Iterator.single(node.unparent()),
           0
         )
-        orig.unparent
+        orig.unparent()
   end ResolveBuiltins
 end Pass
 
