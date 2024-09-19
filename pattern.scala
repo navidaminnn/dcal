@@ -64,7 +64,7 @@ enum Pattern[+T]:
       this.map: sibling =>
         sibling.parent match
           case parentNode: Node => Iterator.single(parentNode)
-          case _: Node.Root          => Iterator.empty
+          case _: Node.Root     => Iterator.empty
       ,
       pattern
     )
@@ -99,8 +99,8 @@ enum Pattern[+T]:
       def withNode[T](fn: Node => Result[T]): Result[T] =
         withChild: child =>
           child match
-            case node: Node    => fn(node)
-            case Node.Embed(_) => Rejected
+            case node: Node   => fn(node)
+            case _: Node.Leaf => Rejected
 
       self match
         case ThisToken(token) =>

@@ -111,7 +111,7 @@ trait Wellformed extends Namespace:
       require(shapeMapBuilder.contains(token))
       shapeMapBuilder(token) match
         case AnyShape         =>
-        case Atom          =>
+        case Atom             =>
         case Fields(fields)   => fields.foreach(enqueueChoice)
         case choice: Choice   => enqueueChoice(choice)
         case Repeated(choice) => enqueueChoice(choice)
@@ -136,8 +136,8 @@ trait Wellformed extends Namespace:
 
             case token: Token =>
               child match
-                case childNode: Node  => childNode.token == token
-                case _: Node.Embed[?] => false
+                case childNode: Node => childNode.token == token
+                case _: Node.Leaf    => false
 
     def checkParent(parent: Node.Parent, shape: Shape): Boolean =
       shape match
@@ -198,7 +198,7 @@ trait Wellformed extends Namespace:
             case _: Node.Root =>
               isOk
 
-        case _: Node.Embed[?] =>
+        case _: Node.Leaf =>
           impl(sibling.rightSibling, isOk)
 
     shapes.get(Builtin.top) match

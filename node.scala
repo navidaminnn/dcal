@@ -43,7 +43,7 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child])
               impl(parentNode.rightSibling, sourceRange)
             case _: Node.Root =>
               sourceRange
-        case Node.Embed(value) =>
+        case _: Node.Leaf =>
           impl(sibling.rightSibling, sourceRange)
 
     impl(thisNode, sourceRange = SourceRange.none)
@@ -56,17 +56,19 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child])
     that match
       case thatNode: Node =>
         token == thatNode.token
+        && (!token.showSource || sourceRange == thatNode.sourceRange)
         && iteratorDescendants
           .map(Some(_))
           .zipAll(thatNode.iteratorDescendants.map(Some(_)), None, None)
           .forall:
-            case (None, None) => true
+            case (None, None)    => true
             case (None, Some(_)) => false
             case (Some(_), None) => false
             case (Some(lNode: Node), Some(rNode: Node)) =>
               lNode.token == rNode.token
-            case (Some(Node.Embed(lValue)), Some(Node.Embed(rValue))) =>
-              lValue == rValue
+              && (!lNode.token.showSource || lNode.sourceRange == rNode.sourceRange)
+            case (Some(lLeaf: Node.Leaf), Some(rLeaf: Node.Leaf)) =>
+              lLeaf == rLeaf
             case (Some(_), Some(_)) => false
       case _ => false
 
@@ -78,7 +80,7 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child])
 
   override def unparent(): this.type =
     if _scopeRelevance > 0
-    then parent.decScopeRelevance()  
+    then parent.decScopeRelevance()
 
     super.unparent()
 
@@ -99,11 +101,12 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child])
         case sentinel: Node.RightSiblingSentinel =>
           sentinel.parent match
             case root: Node.Root => None
-            case myself if myself eq thisNode => None // don't climb up beyond where we started
+            case myself if myself eq thisNode =>
+              None // don't climb up beyond where we started
             case parentNode: Node =>
               Some((None, parentNode.rightSibling))
-        case embed: Node.Embed[?] => Some((Some(embed), embed.rightSibling))
-        case node: Node => Some((Some(node), node.firstChild))
+        case leaf: Node.Leaf => Some((Some(leaf), leaf.rightSibling))
+        case node: Node      => Some((Some(node), node.firstChild))
       .flatten
 
   override def iteratorErrors: Iterator[Node] =
@@ -114,7 +117,7 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child])
   def lookup: List[Node] =
     assert(token.canBeLookedUp)
     parent.findNodeByKey(thisNode)
-    
+
 end Node
 
 object Node:
@@ -124,7 +127,7 @@ object Node:
 
   sealed trait Traversable:
     thisTraversable =>
-    
+
     final def traverse(fn: Node.Child => Node.TraversalAction): Unit =
       @scala.annotation.tailrec
       def impl(traversable: Node.Sibling): Unit =
@@ -136,38 +139,44 @@ object Node:
                 () // we found ourselves again, stop before we go "too far up"
               case parentNode: Node =>
                 impl(parentNode.rightSibling)
-            
+
           case node: Node =>
             import TraversalAction.*
             fn(node) match
               case SkipChildren => impl(node.rightSibling)
-              case Continue => impl(node.firstChild)
+              case Continue     => impl(node.firstChild)
 
-          case embed: Node.Embed[?] => fn(embed)
-        
+          case leaf: Node.Leaf => fn(leaf)
+
       this match
         case thisChild: Node.Child => impl(thisChild)
         case thisTop: Node.Top =>
-          thisTop.children
-            .iterator
+          thisTop.children.iterator
             .foreach(impl)
   end Traversable
 
   object TraversalAction:
-    given unitMeansContinue: Conversion[Unit, TraversalAction] = _ => TraversalAction.Continue
+    given unitMeansContinue: Conversion[Unit, TraversalAction] = _ =>
+      TraversalAction.Continue
 
   sealed trait Root extends Node.Parent
 
+  sealed trait Leaf extends Node.Child
+
   final class Top(childrenInit: IterableOnce[Node.Child])
-      extends Root, Parent(childrenInit), Traversable:
+      extends Root,
+        Parent(childrenInit),
+        Traversable:
     def this() = this(Nil)
   end Top
 
-  final class Floating(child: Node.Child) extends Root, Parent(Iterator.single(child))
+  final class Floating(child: Node.Child)
+      extends Root,
+        Parent(Iterator.single(child))
 
   sealed trait Parent(childrenInit: IterableOnce[Node.Child]):
     thisParent =>
-    
+
     val children: Node.Children = Node.Children(thisParent, childrenInit)
 
     final def firstChild: Node.Sibling =
@@ -200,12 +209,14 @@ object Node:
     private[Node] final def findNodeByKey(key: Node): List[Node] =
       this match
         case root: Node.Root => Nil
-        case thisNode: Node if thisNode.token.symbolTableFor.contains(key.token) =>
+        case thisNode: Node
+            if thisNode.token.symbolTableFor.contains(key.token) =>
           import Node.TraversalAction.*
           val resultsList = mutable.ListBuffer.empty[Node]
-          thisNode.traverse:
-            case _: Node.Embed[?] => SkipChildren
-            case irrelevantNode: Node if irrelevantNode._scopeRelevance == 0 => SkipChildren
+          thisNode.traverseChildren:
+            case _: Node.Leaf => SkipChildren
+            case irrelevantNode: Node if irrelevantNode._scopeRelevance == 0 =>
+              SkipChildren
             case descendantNode: Node =>
               descendantNode.token.lookedUpBy match
                 case None => // no lookup
@@ -215,7 +226,7 @@ object Node:
                     case Some(descendantKey) =>
                       if key == descendantKey
                       then resultsList.addOne(descendantNode)
-          
+
           resultsList.result()
         case thisNode: Node =>
           thisNode.parent.findNodeByKey(key)
@@ -281,7 +292,7 @@ object Node:
         // so don't make a fuss if it happens. The seq ops on Children might do this.
         _idxInParent = idxInParent
         this
-      else 
+      else
         _parent match
           case _: Node.Floating =>
             _parent = parent
@@ -313,11 +324,16 @@ object Node:
   end Child
 
   final case class Embed[T](value: T)(using val nodeRepr: AsNode[T])
-      extends Child, Sibling:
+      extends Child,
+        Sibling,
+        Leaf:
     override def iteratorErrors: Iterator[Node] = Iterator.empty
   end Embed
 
-  final class Children private[Node] (val parent: Node.Parent, childrenInit: IterableOnce[Node.Child]) extends mutable.IndexedBuffer[Node.Child]:
+  final class Children private[Node] (
+      val parent: Node.Parent,
+      childrenInit: IterableOnce[Node.Child]
+  ) extends mutable.IndexedBuffer[Node.Child]:
     private val _children = mutable.ArrayBuffer.from(childrenInit)
     export _children.{length, apply}
 
@@ -343,11 +359,10 @@ object Node:
       elems match
         case elems: Iterable[Node.Child] =>
           // Keeping this separate allows ensureParent to fail without corrupting the structure.
-          elems.iterator
-            .zipWithIndex
+          elems.iterator.zipWithIndex
             .foreach: (child, childIdx) =>
               child.ensureParent(parent, idx + childIdx)
-          
+
           _children.insertAll(idx, elems)
           reIdxFromIdx(idx + elems.size)
         case elems => insertAll(idx, mutable.ArrayBuffer.from(elems))

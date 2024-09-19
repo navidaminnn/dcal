@@ -90,8 +90,8 @@ trait Pass(using NamespaceCtx) extends Named:
                   impl(parentNode.rightSibling)
                 case _: Node.Root => ()
 
-            case transformedEmbed: Node.Embed[?] =>
-              impl(transformedEmbed.rightSibling)
+            case leaf: Node.Leaf =>
+              impl(leaf.rightSibling)
 
     while
       impl(top.firstChild)

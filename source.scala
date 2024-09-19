@@ -71,7 +71,7 @@ object Source:
 end Source
 
 final class SourceRange(val source: Source, val start: Int, val length: Int)
-    extends Seq[Byte],
+    extends IndexedSeq[Byte],
       Equals:
   require(start >= 0)
   if length == 0
@@ -86,26 +86,9 @@ final class SourceRange(val source: Source, val start: Int, val length: Int)
   def lineColEnd: (Int, Int) =
     source.lineColAtIndex(start)
 
-  // override def head: Byte =
-  //   require(length >= 1)
-  //   source(start)
-
   override def tail: SourceRange =
     require(length >= 1)
     SourceRange(source, start + 1, length - 1)
-
-  override def canEqual(that: Any): Boolean =
-    that.isInstanceOf[SourceRange]
-
-  override def equals(that: Any): Boolean =
-    that match {
-      case that: SourceRange =>
-        (source, start, end) == (that.source, that.start, that.end)
-      case _ => false
-    }
-
-  override def hashCode(): Int =
-    (source, start, end).hashCode()
 
   def toStringForDisplayShort: String =
     val (startLine, startCol) = source.lineColAtIndex(start)
@@ -157,16 +140,7 @@ final class SourceRange(val source: Source, val start: Int, val length: Int)
   override def drop(n: Int): SourceRange =
     slice(n, length - n)
 
-  // def isDefinedAt(x: Int): Boolean = x >= 0 && x < length
-
   def apply(idx: Int): Byte = source(start + idx)
-
-  def iterator: Iterator[Byte] =
-    if start == end
-    then Iterator.empty
-    else
-      (start until end).iterator
-        .map(source)
 end SourceRange
 
 object SourceRange:
@@ -211,6 +185,6 @@ final class SourceRangeContext(val sc: StringContext) extends AnyVal:
 
     val part1Bytes = part1.getBytes()
     if src.startsWith(part1Bytes)
-    then impl(src, partIdx = 1)
+    then impl(src.drop(part1Bytes.length), partIdx = 1)
     else None
 end SourceRangeContext
