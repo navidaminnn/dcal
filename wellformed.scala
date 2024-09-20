@@ -1,5 +1,6 @@
 package distcompiler
 
+import cats.syntax.all.given
 import scala.collection.{mutable, MapView}
 import scala.reflect.Typeable
 
@@ -300,6 +301,25 @@ case object Builtin extends WellformedObj:
         liftNode(node),
         origNode(nodeInPlace)
       )
+
+    import Manip.*
+    import Pattern.*
+    lazy val rules: Rules =
+      on(
+        (tok(lift) *> firstChild(tok(liftDest)))
+          .flatMap(dest => ancestor(tok(dest.token)))
+        *: children:
+          (tok(liftDest) <* children(atEnd))
+            *>: tok(liftNode)
+            **: tok(origNode)
+            <*: atEnd
+      ).rewrite: (destNode, liftNode, origNode) =>
+        destNode.children.addOne(liftNode.unparent())
+        origNode.unparent()
+      | on(tok(lift))
+        .rewrite: badLift =>
+          error("malformed lift node", badLift.unparent())
+
   end lift
   case object liftDest extends TokenObj(Embed[Token])
   case object liftNode extends TokenObj(AnyShape)

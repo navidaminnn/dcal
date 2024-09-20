@@ -27,10 +27,10 @@ enum Pattern[+T]:
   case Negation(pattern: Pattern[?]) extends Pattern[Unit]
   case Disjunction[T](first: Pattern[T], second: Pattern[T]) extends Pattern[T]
 
-  def apply(node: Node.Sibling): Result[T] =
+  def check(node: Node.All): Result[T] =
     import cats.Eval
 
-    def impl[T](self: Pattern[T], node: Node.Sibling): Eval[Result[T]] =
+    def impl[T](self: Pattern[T], node: Node.All): Eval[Result[T]] =
       self match
         case Pure(value) => Eval.now(Result.Accepted(value, 0))
         case Ap(ff, fa) =>
@@ -57,9 +57,9 @@ enum Pattern[+T]:
               Eval.now(Result.Accepted((), 0))
             case _ => Eval.now(Result.Rejected)
         case AtParent(pattern) =>
-          node.parent match
-            case parent: Node.Child =>
-              impl(pattern, parent)
+          node match
+            case sibling: Node.Sibling =>
+              impl(pattern, sibling.parent)
                 .map(_.ignoreMatchedCount)
             case _ => Eval.now(Result.Rejected)
         case AtRightSibling(pattern) =>
@@ -94,7 +94,29 @@ enum Pattern[+T]:
             case Result.Rejected                  => impl(second, node)
 
     impl(this, node).value
-  end apply
+  end check
+
+  // lazy val respondsTo: Manip.RespondsTo =
+  //   this match
+  //     case Pure(_) =>
+  //       Manip.RespondsTo.All
+  //     case Ap(ff, fa) =>
+  //       ff.respondsTo.intersect(fa.respondsTo)
+  //     case FlatMap(pattern, fn) =>
+  //       pattern.respondsTo
+  //     case ThisNode =>
+  //       Manip.RespondsTo.All
+  //     case AtEnd =>
+  //       Manip.RespondsTo
+  //     case AtParent(pattern) =>
+  //     case AtRightSibling(pattern) =>
+  //     case AtFirstChild(pattern) =>
+  //     case Restrict(pattern, fn) =>
+  //     case Reject =>
+  //     case Deferred(fn) =>
+  //     case Negation(pattern) =>
+  //     case Disjunction(first, second) =>
+
 end Pattern
 
 object Pattern:
@@ -145,8 +167,16 @@ object Pattern:
 
   extension [T](lhs: Pattern[T])
     infix def *:[U <: Tuple](rhs: Pattern[U]): Pattern[T *: U] =
-      (lhs, rightSibling(rhs)).mapN(_ *: _)
+      (lhs, rhs).mapN(_ *: _)
     infix def *:[U](rhs: Pattern[U])(using
+        NotGiven[U <:< Tuple]
+    ): Pattern[(T, U)] =
+      lhs.product(rhs)
+
+  extension [T](lhs: Pattern[T])
+    infix def **:[U <: Tuple](rhs: Pattern[U]): Pattern[T *: U] =
+      (lhs, rightSibling(rhs)).mapN(_ *: _)
+    infix def **:[U](rhs: Pattern[U])(using
         NotGiven[U <:< Tuple]
     ): Pattern[(T, U)] =
       lhs.product(rightSibling(rhs))
@@ -192,6 +222,12 @@ object Pattern:
 
   def firstChild[T](pattern: Pattern[T]): Pattern[T] =
     Pattern.AtFirstChild(pattern)
+
+  // Convenience alias, because it looks better in context.
+  // Lets us write children(...) when we mean all children,
+  // even though technically we're just moving to the first child.
+  def children[T](pattern: Pattern[T]): Pattern[T] =
+    firstChild(pattern)
 
   def defer[T](pattern: => Pattern[T]): Pattern[T] =
     lazy val impl = pattern

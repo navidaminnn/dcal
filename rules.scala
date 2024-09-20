@@ -1,148 +1,259 @@
 package distcompiler
 
-import scala.collection.mutable
+import cats.syntax.all.given
 
-final class Rule[T](guard: Pattern[T], action: Rule.Action[T]):
-  def apply(sibling: Node.Sibling): Rule.Result =
-    ???
-  // guard(sibling) match
-  //   case Pattern.Result.Matched(nextSibling, bound) =>
-  //     val spanLength = nextSibling.idxInParent - sibling.idxInParent
+enum Manip[+T]:
+  case Backtrack
+  case Pure(value: T)
+  case Ap[T, U](ff: Manip[T => U], fa: Manip[T]) extends Manip[U]
+  case FlatMap[T, U](manip: Manip[T], fn: T => Manip[U]) extends Manip[U]
 
-  //     action(bound) match
-  //       case replacementNode: Node =>
-  //         sibling.parent.children.patchInPlace(
-  //           sibling.idxInParent,
-  //           Iterator.single(replacementNode),
-  //           spanLength
-  //         )
-  //         Rule.Result.Progress(replacementNode)
-  //       case Rule.Splice(nodes*) =>
-  //         val parent = sibling.parent
-  //         val idxInParent = sibling.idxInParent
-  //         parent.children.patchInPlace(idxInParent, nodes, spanLength)
-  //         Rule.Result.Progress(parent.children.findSibling(idxInParent))
-  //       case Rule.Empty =>
-  //         val parent = sibling.parent
-  //         val idxInParent = sibling.idxInParent
-  //         parent.children.patchInPlace(
-  //           idxInParent,
-  //           Iterator.empty,
-  //           spanLength
-  //         )
-  //         Rule.Result.Progress(parent.children.findSibling(idxInParent))
-  //       case Rule.TryNext =>
-  //         Rule.Result.TryNext
+  case Commit(manip: Manip[T])
 
-  //   case Pattern.Result.Rejected =>
-  //     Rule.Result.TryNext
-end Rule
+  case ThisNode extends Manip[Node.All]
+  case OnPattern[T](pattern: Pattern[T])
+      extends Manip[Pattern.Result.Accepted[T]]
+  case AtNode(manip: Manip[T], node: Node.All)
 
-object Rule:
-  type Action[T] = T => ActionResult
+  case Disjunction(first: Manip[T], second: Manip[T])
+  case Deferred(fn: () => Manip[T])
+
+  def perform(top: Node.Top): T =
+    // TODO: optimize so we use Commit for performance (discard backtrack info in that case)
+    // this would either work via continuation passing, or by taking a more imperative approach
+    // and and managing a mutable stack type structure directly
+    import cats.Eval
+
+    enum Result[+T]:
+      case Ok(value: T)
+      case Backtrack
+    end Result
+    import Result.Ok
+
+    def impl[T](self: Manip[T], node: Node.All): Eval[Result[T]] =
+      self match
+        case Manip.Backtrack => Eval.now(Result.Backtrack)
+        case Pure(value)     => Eval.now(Ok(value))
+        case Ap(ff, fa) =>
+          impl(ff, node).flatMap:
+            case Ok(ff) =>
+              impl(fa, node).map:
+                case Ok(fa)           => Ok(ff(fa))
+                case Result.Backtrack => Result.Backtrack
+            case Result.Backtrack => Eval.now(Result.Backtrack)
+        case FlatMap(manip, fn) =>
+          impl(manip, node).flatMap:
+            case Ok(value) =>
+              impl(fn(value), node)
+            case Result.Backtrack => Eval.now(Result.Backtrack)
+        case Commit(manip) =>
+          impl(manip, node).map:
+            case ok @ Ok(_) => ok
+            case Result.Backtrack =>
+              throw RuntimeException(
+                "tried to backtrack after committing to a branch"
+              )
+        case ThisNode => Eval.now(Ok(node))
+        case onPattern: OnPattern[t] =>
+          onPattern.pattern.check(node) match
+            case accepted: Pattern.Result.Accepted[`t`] =>
+              Eval.now(Ok(accepted))
+            case Pattern.Result.Rejected =>
+              Eval.now(Result.Backtrack)
+        case AtNode(manip, node) => impl(manip, node)
+        case Disjunction(first, second) =>
+          impl(first, node).flatMap:
+            case ok @ Ok(_) => Eval.now(ok)
+            case Result.Backtrack =>
+              impl(second, node)
+        case Deferred(fn) =>
+          impl(fn(), node)
+
+    impl(this, top).value match
+      case Result.Backtrack =>
+        throw ???
+      case Ok(value) => value
+  end perform
+
+  // TODO: optimize disjunctions to decision tries
+end Manip
+
+object Manip:
+  type Rules = Manip[(Node.Sibling, Node.Sibling)]
+
+  val unit: Manip[Unit] = ().pure
+
+  given alternative: cats.Alternative[Manip] with
+    override def unit: Manip[Unit] = Manip.unit
+    def ap[A, B](ff: Manip[A => B])(fa: Manip[A]): Manip[B] =
+      Manip.Ap(ff, fa)
+    def combineK[A](x: Manip[A], y: Manip[A]): Manip[A] =
+      Manip.Disjunction(x, y)
+    def empty[A]: Manip[A] = Manip.Backtrack
+    def pure[A](x: A): Manip[A] = Manip.Pure(x)
+
+  def defer[T](manip: => Manip[T]): Manip[T] =
+    lazy val impl = manip
+    Manip.Deferred(() => impl)
+
+  def commit[T](manip: Manip[T]): Manip[T] =
+    Manip.Commit(manip)
+
+  def atNode[T](node: Node.All)(manip: Manip[T]): Manip[T] =
+    Manip.AtNode(manip, node)
+
+  def atRightSibling[T](manip: Manip[T]): Manip[T] =
+    Manip.ThisNode.lookahead.flatMap:
+      case thisChild: Node.Child =>
+        atNode(thisChild)(manip)
+      case _: (Node.Sentinel | Node.Root) =>
+        Manip.Backtrack
+
+  def atFirstChild[T](manip: Manip[T]): Manip[T] =
+    Manip.ThisNode.lookahead.flatMap:
+      case thisParent: Node.Parent =>
+        atNode(thisParent.firstChild)(manip)
+      case _: (Node.Sentinel | Node.Leaf) =>
+        Manip.Backtrack
+
+  def atFirstSibling[T](manip: Manip[T]): Manip[T] =
+    Manip.ThisNode.lookahead.flatMap:
+      case thisSibling: Node.Sibling =>
+        atNode(thisSibling.parent.children.findSibling(0))(manip)
+      case _: Node.Root =>
+        Manip.Backtrack
+
+  def atParent[T](manip: Manip[T]): Manip[T] =
+    Manip.ThisNode.lookahead.flatMap:
+      case thisChild: Node.Sibling =>
+        atNode(thisChild.parent)(manip)
+      case _: Node.Root =>
+        Manip.Backtrack
+
+  final class on[T](val pattern: Pattern[T]) extends AnyVal:
+    def raw[U](action: Pattern.Result.Accepted[T] => Manip[U]): Manip[U] =
+      Manip.OnPattern(pattern).flatMap(action)
+
+    def rewrite(action: T => RewriteOp): Manip[(Node.Sibling, Node.Sibling)] =
+      raw:
+        case Pattern.Result.Accepted(value, matchedCount) =>
+          Manip.ThisNode.flatMap: thisNode =>
+            val replacementsOpt: Manip.Backtrack.type | Iterable[Node.Child] =
+              action(value) match
+                case node: Node.Child => node :: Nil
+                case Splice(nodes*)   => nodes
+                case Delete           => Nil
+                case TryNext          => Backtrack
+
+            replacementsOpt match
+              case Manip.Backtrack => Manip.Backtrack
+              case replacements: Iterable[Node.Child] =>
+                thisNode match
+                  case thisSibling: Node.Sibling =>
+                    val parent = thisSibling.parent
+                    val startIdx = thisSibling.idxInParent
+                    thisSibling.parent.children.patchInPlace(
+                      startIdx,
+                      replacements,
+                      matchedCount
+                    )
+                    // two choices: stay where we are, or jump to the next untouched node
+                    (
+                      parent.children.findSibling(startIdx),
+                      parent.children.findSibling(startIdx + replacements.size)
+                    ).pure
+                  case thisRoot: Node.Root =>
+                    throw RuntimeException("tried to rewrite root node")
+
+  extension [T](lhs: Manip[T])
+    def |(rhs: Manip[T]): Manip[T] =
+      Manip.Disjunction(lhs, rhs)
+    def flatMap[U](fn: T => Manip[U]): Manip[U] =
+      Manip.FlatMap(lhs, t => commit(fn(t)))
+    def lookahead: Lookahead[T] =
+      Lookahead(lhs)
+
+  class Lookahead[T](val manip: Manip[T]) extends AnyVal:
+    def flatMap[U](fn: T => Manip[U]): Manip[U] =
+      Manip.FlatMap(manip, fn)
+
+  object Lookahead:
+    given alternative: cats.Alternative[Lookahead] with
+      def ap[A, B](ff: Lookahead[A => B])(fa: Lookahead[A]): Lookahead[B] =
+        Lookahead(ff.manip.ap(fa.manip))
+      def combineK[A](x: Lookahead[A], y: Lookahead[A]): Lookahead[A] =
+        Lookahead(x.manip.combineK(y.manip))
+      def empty[A]: Lookahead[A] =
+        Lookahead(Manip.Backtrack)
+      def pure[A](x: A): Lookahead[A] =
+        Lookahead(Manip.Pure(x))
 
   final case class Splice(nodes: Node.Child*)
-  case object Empty
+  case object Delete
   case object TryNext
 
-  type ActionResult =
-    Node | Splice | Empty.type | TryNext.type
+  type RewriteOp =
+    Node.Child | Splice | Delete.type | TryNext.type
 
-  enum Result:
-    case TryNext
-    case Progress(transformedSibling: Node.Sibling)
-end Rule
+  final class pass(
+      strategy: pass.TraversalStrategy = pass.topDown,
+      once: Boolean = false
+  ):
+    def rules(rules: Manip[Node.Sibling]): Manip[Unit] =
+      lazy val impl: Manip[Unit] =
+        strategy
+          .traverse(rules)
+          .flatMap: madeChange =>
+            if madeChange && !once
+            then impl
+            else Manip.unit
 
-trait Pass(using NamespaceCtx) extends Named:
-  protected given pass: Pass = this
-  private val rules = mutable.ArrayBuffer.empty[Rule[?]]
+      impl
+  end pass
 
-  final def apply(top: Node.Top): Unit =
-    def applyRules(sibling: Node.Sibling): Rule.Result =
-      rules.iterator
-        .map(_.apply(sibling))
-        .collectFirst:
-          case result: Rule.Result.Progress => result
-        .getOrElse:
-          Rule.Result.TryNext
+  object pass:
+    trait TraversalStrategy:
+      def traverse(rules: Manip[Node.Sibling]): Manip[Boolean]
 
-    var touched = false
+    object topDown extends TraversalStrategy:
+      def traverse(rules: Manip[Node.Sibling]): Manip[Boolean] =
+        lazy val impl: Manip[Boolean] =
+          rules.flatMap: nextSibling =>
+            atNode(nextSibling):
+              impl.as(true)
+          | atFirstChild:
+            commit(defer(impl))
+          | atRightSibling:
+            commit(defer(impl))
+          | atParent:
+            atRightSibling:
+              commit(defer(impl))
+          | false.pure
 
-    @scala.annotation.tailrec
-    def impl(sibling: Node.Sibling): Unit =
-      applyRules(sibling) match
-        case Rule.Result.TryNext =>
-          if sibling.isChild
-          then impl(sibling.rightSibling)
-          else
-            sibling.parent match
-              case _: Node.Root => ()
-              case parent: Node =>
-                impl(parent.rightSibling)
-        case Rule.Result.Progress(transformedSibling) =>
-          touched = true
+        impl
 
-          transformedSibling match
-            case transformedNode: Node =>
-              impl(transformedNode.firstChild)
-            case transformedSentinel: Node.RightSiblingSentinel =>
-              transformedSentinel.parent match
-                case parentNode: Node =>
-                  impl(parentNode.rightSibling)
-                case _: Node.Root => ()
+    object bottomUp extends TraversalStrategy:
+      def traverse(rules: Manip[Node.Sibling]): Manip[Boolean] =
+        def atBottomLeft[T](manip: Manip[T]): Manip[T] =
+          lazy val impl: Manip[T] =
+            atFirstChild(defer(impl))
+              | manip
 
-            case leaf: Node.Leaf =>
-              impl(leaf.rightSibling)
+          impl
 
-    while
-      impl(top.firstChild)
-      touched
-    do
-      touched = false
-      if this ne Pass.ResolveBuiltins
-      then Pass.ResolveBuiltins(top)
-    end while
-end Pass
+        lazy val impl: Manip[Boolean] =
+          rules.flatMap: nextSibling =>
+            atNode(nextSibling):
+              impl.as(true)
+          | atRightSibling:
+            commit(defer(impl))
+          | atParent:
+            atRightSibling:
+              atFirstChild:
+                commit(defer(impl))
+            | atFirstSibling:
+              commit(defer(impl))
+          | false.pure
 
-// TODO: make rewrite an algebra too (applicative with monad mode)
-// - Trieste's features are just custom operators that do things like "rewrite all matching" etc...
-// - rules use disjunction, recursion, etc
-// - some consideration for tabling optimizations; at least, have a lazy val that gives you a tabled version of a rule?
-// - uses patterns as embeds (auto conversion or smth)
-// - rewrite action targeted on a range of nodes (pattern result)
-// - navigates tree
-// - put marker for when you start over (marks big-scale ops)
-
-case object Pass extends NamespaceObj:
-  def rule[T](using pass: Pass)(guard: Pattern[T])(
-      action: Rule.Action[T]
-  ): Unit =
-    pass.rules.addOne(Rule(guard, action))
-
-  final case class Result(node: Node, ok: Boolean)
-
-  import Pattern.*
-
-  case object ResolveBuiltins extends PassObj:
-  // rule(
-  //   tok(Builtin.lift)
-  //     .children:
-  //       (tok(Builtin.liftDest), tok(Builtin.liftNode), tok(Builtin.origNode))
-  // ):
-  //   case (dest, node, orig) =>
-  //     val destTok = dest.token
-
-  //     // TODO: ancestor search for token to add the node to
-
-  //     dest.children.patchInPlace(
-  //       dest.children.length,
-  //       Iterator.single(node.unparent()),
-  //       0
-  //     )
-  //     orig.unparent()
-  end ResolveBuiltins
-end Pass
-
-trait PassObj extends Pass, NamedObj:
-  self: Singleton & Product =>
-end PassObj
+        atBottomLeft(impl)
+end Manip

@@ -69,7 +69,6 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child])
               && (!lNode.token.showSource || lNode.sourceRange == rNode.sourceRange)
             case (Some(lLeaf: Node.Leaf), Some(rLeaf: Node.Leaf)) =>
               lLeaf == rLeaf
-            case (Some(_), Some(_)) => false
       case _ => false
 
   override def hashCode(): Int =
@@ -105,8 +104,9 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child])
               None // don't climb up beyond where we started
             case parentNode: Node =>
               Some((None, parentNode.rightSibling))
-        case leaf: Node.Leaf => Some((Some(leaf), leaf.rightSibling))
-        case node: Node      => Some((Some(node), node.firstChild))
+        case node: Node => Some((Some(node), node.firstChild))
+        case leaf: (Node.Leaf & Node.Child) =>
+          Some((Some(leaf), leaf.rightSibling))
       .flatten
 
   override def iteratorErrors: Iterator[Node] =
@@ -146,7 +146,7 @@ object Node:
               case SkipChildren => impl(node.rightSibling)
               case Continue     => impl(node.firstChild)
 
-          case leaf: Node.Leaf => fn(leaf)
+          case leaf: (Node.Leaf & Node.Child) => fn(leaf)
 
       this match
         case thisChild: Node.Child => impl(thisChild)
@@ -159,9 +159,10 @@ object Node:
     given unitMeansContinue: Conversion[Unit, TraversalAction] = _ =>
       TraversalAction.Continue
 
-  sealed trait Root extends Node.Parent
-
-  sealed trait Leaf extends Node.Child
+  sealed trait All
+  sealed trait Root extends All
+  sealed trait Leaf extends All
+  sealed trait Sentinel extends All
 
   final class Top(childrenInit: IterableOnce[Node.Child])
       extends Root,
@@ -174,7 +175,7 @@ object Node:
       extends Root,
         Parent(Iterator.single(child))
 
-  sealed trait Parent(childrenInit: IterableOnce[Node.Child]):
+  sealed trait Parent(childrenInit: IterableOnce[Node.Child]) extends All:
     thisParent =>
 
     val children: Node.Children = Node.Children(thisParent, childrenInit)
@@ -214,7 +215,6 @@ object Node:
           import Node.TraversalAction.*
           val resultsList = mutable.ListBuffer.empty[Node]
           thisNode.traverseChildren:
-            case _: Node.Leaf => SkipChildren
             case irrelevantNode: Node if irrelevantNode._scopeRelevance == 0 =>
               SkipChildren
             case descendantNode: Node =>
@@ -226,6 +226,7 @@ object Node:
                     case Some(descendantKey) =>
                       if key == descendantKey
                       then resultsList.addOne(descendantNode)
+            case _: Node.Leaf => SkipChildren
 
           resultsList.result()
         case thisNode: Node =>
@@ -245,7 +246,7 @@ object Node:
       result
   end Parent
 
-  sealed trait Sibling:
+  sealed trait Sibling extends All:
     thisSibling =>
 
     def isChild: Boolean = false
@@ -269,7 +270,8 @@ object Node:
   end Sibling
 
   final class RightSiblingSentinel private[Node] (val parent: Node.Parent)
-      extends Sibling:
+      extends Sibling,
+        Sentinel:
     override def idxInParent: Int = parent.children.length
     override def rightSibling: Node.Sibling =
       throw NodeError(
@@ -277,7 +279,7 @@ object Node:
       )
   end RightSiblingSentinel
 
-  sealed trait Child extends Sibling, Traversable:
+  sealed trait Child extends Sibling, Traversable, Leaf:
     thisChild =>
 
     override def isChild: Boolean = true
