@@ -4,37 +4,38 @@ import scala.collection.mutable
 
 final class Rule[T](guard: Pattern[T], action: Rule.Action[T]):
   def apply(sibling: Node.Sibling): Rule.Result =
-    guard(sibling) match
-      case Pattern.Result.Matched(nextSibling, bound) =>
-        val spanLength = nextSibling.idxInParent - sibling.idxInParent
+    ???
+  // guard(sibling) match
+  //   case Pattern.Result.Matched(nextSibling, bound) =>
+  //     val spanLength = nextSibling.idxInParent - sibling.idxInParent
 
-        action(bound) match
-          case replacementNode: Node =>
-            sibling.parent.children.patchInPlace(
-              sibling.idxInParent,
-              Iterator.single(replacementNode),
-              spanLength
-            )
-            Rule.Result.Progress(replacementNode)
-          case Rule.Splice(nodes*) =>
-            val parent = sibling.parent
-            val idxInParent = sibling.idxInParent
-            parent.children.patchInPlace(idxInParent, nodes, spanLength)
-            Rule.Result.Progress(parent.children.findSibling(idxInParent))
-          case Rule.Empty =>
-            val parent = sibling.parent
-            val idxInParent = sibling.idxInParent
-            parent.children.patchInPlace(
-              idxInParent,
-              Iterator.empty,
-              spanLength
-            )
-            Rule.Result.Progress(parent.children.findSibling(idxInParent))
-          case Rule.TryNext =>
-            Rule.Result.TryNext
+  //     action(bound) match
+  //       case replacementNode: Node =>
+  //         sibling.parent.children.patchInPlace(
+  //           sibling.idxInParent,
+  //           Iterator.single(replacementNode),
+  //           spanLength
+  //         )
+  //         Rule.Result.Progress(replacementNode)
+  //       case Rule.Splice(nodes*) =>
+  //         val parent = sibling.parent
+  //         val idxInParent = sibling.idxInParent
+  //         parent.children.patchInPlace(idxInParent, nodes, spanLength)
+  //         Rule.Result.Progress(parent.children.findSibling(idxInParent))
+  //       case Rule.Empty =>
+  //         val parent = sibling.parent
+  //         val idxInParent = sibling.idxInParent
+  //         parent.children.patchInPlace(
+  //           idxInParent,
+  //           Iterator.empty,
+  //           spanLength
+  //         )
+  //         Rule.Result.Progress(parent.children.findSibling(idxInParent))
+  //       case Rule.TryNext =>
+  //         Rule.Result.TryNext
 
-      case Pattern.Result.Rejected =>
-        Rule.Result.TryNext
+  //   case Pattern.Result.Rejected =>
+  //     Rule.Result.TryNext
 end Rule
 
 object Rule:
@@ -103,6 +104,15 @@ trait Pass(using NamespaceCtx) extends Named:
     end while
 end Pass
 
+// TODO: make rewrite an algebra too (applicative with monad mode)
+// - Trieste's features are just custom operators that do things like "rewrite all matching" etc...
+// - rules use disjunction, recursion, etc
+// - some consideration for tabling optimizations; at least, have a lazy val that gives you a tabled version of a rule?
+// - uses patterns as embeds (auto conversion or smth)
+// - rewrite action targeted on a range of nodes (pattern result)
+// - navigates tree
+// - put marker for when you start over (marks big-scale ops)
+
 case object Pass extends NamespaceObj:
   def rule[T](using pass: Pass)(guard: Pattern[T])(
       action: Rule.Action[T]
@@ -114,22 +124,22 @@ case object Pass extends NamespaceObj:
   import Pattern.*
 
   case object ResolveBuiltins extends PassObj:
-    rule(
-      tok(Builtin.lift)
-        .children:
-          (tok(Builtin.liftDest), tok(Builtin.liftNode), tok(Builtin.origNode))
-    ):
-      case (dest, node, orig) =>
-        val destTok = dest.token
+  // rule(
+  //   tok(Builtin.lift)
+  //     .children:
+  //       (tok(Builtin.liftDest), tok(Builtin.liftNode), tok(Builtin.origNode))
+  // ):
+  //   case (dest, node, orig) =>
+  //     val destTok = dest.token
 
-        // TODO: ancestor search for token to add the node to
+  //     // TODO: ancestor search for token to add the node to
 
-        dest.children.patchInPlace(
-          dest.children.length,
-          Iterator.single(node.unparent()),
-          0
-        )
-        orig.unparent()
+  //     dest.children.patchInPlace(
+  //       dest.children.length,
+  //       Iterator.single(node.unparent()),
+  //       0
+  //     )
+  //     orig.unparent()
   end ResolveBuiltins
 end Pass
 
