@@ -3,7 +3,7 @@ package distcompiler
 import scala.quoted.*
 
 transparent trait Named(using ownName: Named.OwnName):
-  def name: String = ownName.name
+  final def name: String = ownName.name
 end Named
 
 object Named:

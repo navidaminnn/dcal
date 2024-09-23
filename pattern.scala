@@ -3,29 +3,33 @@ package distcompiler
 import cats.data.Chain
 import cats.syntax.all.given
 import scala.util.NotGiven
+import scala.reflect.TypeTest
 
 enum Pattern[+T]:
   import Pattern.*
 
-  case Pure[T](value: T) extends Pattern[T]
+  case Pure(value: T)
   case Ap[T, U](ff: Pattern[T => U], fa: Pattern[T]) extends Pattern[U]
   case FlatMap[T, U](pattern: Pattern[T], fn: T => Pattern[U])
       extends Pattern[U]
 
+  case ThisChild extends Pattern[Node.Child]
+  case ThisEmbed[T](typeTest: TypeTest[Any, T]) extends Pattern[Node.Embed[T]]
   case ThisNode extends Pattern[Node]
   case AtEnd extends Pattern[Unit]
-  case AtParent[T](pattern: Pattern[T]) extends Pattern[T]
-  case AtRightSibling[T](pattern: Pattern[T]) extends Pattern[T]
-  case AtFirstChild[T](pattern: Pattern[T]) extends Pattern[T]
+  case AtParent(pattern: Pattern[T])
+  case AtRightSibling(pattern: Pattern[T])
+  case AtFirstChild(pattern: Pattern[T])
+  case AtNode(dest: Pattern[Node.All], pattern: Pattern[T])
 
   case Restrict[T, U](pattern: Pattern[T], fn: PartialFunction[T, U])
       extends Pattern[U]
 
   case Reject extends Pattern[Nothing]
-  case Deferred[T](fn: () => Pattern[T]) extends Pattern[T]
+  case Deferred(fn: () => Pattern[T])
 
   case Negation(pattern: Pattern[?]) extends Pattern[Unit]
-  case Disjunction[T](first: Pattern[T], second: Pattern[T]) extends Pattern[T]
+  case Disjunction(first: Pattern[T], second: Pattern[T])
 
   def check(node: Node.All): Result[T] =
     import cats.Eval
@@ -47,6 +51,16 @@ enum Pattern[+T]:
             case Result.Accepted(value, matchedCount) =>
               impl(fn(value), node)
                 .map(_.combineMatchedCount(matchedCount))
+        case ThisChild =>
+          node match
+            case child: Node.Child => Eval.now(Result.Accepted(child, 1))
+            case _ => Eval.now(Result.Rejected)
+        case thisEmbed: ThisEmbed[t] =>
+          given TypeTest[Any, t] = thisEmbed.typeTest
+          node match
+            case embed: Node.Embed[`t`] if embed.value.isInstanceOf[t] =>
+              Eval.now(Result.Accepted(embed, 1))
+            case _ => Eval.now(Result.Rejected)
         case ThisNode =>
           node match
             case node: Node => Eval.now(Result.Accepted(node, 1))
@@ -75,6 +89,13 @@ enum Pattern[+T]:
                 .map(_.ignoreMatchedCount)
             case _ =>
               Eval.now(Result.Rejected)
+        case AtNode(dest, pattern) =>
+          impl(dest, node).flatMap:
+            case Result.Accepted(destNode, matchedCount) =>
+              impl(pattern, destNode).map:
+                case Result.Accepted(value, _) => Result.Accepted(value, matchedCount)
+                case Result.Rejected => Result.Rejected
+            case Result.Rejected => Eval.now(Result.Rejected)
         case Restrict(pattern, fn) =>
           impl(pattern, node)
             .map:
@@ -95,28 +116,6 @@ enum Pattern[+T]:
 
     impl(this, node).value
   end check
-
-  // lazy val respondsTo: Manip.RespondsTo =
-  //   this match
-  //     case Pure(_) =>
-  //       Manip.RespondsTo.All
-  //     case Ap(ff, fa) =>
-  //       ff.respondsTo.intersect(fa.respondsTo)
-  //     case FlatMap(pattern, fn) =>
-  //       pattern.respondsTo
-  //     case ThisNode =>
-  //       Manip.RespondsTo.All
-  //     case AtEnd =>
-  //       Manip.RespondsTo
-  //     case AtParent(pattern) =>
-  //     case AtRightSibling(pattern) =>
-  //     case AtFirstChild(pattern) =>
-  //     case Restrict(pattern, fn) =>
-  //     case Reject =>
-  //     case Deferred(fn) =>
-  //     case Negation(pattern) =>
-  //     case Disjunction(first, second) =>
-
 end Pattern
 
 object Pattern:
@@ -188,10 +187,22 @@ object Pattern:
       Pattern.Restrict(lhs, fn)
     def flatMap[U](fn: T => Pattern[U]): Pattern[U] =
       Pattern.FlatMap(lhs, fn)
+  
+  extension (dest: Pattern[Node.All])
+    def here[T](pattern: Pattern[T]): Pattern[T] =
+      Pattern.AtNode(dest, pattern)
 
   def atEnd: Pattern[Unit] = Pattern.AtEnd
 
   def anyTok: Pattern[Node] = Pattern.ThisNode
+
+  def anyChild: Pattern[Node.Child] = Pattern.ThisChild
+
+  def embed[T](using typeTest: TypeTest[Any, T]): Pattern[Node.Embed[T]] =
+    Pattern.ThisEmbed(typeTest)
+
+  def embedValue[T](using TypeTest[Any, T]): Pattern[T] =
+    embed[T].map(_.value)
 
   def pure[T](value: T): Pattern[T] = Pattern.Pure(value)
 
@@ -243,33 +254,18 @@ object Pattern:
     firstChild:
       pattern <*: atEnd
 
-  // def tok(token: Token): Pattern[Node] =
-  //   ThisToken(token)
+  def refersTo[T](pattern: Pattern[T]): Pattern[T] =
+    anyTok
+      .map(_.lookup)
+      .restrict:
+        case List(singleResult) => singleResult
+      .here(pattern)
 
-  // def find[T](pattern: Pattern[T]): Pattern[T] =
-  //   Find(pattern)
-
-  // given adjacentTuple[PatternTpl <: NonEmptyTuple]
-  //     : Conversion[PatternTpl, Pattern[Tuple.InverseMap[PatternTpl, Pattern]]]
-  // with
-  //   def apply(tpl: PatternTpl): Pattern[Tuple.InverseMap[PatternTpl, Pattern]] =
-  //     tpl.productIterator
-  //       .asInstanceOf[Iterator[Pattern[Any]]]
-  //       .foldLeft(None: Option[Pattern[NonEmptyTuple]]): (acc, elem) =>
-  //         acc match
-  //           case None             => Some(elem.map(Tuple1.apply))
-  //           case Some(accPattern) => Some((accPattern.nextTo(elem)).map(_ :* _))
-  //       .get
-  //       .asInstanceOf
-
-  // enum Result[+T]:
-  //   case Matched[T](nextSibling: Node.Sibling, bound: T) extends Result[T]
-  //   case Rejected
-
-  //   def map[U](fn: T => U): Result[U] =
-  //     this match
-  //       case Matched(nextSibling, bound) => Matched(nextSibling, fn(bound))
-  //       case Rejected                    => Rejected
-
-  // end Result
+  def refersToRelative[T](relativeTo: Pattern[Node])(pattern: Pattern[T]): Pattern[T] =
+    (anyTok, relativeTo)
+      .mapN: (thisNode, relativeTo) =>
+        thisNode.lookupRelativeTo(relativeTo)
+      .restrict:
+        case List(singleResult) => singleResult
+      .here(pattern)
 end Pattern

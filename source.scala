@@ -53,6 +53,9 @@ final class Source(val bytes: IArray[Byte], val origin: String)
   def apply(v1: Int): Byte = bytes.apply(v1)
 
   def iterator: Iterator[Byte] = bytes.iterator
+
+  def range: SourceRange =
+    SourceRange(this, 0, length)
 end Source
 
 object Source:
@@ -64,10 +67,6 @@ object Source:
 
   def apply(path: os.Path): Source =
     new Source(IArray.unsafeFromArray(os.read.bytes(path)), path.toString)
-
-  given convertToRange: Conversion[Source, SourceRange] with
-    def apply(source: Source): SourceRange =
-      new SourceRange(source, 0, source.length)
 end Source
 
 final class SourceRange(val source: Source, val start: Int, val length: Int)
@@ -144,7 +143,7 @@ final class SourceRange(val source: Source, val start: Int, val length: Int)
 end SourceRange
 
 object SourceRange:
-  val none: SourceRange = Source.none
+  val none: SourceRange = Source.none.range
 
   given ordering: Ordering[SourceRange] with
     def compare(x: SourceRange, y: SourceRange): Int =

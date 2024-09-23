@@ -25,10 +25,10 @@ final class Reader(initState: Node.Top => Reader.State):
               shouldContinue = false
         case _ =>
           top.children.addOne:
-            Builtin.error(
+            Builtin.Error(
               "invalid",
               Builtin
-                .sourceMarker()
+                .SourceMarker()
                 .at:
                   if currRange.isEmpty
                   then currRange

@@ -10,10 +10,10 @@ trait Token extends Equals, Named:
   final override def hashCode(): Int =
     System.identityHashCode(this)
 
-  final def canBeLookedUp: Boolean = lookedUpBy.nonEmpty
+  final def canBeLookedUp: Boolean = lookedUpBy ne Pattern.Reject
 
   def symbolTableFor: List[Token] = Nil
-  def lookedUpBy: Option[Node => Option[Node]] = None
+  def lookedUpBy: Pattern[Node] = Pattern.Reject
   def showSource: Boolean = false
 end Token
 

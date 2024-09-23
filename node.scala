@@ -1,5 +1,8 @@
 package distcompiler
 
+import cats.Eval
+import cats.data.Chain
+import cats.syntax.all.given
 import scala.collection.mutable
 
 final case class NodeError(msg: String) extends RuntimeException(msg)
@@ -11,6 +14,11 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child])
       Node.Traversable,
       Equals:
   thisNode =>
+
+  override type This = Node
+  override def cloneEval(): Eval[Node] =
+    Chain.traverseViaChain(children.toIndexedSeq)(_.cloneEval())
+      .map(clonedChildren => Node(token)(clonedChildren.toIterable))
 
   private var _sourceRange: SourceRange = SourceRange.none
 
@@ -110,13 +118,17 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child])
       .flatten
 
   override def iteratorErrors: Iterator[Node] =
-    if token == Builtin.error
+    if token == Builtin.Error
     then Iterator.single(thisNode)
     else children.iterator.foldLeft(Iterator.empty[Node])(_ ++ _.iteratorErrors)
 
   def lookup: List[Node] =
     assert(token.canBeLookedUp)
     parent.findNodeByKey(thisNode)
+
+  def lookupRelativeTo(referencePoint: Node): List[Node] =
+    assert(token.canBeLookedUp)
+    referencePoint.findNodeByKey(thisNode)
 
 end Node
 
@@ -155,28 +167,55 @@ object Node:
             .foreach(impl)
   end Traversable
 
-  object TraversalAction:
-    given unitMeansContinue: Conversion[Unit, TraversalAction] = _ =>
-      TraversalAction.Continue
+  sealed trait All extends Cloneable:
+    type This <: All
+    def cloneEval(): Eval[This]
 
-  sealed trait All
-  sealed trait Root extends All
-  sealed trait Leaf extends All
-  sealed trait Sentinel extends All
+    final override def clone(): This =
+      cloneEval().value
+
+    final def inspect[T](pattern: Pattern[T]): Option[T] =
+      pattern.check(this) match
+        case Pattern.Result.Rejected => None
+        case Pattern.Result.Accepted(value, _) =>
+          Some(value)
+    
+    final def asNode: Node =
+      require(this.isInstanceOf[Node])
+      this.asInstanceOf[Node]
+  
+  sealed trait Root extends All:
+    override type This <: Root
+  sealed trait Leaf extends All:
+    override type This <: Leaf
+  sealed trait Sentinel extends All:
+    override type This <: Sentinel
 
   final class Top(childrenInit: IterableOnce[Node.Child])
       extends Root,
         Parent(childrenInit),
         Traversable:
     def this() = this(Nil)
+
+    override type This = Top
+    override def cloneEval(): Eval[Top] =
+      Chain.traverseViaChain(children.toIndexedSeq)(_.cloneEval())
+        .map(_.toIterable)
+        .map(Top(_))
   end Top
+
+  object Top
 
   final class Floating(child: Node.Child)
       extends Root,
-        Parent(Iterator.single(child))
+        Parent(Iterator.single(child)):
+    override type This = Floating
+    override def cloneEval(): Eval[Floating] =
+      children.head.cloneEval().map(Floating(_))
 
   sealed trait Parent(childrenInit: IterableOnce[Node.Child]) extends All:
     thisParent =>
+    override type This <: Parent
 
     val children: Node.Children = Node.Children(thisParent, childrenInit)
 
@@ -218,14 +257,15 @@ object Node:
             case irrelevantNode: Node if irrelevantNode._scopeRelevance == 0 =>
               SkipChildren
             case descendantNode: Node =>
-              descendantNode.token.lookedUpBy match
-                case None => // no lookup
-                case Some(lookedUpBy) =>
-                  lookedUpBy(descendantNode) match
-                    case None => // can't find key. This should at least fail a WF check.
-                    case Some(descendantKey) =>
-                      if key == descendantKey
-                      then resultsList.addOne(descendantNode)
+              if !descendantNode.token.canBeLookedUp
+              then TraversalAction.Continue
+              else
+                descendantNode.inspect(descendantNode.token.lookedUpBy) match
+                  case None => TraversalAction.Continue
+                  case Some(descendantKey) =>
+                    if key == descendantKey
+                    then resultsList.addOne(descendantNode)
+                    TraversalAction.Continue
             case _: Node.Leaf => SkipChildren
 
           resultsList.result()
@@ -248,6 +288,8 @@ object Node:
 
   sealed trait Sibling extends All:
     thisSibling =>
+
+    override type This <: Sibling
 
     def isChild: Boolean = false
 
@@ -272,6 +314,13 @@ object Node:
   final class RightSiblingSentinel private[Node] (val parent: Node.Parent)
       extends Sibling,
         Sentinel:
+
+    override type This = RightSiblingSentinel
+    override def cloneEval(): Eval[RightSiblingSentinel] =
+      // No-one should reasonably even do this, but if they do, they will get back an identical object with the same parent.
+      // Normally we want do have the clone not be parented, but this is unavoidable because sentinels only have parents.
+      Eval.now(RightSiblingSentinel(parent))
+    
     override def idxInParent: Int = parent.children.length
     override def rightSibling: Node.Sibling =
       throw NodeError(
@@ -281,6 +330,8 @@ object Node:
 
   sealed trait Child extends Sibling, Traversable, Leaf:
     thisChild =>
+
+    override type This <: Child
 
     override def isChild: Boolean = true
 
@@ -325,10 +376,14 @@ object Node:
     def iteratorErrors: Iterator[Node]
   end Child
 
-  final case class Embed[T](value: T)(using val nodeRepr: AsNode[T])
+  final case class Embed[T](value: T)(using val nodeMeta: NodeMeta[T])
       extends Child,
         Sibling,
         Leaf:
+    override type This = Embed[T]
+    override def cloneEval(): Eval[Embed[T]] =
+      Eval.now(Embed(nodeMeta.doClone(value)))
+    
     override def iteratorErrors: Iterator[Node] = Iterator.empty
   end Embed
 
@@ -433,11 +488,13 @@ object Node:
       workQueue.enqueue(() => task)
 end Node
 
-trait AsNode[T]:
+trait NodeMeta[T]:
   extension (self: T) def asNode: Node
-end AsNode
 
-object AsNode:
-  given token: AsNode[Token] with
+  def doClone(self: T): T
+
+object NodeMeta:
+  given forToken: NodeMeta[Token] with
     extension (self: Token) def asNode: Node = self()
-end AsNode
+
+    def doClone(self: Token): Token = self

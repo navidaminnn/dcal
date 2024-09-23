@@ -138,14 +138,21 @@ object Manip:
       raw:
         case Pattern.Result.Accepted(value, matchedCount) =>
           Manip.ThisNode.flatMap: thisNode =>
-            val replacementsOpt: Manip.Backtrack.type | Iterable[Node.Child] =
+            val replacementsOpt: Manip.Backtrack.type | Skip.type | Iterable[Node.Child] =
               action(value) match
                 case node: Node.Child => node :: Nil
                 case Splice(nodes*)   => nodes
                 case Delete           => Nil
                 case TryNext          => Backtrack
+                case Skip => Skip
 
             replacementsOpt match
+              case Skip =>
+                thisNode match
+                  case thisChild: Node.Child =>
+                    (thisChild, thisChild.rightSibling).pure
+                  case _: (Node.Sentinel | Node.Root) =>
+                    throw RuntimeException("tried to continue at sentinel or root")
               case Manip.Backtrack => Manip.Backtrack
               case replacements: Iterable[Node.Child] =>
                 thisNode match
@@ -191,15 +198,16 @@ object Manip:
   final case class Splice(nodes: Node.Child*)
   case object Delete
   case object TryNext
+  case object Skip
 
   type RewriteOp =
-    Node.Child | Splice | Delete.type | TryNext.type
+    Node.Child | Splice | Delete.type | TryNext.type | Skip.type
 
   final class pass(
       strategy: pass.TraversalStrategy = pass.topDown,
       once: Boolean = false
   ):
-    def rules(rules: Manip[Node.Sibling]): Manip[Unit] =
+    def rules(rules: Manip[(Node.Sibling, Node.Sibling)]): Manip[Unit] =
       lazy val impl: Manip[Unit] =
         strategy
           .traverse(rules)
@@ -213,12 +221,12 @@ object Manip:
 
   object pass:
     trait TraversalStrategy:
-      def traverse(rules: Manip[Node.Sibling]): Manip[Boolean]
+      def traverse(rules: Manip[(Node.Sibling, Node.Sibling)]): Manip[Boolean]
 
     object topDown extends TraversalStrategy:
-      def traverse(rules: Manip[Node.Sibling]): Manip[Boolean] =
+      def traverse(rules: Manip[(Node.Sibling, Node.Sibling)]): Manip[Boolean] =
         lazy val impl: Manip[Boolean] =
-          rules.flatMap: nextSibling =>
+          rules.flatMap: (_, nextSibling) =>
             atNode(nextSibling):
               impl.as(true)
           | atFirstChild:
@@ -233,7 +241,7 @@ object Manip:
         impl
 
     object bottomUp extends TraversalStrategy:
-      def traverse(rules: Manip[Node.Sibling]): Manip[Boolean] =
+      def traverse(rules: Manip[(Node.Sibling, Node.Sibling)]): Manip[Boolean] =
         def atBottomLeft[T](manip: Manip[T]): Manip[T] =
           lazy val impl: Manip[T] =
             atFirstChild(defer(impl))
@@ -242,7 +250,7 @@ object Manip:
           impl
 
         lazy val impl: Manip[Boolean] =
-          rules.flatMap: nextSibling =>
+          rules.flatMap: (_, nextSibling) =>
             atNode(nextSibling):
               impl.as(true)
           | atRightSibling:
