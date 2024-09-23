@@ -4,77 +4,10 @@ import cats.syntax.all.given
 import scala.collection.{mutable, MapView}
 import scala.reflect.Typeable
 
-trait Token extends Equals, Named, NamespaceRequired:
-  final override def canEqual(that: Any): Boolean =
-    that.isInstanceOf[Token]
+// TODO: heavily simplify Wellformed
+// most of this structure can be written using Node, and we just provide syntax sugar
 
-  final override def equals(that: Any): Boolean =
-    this eq that.asInstanceOf[AnyRef]
-
-  final override def hashCode(): Int =
-    System.identityHashCode(this)
-
-  final def canBeLookedUp: Boolean = lookedUpBy.nonEmpty
-
-  def symbolTableFor: List[Token] = Nil
-  def lookedUpBy: Option[Node => Option[Node]] = None
-  def showSource: Boolean = false
-end Token
-
-object Token:
-  extension (token: Token)(using ctx: Wellformed)
-    @scala.annotation.alpha("assignShape")
-    def ::=(shape: Shape): Unit =
-      require(ctx.isBuilding)
-      ctx.shapeMapBuilder(token) = shape
-
-    def modifyShape(fn: Shape => Shape): Unit =
-      require(ctx.isBuilding)
-      ctx.shapeMapBuilder.updateWith(token): shapeOpt =>
-        require(shapeOpt.nonEmpty)
-        Some(fn(shapeOpt.get))
-
-  extension (token: Token)
-    def apply(children: Node.Child*): Node =
-      Node(token)(children)
-    def apply(children: IterableOnce[Node.Child]): Node =
-      Node(token)(children)
-end Token
-
-trait TokenObj(shape: TokenObj.ShapeSrc) extends Token, NamedObj:
-  self: Singleton & Product =>
-  locally:
-    import TokenObj.ShapeSrc
-    shape match
-      case ShapeSrc.None => // skip
-      case ShapeSrc.Immediate(shape) =>
-        require(namespaceCtx.isInstanceOf[Wellformed])
-        given Wellformed = namespaceCtx.asInstanceOf[Wellformed]
-        this ::= shape
-      case ShapeSrc.Deferred(shapeFn) =>
-        require(namespaceCtx.isInstanceOf[Wellformed])
-        given wf: Wellformed = namespaceCtx.asInstanceOf[Wellformed]
-        wf.deferBuildStep:
-          this ::= shapeFn()
-end TokenObj
-
-object TokenObj:
-  enum ShapeSrc:
-    case None
-    case Immediate(shape: Shape)
-    case Deferred(shapeFn: () => Shape)
-  end ShapeSrc
-
-  object ShapeSrc:
-    given immediateShape: Conversion[Shape, ShapeSrc] = ShapeSrc.Immediate.apply
-    given immediateEmbed[T]: Conversion[Shape.Embed[T], ShapeSrc] with
-      def apply(embed: Shape.Embed[T]): ShapeSrc = immediateShape(
-        Shape.Choice(Set(embed))
-      )
-  end ShapeSrc
-end TokenObj
-
-trait Wellformed extends Namespace:
+trait Wellformed:
   import Wellformed.*
   protected given wf: Wellformed = this
 
@@ -82,9 +15,6 @@ trait Wellformed extends Namespace:
     mutable.HashMap.empty[Token, Shape]
   private[distcompiler] var deferredOps: mutable.ListBuffer[() => Unit] | Null =
     mutable.ListBuffer.empty
-
-  // Make it "just work" when someone uses built-in nodes re: well-formedness checks.
-  basedOn(Builtin)
 
   final def isBuilding: Boolean =
     deferredOps ne null
@@ -225,17 +155,9 @@ object Wellformed:
     self.shapeMapBuilder.addAll(other.shapes)
 end Wellformed
 
-trait WellformedObj(using NamespaceCtx) extends Wellformed, NamespaceObj:
-  self: Singleton & Product =>
-end WellformedObj
-
 sealed trait Shape
 
 object Shape:
-  extension (shape: => Shape)
-    def defer: TokenObj.ShapeSrc =
-      TokenObj.ShapeSrc.Deferred(() => shape)
-
   final class Embed[T](using val typeable: Typeable[T], val asNode: AsNode[T])
 
   case object AnyShape extends Shape
@@ -274,44 +196,49 @@ object Shape:
   final case class Repeated(choice: Choice) extends Shape
 end Shape
 
-case object Builtin extends WellformedObj:
+object Builtin:
   import Shape.*
 
-  case object top extends TokenObj(AnyShape)
+  object top extends Token
 
-  case object tuple extends TokenObj(AnyShape)
+  object tuple extends Token
 
-  case object error extends TokenObj(Fields(errorMsg, errorAST)):
+  object error extends Token:
     def apply(msg: String, ast: Node.Child): Node =
       error(
-        errorMsg().at(Source(msg)),
-        errorAST(ast)
+        error.msg().at(Source(msg)),
+        error.ast(ast)
       )
+
+    object msg extends Token:
+      override val showSource = true
+    object ast extends Token
   end error
-  case object errorMsg extends TokenObj(Atom):
-    override val showSource = true
-  case object errorAST extends TokenObj(AnyShape)
 
-  case object sourceMarker extends TokenObj(Atom)
+  object sourceMarker extends Token
 
-  case object lift extends TokenObj(Fields(liftDest, liftNode, origNode)):
+  object lift extends Token:
     def apply(dest: Token, node: Node, nodeInPlace: Node): Node =
       lift(
-        liftDest(dest()),
-        liftNode(node),
-        origNode(nodeInPlace)
+        lift.dest(dest()),
+        lift.toLift(node),
+        lift.resultNode(nodeInPlace)
       )
+
+    object dest extends Token
+    object toLift extends Token
+    object resultNode extends Token
 
     import Manip.*
     import Pattern.*
     lazy val rules: Rules =
       on(
-        (tok(lift) *> firstChild(tok(liftDest)))
+        (tok(lift) *> firstChild(tok(lift.dest)))
           .flatMap(dest => ancestor(tok(dest.token)))
         *: children:
-          (tok(liftDest) <* children(atEnd))
-            *>: tok(liftNode)
-            **: tok(origNode)
+          (tok(lift.dest) <* children(atEnd))
+            *>: tok(lift.toLift)
+            **: tok(lift.resultNode)
             <*: atEnd
       ).rewrite: (destNode, liftNode, origNode) =>
         destNode.children.addOne(liftNode.unparent())
@@ -319,9 +246,5 @@ case object Builtin extends WellformedObj:
       | on(tok(lift))
         .rewrite: badLift =>
           error("malformed lift node", badLift.unparent())
-
   end lift
-  case object liftDest extends TokenObj(Embed[Token])
-  case object liftNode extends TokenObj(AnyShape)
-  case object origNode extends TokenObj(AnyShape)
 end Builtin
