@@ -7,6 +7,7 @@ enum Manip[+T]:
   case Pure(value: T)
   case Ap[T, U](ff: Manip[T => U], fa: Manip[T]) extends Manip[U]
   case FlatMap[T, U](manip: Manip[T], fn: T => Manip[U]) extends Manip[U]
+  case Effect(manip: Manip[T])
 
   case Commit(manip: Manip[T])
 
@@ -46,6 +47,7 @@ enum Manip[+T]:
             case Ok(value) =>
               impl(fn(value), node)
             case Result.Backtrack => Eval.now(Result.Backtrack)
+        case Effect(manip) => impl(manip, node)
         case Commit(manip) =>
           impl(manip, node).map:
             case ok @ Ok(_) => ok

@@ -4,6 +4,7 @@ import cats.data.Chain
 import cats.syntax.all.given
 import scala.util.NotGiven
 import izumi.reflect.Tag
+import scala.reflect.TypeTest
 
 enum Pattern[+T]:
   import Pattern.*
@@ -13,14 +14,8 @@ enum Pattern[+T]:
   case FlatMap[T, U](pattern: Pattern[T], fn: T => Pattern[U])
       extends Pattern[U]
 
-  case TheTop extends Pattern[Node.Top]
-  case ThisChild extends Pattern[Node.Child]
-  case ThisEmbed[T](tag: Tag[T]) extends Pattern[Node.Embed[T]]
-  case ThisNode extends Pattern[Node]
-  case AtEnd extends Pattern[Unit]
-  case AtParent(pattern: Pattern[T])
-  case AtRightSibling(pattern: Pattern[T])
-  case AtFirstChild(pattern: Pattern[T])
+  case Current extends Pattern[Node.All]
+  case MarkProgress(pattern: Pattern[T])
   case AtNode(dest: Pattern[Node.All], pattern: Pattern[T])
 
   case Restrict[T, U](pattern: Pattern[T], fn: PartialFunction[T, U])
@@ -52,48 +47,12 @@ enum Pattern[+T]:
             case Result.Accepted(value, matchedCount) =>
               impl(fn(value), node)
                 .map(_.combineMatchedCount(matchedCount))
-        case TheTop =>
-          node match
-            case top: Node.Top => Eval.now(Result.Accepted(top, 1))
-            case _             => Eval.now(Result.Rejected)
-        case ThisChild =>
-          node match
-            case child: Node.Child => Eval.now(Result.Accepted(child, 1))
-            case _                 => Eval.now(Result.Rejected)
-        case thisEmbed: ThisEmbed[t] =>
-          node match
-            case embed: Node.Embed[`t`]
-                if embed.nodeMeta.tag <:< thisEmbed.tag =>
-              Eval.now(Result.Accepted(embed.asInstanceOf, 1))
-            case _ => Eval.now(Result.Rejected)
-        case ThisNode =>
-          node match
-            case node: Node => Eval.now(Result.Accepted(node, 1))
-            case _          => Eval.now(Result.Rejected)
-        case AtEnd =>
-          node match
-            case _: Node.RightSiblingSentinel =>
-              Eval.now(Result.Accepted((), 0))
-            case _ => Eval.now(Result.Rejected)
-        case AtParent(pattern) =>
-          node match
-            case sibling: Node.Sibling =>
-              impl(pattern, sibling.parent)
-                .map(_.ignoreMatchedCount)
-            case _ => Eval.now(Result.Rejected)
-        case AtRightSibling(pattern) =>
-          node match
-            case node: Node.Child =>
-              impl(pattern, node.rightSibling)
-                .map(_.incMatchedCount)
-            case _ => Eval.now(Result.Rejected)
-        case AtFirstChild(pattern) =>
-          node match
-            case node: Node.Parent =>
-              impl(pattern, node.firstChild)
-                .map(_.ignoreMatchedCount)
-            case _ =>
-              Eval.now(Result.Rejected)
+        case Current => Eval.now(Result.Accepted(node, 0))
+        case MarkProgress(pattern) =>
+          impl(pattern, node).map:
+            case Result.Accepted(value, matchedCount) =>
+              Result.Accepted(value, matchedCount + 1)
+            case Result.Rejected => Result.Rejected
         case AtNode(dest, pattern) =>
           impl(dest, node).flatMap:
             case Result.Accepted(destNode, matchedCount) =>
@@ -125,10 +84,6 @@ enum Pattern[+T]:
 end Pattern
 
 object Pattern:
-  // TODO: refersTo operation, don't bother w/ native...
-  // - version that assumes single ref?
-  // - refersTo: Pattern[List[Node]], gives you all the refs to do _something_ with
-
   given alternative: cats.Alternative[Pattern] with
     override val unit: Pattern[Unit] = Pattern.Pure(())
     def pure[A](value: A): Pattern[A] = Pattern.Pure(value)
@@ -163,6 +118,39 @@ object Pattern:
         case Rejected                      => Rejected
         case Accepted(value, matchedCount) => Accepted(value, matchedCount + 1)
   end Result
+
+  protected transparent trait NodeTypeTest[T <: Node.All](using typeTest: TypeTest[Node.All, T]) extends PartialFunction[Node.All, T]:
+    def isDefinedAt(node: Node.All): Boolean =
+      node match
+        case typeTest(_) => true
+        case _ => false
+    def apply(node: Node.All): T =
+      require(isDefinedAt(node))
+      node.asInstanceOf[T]
+
+  case object IsEnd extends NodeTypeTest[Node.RightSiblingSentinel]
+  case object IsTop extends NodeTypeTest[Node.Top]
+  case object IsParent extends NodeTypeTest[Node.Parent]
+  case object IsChild extends NodeTypeTest[Node.Child]
+  case object IsNode extends NodeTypeTest[Node]
+
+  final case class NodeHasToken(token: Token, tokens: Token*) extends PartialFunction[Node.All, Node]:
+    def isDefinedAt(node: Node.All): Boolean =
+      node match
+        case node: Node if node.token == token || tokens.contains(node.token) => true
+        case _ => false
+    def apply(node: Node.All): Node =
+      require(isDefinedAt(node))
+      node.asInstanceOf[Node]
+
+  final case class IsEmbed[T](tag: Tag[T]) extends PartialFunction[Node.All, Node.Embed[T]]:
+    def isDefinedAt(node: Node.All): Boolean =
+      node match
+        case embed: Node.Embed[?] if embed.nodeMeta.tag <:< tag => true
+        case _ => false
+    def apply(node: Node.All): Node.Embed[T] =
+      require(isDefinedAt(node))
+      node.asInstanceOf[Node.Embed[T]]
 
   object ops:
     extension [T](lhs: Pattern[T])
@@ -210,21 +198,32 @@ object Pattern:
         Pattern.Restrict(lhs, fn)
       def flatMap[U](fn: T => Pattern[U]): Pattern[U] =
         Pattern.FlatMap(lhs, fn)
+      private def markProgress: Pattern[T] =
+        Pattern.MarkProgress(lhs)
 
     extension (dest: Pattern[Node.All])
       def here[T](pattern: Pattern[T]): Pattern[T] =
         Pattern.AtNode(dest, pattern)
 
-    def atEnd: Pattern[Unit] = Pattern.AtEnd
+    def current: Pattern[Node.All] = Pattern.Current
 
-    def anyTok: Pattern[Node] = Pattern.ThisNode
+    def atEnd: Pattern[Node.RightSiblingSentinel] =
+      current.restrict(IsEnd)
 
-    def theTop: Pattern[Node.Top] = Pattern.TheTop
+    def anyNode: Pattern[Node] =
+      current.restrict(IsNode).markProgress
 
-    def anyChild: Pattern[Node.Child] = Pattern.ThisChild
+    def anyParent: Pattern[Node.Parent] =
+      current.restrict(IsParent).markProgress
+
+    def theTop: Pattern[Node.Top] =
+      current.restrict(IsTop)
+
+    def anyChild: Pattern[Node.Child] =
+      current.restrict(IsChild).markProgress
 
     def embed[T](using tag: Tag[T]): Pattern[Node.Embed[T]] =
-      Pattern.ThisEmbed(tag)
+      current.restrict(IsEmbed(tag)).markProgress
 
     def embedValue[T: Tag]: Pattern[T] =
       embed[T].map(_.value)
@@ -232,12 +231,10 @@ object Pattern:
     def not(pattern: Pattern[?]): Pattern[Unit] = Pattern.Negation(pattern)
 
     def tok(token: Token, tokens: Token*): Pattern[Node] =
-      anyTok.restrict:
-        case node if node.token == token         => node
-        case node if tokens.contains(node.token) => node
+      current.restrict(NodeHasToken(token, tokens*)).markProgress
 
     def parent[T](pattern: Pattern[T]): Pattern[T] =
-      Pattern.AtParent(pattern)
+      anyChild.map(_.parent).here(pattern)
 
     def ancestor[T](pattern: Pattern[T]): Pattern[T] =
       lazy val impl: Pattern[T] =
@@ -254,10 +251,10 @@ object Pattern:
       impl.map(_.toList)
 
     def rightSibling[T](pattern: Pattern[T]): Pattern[T] =
-      Pattern.AtRightSibling(pattern)
+      anyChild.map(_.rightSibling).here(pattern)
 
     def firstChild[T](pattern: Pattern[T]): Pattern[T] =
-      Pattern.AtFirstChild(pattern)
+      anyParent.map(_.firstChild).here(pattern)
 
     // Convenience alias, because it looks better in context.
     // Lets us write children(...) when we mean all children,
@@ -280,7 +277,7 @@ object Pattern:
         pattern <*: atEnd
 
     def refersTo[T](pattern: Pattern[T]): Pattern[T] =
-      anyTok
+      anyNode
         .map(_.lookup)
         .restrict:
           case List(singleResult) => singleResult
@@ -289,7 +286,7 @@ object Pattern:
     def refersToRelative[T](
         relativeTo: Pattern[Node]
     )(pattern: Pattern[T]): Pattern[T] =
-      (anyTok, relativeTo)
+      (anyNode, relativeTo)
         .mapN: (thisNode, relativeTo) =>
           thisNode.lookupRelativeTo(relativeTo)
         .restrict:
