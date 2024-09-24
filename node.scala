@@ -4,10 +4,11 @@ import cats.Eval
 import cats.data.Chain
 import cats.syntax.all.given
 import scala.collection.mutable
+import izumi.reflect.Tag
 
 final case class NodeError(msg: String) extends RuntimeException(msg)
 
-final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child])
+final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child] = Nil)
     extends Node.Child,
       Node.Sibling,
       Node.Parent(childrenInit),
@@ -17,7 +18,8 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child])
 
   override type This = Node
   override def cloneEval(): Eval[Node] =
-    Chain.traverseViaChain(children.toIndexedSeq)(_.cloneEval())
+    Chain
+      .traverseViaChain(children.toIndexedSeq)(_.cloneEval())
       .map(clonedChildren => Node(token)(clonedChildren.toIterable))
 
   private var _sourceRange: SourceRange = SourceRange.none
@@ -179,11 +181,15 @@ object Node:
         case Pattern.Result.Rejected => None
         case Pattern.Result.Accepted(value, _) =>
           Some(value)
-    
+
     final def asNode: Node =
       require(this.isInstanceOf[Node])
       this.asInstanceOf[Node]
-  
+
+    final def asTop: Top =
+      require(this.isInstanceOf[Top])
+      this.asInstanceOf[Top]
+
   sealed trait Root extends All:
     override type This <: Root
   sealed trait Leaf extends All:
@@ -199,7 +205,8 @@ object Node:
 
     override type This = Top
     override def cloneEval(): Eval[Top] =
-      Chain.traverseViaChain(children.toIndexedSeq)(_.cloneEval())
+      Chain
+        .traverseViaChain(children.toIndexedSeq)(_.cloneEval())
         .map(_.toIterable)
         .map(Top(_))
   end Top
@@ -211,7 +218,18 @@ object Node:
         Parent(Iterator.single(child)):
     override type This = Floating
     override def cloneEval(): Eval[Floating] =
-      children.head.cloneEval().map(Floating(_))
+      children.head.cloneEval().map(_.parent.asInstanceOf[Floating])
+
+  // TODO: is this a good or bad idea? Could save allocations, could waste memory...
+  // object Floating:
+  //   private val cache = java.util.WeakHashMap[ById[Node.Child], Floating]()
+  //   def apply(child: Node.Child): Floating =
+  //     cache.get(child) match
+  //       case null =>
+  //         val result = new Floating(child)
+  //         cache.put(ById(child), result)
+  //         result
+  //       case result => result
 
   sealed trait Parent(childrenInit: IterableOnce[Node.Child]) extends All:
     thisParent =>
@@ -320,7 +338,7 @@ object Node:
       // No-one should reasonably even do this, but if they do, they will get back an identical object with the same parent.
       // Normally we want do have the clone not be parented, but this is unavoidable because sentinels only have parents.
       Eval.now(RightSiblingSentinel(parent))
-    
+
     override def idxInParent: Int = parent.children.length
     override def rightSibling: Node.Sibling =
       throw NodeError(
@@ -383,7 +401,7 @@ object Node:
     override type This = Embed[T]
     override def cloneEval(): Eval[Embed[T]] =
       Eval.now(Embed(nodeMeta.doClone(value)))
-    
+
     override def iteratorErrors: Iterator[Node] = Iterator.empty
   end Embed
 
@@ -461,34 +479,9 @@ object Node:
       then RightSiblingSentinel(parent)
       else this.apply(idx) // negative idx
   end Children
-
-  private val recursionBreakingWorkQueue =
-    ThreadLocal.withInitial[mutable.Queue[() => Unit] | Null](() => null)
-
-  private def withWorkQueue[T](fn: mutable.Queue[() => Unit] => T): T =
-    recursionBreakingWorkQueue.get() match
-      case null =>
-        val ownWorkQueue = mutable.Queue.empty[() => Unit]
-        recursionBreakingWorkQueue.set(ownWorkQueue)
-
-        val result = fn(ownWorkQueue)
-
-        while (ownWorkQueue.nonEmpty)
-          ownWorkQueue.dequeue().apply()
-
-        Node.recursionBreakingWorkQueue.set(null)
-
-        result
-      case workQueue =>
-        fn(workQueue)
-    end match
-
-  private def onWorkQueue(task: => Unit): Unit =
-    withWorkQueue: workQueue =>
-      workQueue.enqueue(() => task)
 end Node
 
-trait NodeMeta[T]:
+trait NodeMeta[T](using val tag: Tag[T]):
   extension (self: T) def asNode: Node
 
   def doClone(self: T): T
@@ -498,3 +491,11 @@ object NodeMeta:
     extension (self: Token) def asNode: Node = self()
 
     def doClone(self: Token): Token = self
+
+  final class byToString[T: Tag] extends NodeMeta[T]:
+    def doClone(self: T): T = self
+    extension (self: T)
+      def asNode: Node =
+        byToString.mkNode().at(Source(self.toString()).range)
+
+  object byToString extends Token

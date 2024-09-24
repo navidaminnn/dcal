@@ -4,41 +4,38 @@ import cats.syntax.all.given
 import distcompiler.Builtin.Error
 
 final class Wellformed private (wfTop: Node.Top, topPattern: Pattern[Unit]):
-  private val ns = wfTop.children.head.asNode
-
   lazy val rules: Manip[Unit] =
-    import Manip.*
+    val goodPattern = Wellformed.rulesBuilder.perform(wfTop.clone())
+
+    import dsl.*
+
     pass()
       .rules:
-        import Pattern.*
         on(
-          locally:
-            anyTok
-            *: anyTok
-              .map: thisNode =>
-                Wellformed.Name(Node.Embed(thisNode.token))
-              .here:
-                refersToRelative(pure(ns)):
-                  tok(Wellformed.Defn)
-                  *> children:
-                    find:
-                      tok(Wellformed.Shape)
-                      *> onlyChild:
-                        embedValue[Wellformed.Shape]
-          .flatMap: (node, shape) =>
-            pure(node).here(shape.pattern)
-        ).rewrite:
-          case () => Skip
-        | on(embed[Any]).rewrite(_ => Skip)
-        | on(anyChild)
-          .rewrite: child =>
-            Splice(Error(
-              "unexpected shape",
-              child.unparent(),
-            ))
+          theTop <* children(not(topPattern))
+        ).value.effect: top =>
+          val unparentedChildren = top.unparentedChildren
+          val childrenTuple = Builtin.Tuple(unparentedChildren)
+          top.children = List(
+            Error(
+              "unexpected shape at root",
+              childrenTuple
+            )
+          )
+          (childrenTuple.firstChild, childrenTuple.firstChild).pure
+        | on(
+          anyChild <* not(goodPattern)
+        ).rewrite: child =>
+          Splice(
+            Error(
+              "unexpected shape or token",
+              child.unparent()
+            )
+          )
 
   def makeDerived(fn: Wellformed.Builder ?=> Unit): Wellformed =
-    val builder = Wellformed.Builder(wfTop.clone(), topPatternOpt = Some(topPattern))
+    val builder =
+      Wellformed.Builder(wfTop.clone(), topPatternOpt = Some(topPattern))
     fn(using builder)
     builder.build()
 end Wellformed
@@ -49,25 +46,66 @@ object Wellformed:
     fn(using builder)
     builder.build()
 
+  private val rulesBuilder: Manip[Pattern[Unit]] =
+    given NodeMeta[Pattern[Unit]] = NodeMeta.byToString()
+    import dsl.*
+
+    val defnPattern: Pattern[(Token, Shape)] =
+      tok(Defn)
+      *>: children:
+        (tok(Name) *>: onlyChild(embedValue[Token]))
+          **: embedValue[Shape]
+
+    pass()
+      .rules:
+        on(
+          defnPattern :* rightSibling(embedValue[Pattern[Unit]])
+        ).rewrite: (token, shape, restPattern) =>
+          Splice(
+            Node.Embed((tok(token) *>: children(shape.pattern)) | restPattern)
+          )
+        | on(
+          defnPattern <*: atEnd
+        ).rewrite: (token, shape) =>
+          Splice(Node.Embed(tok(token) *>: children(shape.pattern)))
+        | on(
+          tok(Namespace) *> onlyChild(embedValue[Pattern[Unit]])
+        ).rewrite: pattern =>
+          Splice(Node.Embed(pattern))
+    *> on(
+      onlyChild(embedValue[Pattern[Unit]])
+    ).value
+  end rulesBuilder
+
   object Namespace extends Token:
     override def symbolTableFor: List[Token] = List(Wellformed.Name)
 
   object Defn extends Token:
     override val lookedUpBy: Pattern[Node] =
-      import Pattern.*
+      import dsl.*
       tok(Defn) *> children:
         find(tok(Wellformed.Name))
 
   object Name extends Token
 
-  final class Builder private[Wellformed] (top: Node.Top = Node.Top(List(Namespace())), private var topPatternOpt: Option[Pattern[Unit]] = None):
+  final class Builder private[Wellformed] (
+      top: Node.Top = Node.Top(List(Namespace())),
+      private var topPatternOpt: Option[Pattern[Unit]] = None
+  ):
     private val ns = top.children.head.asNode
 
-    extension (top: Node.Top.type) def ::=(pattern: Pattern[?]): Unit =
-      topPatternOpt = Some(pattern.void)
+    extension (top: Node.Top.type)
+      def ::=(pattern: Pattern[?]): Unit =
+        topPatternOpt = Some(pattern.void)
 
-    extension (tok: Token) def ::=(pattern: Pattern[?]): Unit =
-      ns.children.addOne(Defn(Name().at(Source(tok.name).range), Node.Embed(Shape(pattern.void))))
+    extension (tok: Token)
+      def ::=(pattern: Pattern[?]): Unit =
+        ns.children.addOne(
+          Defn(
+            Name().at(Source(tok.name).range),
+            Node.Embed(Shape(pattern.void))
+          )
+        )
 
     private[Wellformed] def build(): Wellformed =
       require(topPatternOpt.nonEmpty)

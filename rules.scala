@@ -21,7 +21,7 @@ enum Manip[+T]:
   def perform(top: Node.Top): T =
     // TODO: optimize so we use Commit for performance (discard backtrack info in that case)
     // this would either work via continuation passing, or by taking a more imperative approach
-    // and and managing a mutable stack type structure directly
+    // and managing a mutable stack type structure directly
     import cats.Eval
 
     enum Result[+T]:
@@ -71,7 +71,7 @@ enum Manip[+T]:
 
     impl(this, top).value match
       case Result.Backtrack =>
-        throw ???
+        throw RuntimeException("tree manipulation backtracked at top level")
       case Ok(value) => value
   end perform
 
@@ -92,176 +92,192 @@ object Manip:
     def empty[A]: Manip[A] = Manip.Backtrack
     def pure[A](x: A): Manip[A] = Manip.Pure(x)
 
-  def defer[T](manip: => Manip[T]): Manip[T] =
-    lazy val impl = manip
-    Manip.Deferred(() => impl)
+  object ops:
+    def defer[T](manip: => Manip[T]): Manip[T] =
+      lazy val impl = manip
+      Manip.Deferred(() => impl)
 
-  def commit[T](manip: Manip[T]): Manip[T] =
-    Manip.Commit(manip)
+    def commit[T](manip: Manip[T]): Manip[T] =
+      Manip.Commit(manip)
 
-  def atNode[T](node: Node.All)(manip: Manip[T]): Manip[T] =
-    Manip.AtNode(manip, node)
+    def atNode[T](node: Node.All)(manip: Manip[T]): Manip[T] =
+      Manip.AtNode(manip, node)
 
-  def atRightSibling[T](manip: Manip[T]): Manip[T] =
-    Manip.ThisNode.lookahead.flatMap:
-      case thisChild: Node.Child =>
-        atNode(thisChild)(manip)
-      case _: (Node.Sentinel | Node.Root) =>
-        Manip.Backtrack
+    def atRightSibling[T](manip: Manip[T]): Manip[T] =
+      Manip.ThisNode.lookahead.flatMap:
+        case thisChild: Node.Child =>
+          atNode(thisChild)(manip)
+        case _: (Node.Sentinel | Node.Root) =>
+          Manip.Backtrack
 
-  def atFirstChild[T](manip: Manip[T]): Manip[T] =
-    Manip.ThisNode.lookahead.flatMap:
-      case thisParent: Node.Parent =>
-        atNode(thisParent.firstChild)(manip)
-      case _: (Node.Sentinel | Node.Leaf) =>
-        Manip.Backtrack
+    def atFirstChild[T](manip: Manip[T]): Manip[T] =
+      Manip.ThisNode.lookahead.flatMap:
+        case thisParent: Node.Parent =>
+          atNode(thisParent.firstChild)(manip)
+        case _: (Node.Sentinel | Node.Leaf) =>
+          Manip.Backtrack
 
-  def atFirstSibling[T](manip: Manip[T]): Manip[T] =
-    Manip.ThisNode.lookahead.flatMap:
-      case thisSibling: Node.Sibling =>
-        atNode(thisSibling.parent.children.findSibling(0))(manip)
-      case _: Node.Root =>
-        Manip.Backtrack
+    def atFirstSibling[T](manip: Manip[T]): Manip[T] =
+      Manip.ThisNode.lookahead.flatMap:
+        case thisSibling: Node.Sibling =>
+          atNode(thisSibling.parent.children.findSibling(0))(manip)
+        case _: Node.Root =>
+          Manip.Backtrack
 
-  def atParent[T](manip: Manip[T]): Manip[T] =
-    Manip.ThisNode.lookahead.flatMap:
-      case thisChild: Node.Sibling =>
-        atNode(thisChild.parent)(manip)
-      case _: Node.Root =>
-        Manip.Backtrack
+    def atParent[T](manip: Manip[T]): Manip[T] =
+      Manip.ThisNode.lookahead.flatMap:
+        case thisChild: Node.Sibling =>
+          atNode(thisChild.parent)(manip)
+        case _: Node.Root =>
+          Manip.Backtrack
 
-  final class on[T](val pattern: Pattern[T]) extends AnyVal:
-    def raw[U](action: Pattern.Result.Accepted[T] => Manip[U]): Manip[U] =
-      Manip.OnPattern(pattern).flatMap(action)
+    final class on[T](val pattern: Pattern[T]) extends AnyVal:
+      def raw: Manip[Pattern.Result.Accepted[T]] =
+        Manip.OnPattern(pattern)
 
-    def rewrite(action: T => RewriteOp): Manip[(Node.Sibling, Node.Sibling)] =
-      raw:
-        case Pattern.Result.Accepted(value, matchedCount) =>
-          Manip.ThisNode.flatMap: thisNode =>
-            val replacementsOpt: Manip.Backtrack.type | Skip.type | Iterable[Node.Child] =
-              action(value) match
-                case node: Node.Child => node :: Nil
-                case Splice(nodes*)   => nodes
-                case Delete           => Nil
-                case TryNext          => Backtrack
-                case Skip => Skip
+      def value: Manip[T] =
+        raw.map(_.value)
 
-            replacementsOpt match
-              case Skip =>
-                thisNode match
-                  case thisChild: Node.Child =>
-                    (thisChild, thisChild.rightSibling).pure
-                  case _: (Node.Sentinel | Node.Root) =>
-                    throw RuntimeException("tried to continue at sentinel or root")
-              case Manip.Backtrack => Manip.Backtrack
-              case replacements: Iterable[Node.Child] =>
-                thisNode match
-                  case thisSibling: Node.Sibling =>
-                    val parent = thisSibling.parent
-                    val startIdx = thisSibling.idxInParent
-                    thisSibling.parent.children.patchInPlace(
-                      startIdx,
-                      replacements,
-                      matchedCount
-                    )
-                    // two choices: stay where we are, or jump to the next untouched node
-                    (
-                      parent.children.findSibling(startIdx),
-                      parent.children.findSibling(startIdx + replacements.size)
-                    ).pure
-                  case thisRoot: Node.Root =>
-                    throw RuntimeException("tried to rewrite root node")
+      def rewrite(action: T => RewriteOp): Manip[(Node.Sibling, Node.Sibling)] =
+        raw.flatMap:
+          case Pattern.Result.Accepted(value, matchedCount) =>
+            Manip.ThisNode.effect: thisNode =>
+              val replacementsOpt
+                  : Manip.Backtrack.type | Skip.type | Iterable[Node.Child] =
+                action(value) match
+                  case node: Node.Child => node :: Nil
+                  case Splice(nodes*)   => nodes
+                  case Delete           => Nil
+                  case TryNext          => Backtrack
+                  case Skip             => Skip
 
-  extension [T](lhs: Manip[T])
-    def |(rhs: Manip[T]): Manip[T] =
-      Manip.Disjunction(lhs, rhs)
-    def flatMap[U](fn: T => Manip[U]): Manip[U] =
-      Manip.FlatMap(lhs, t => commit(fn(t)))
-    def lookahead: Lookahead[T] =
-      Lookahead(lhs)
+              replacementsOpt match
+                case Skip =>
+                  thisNode match
+                    case thisChild: Node.Child =>
+                      (thisChild, thisChild.rightSibling).pure
+                    case _: (Node.Sentinel | Node.Root) =>
+                      throw RuntimeException(
+                        "tried to continue at sentinel or root"
+                      )
+                case Manip.Backtrack => Manip.Backtrack
+                case replacements: Iterable[Node.Child] =>
+                  thisNode match
+                    case thisSibling: Node.Sibling =>
+                      val parent = thisSibling.parent
+                      val startIdx = thisSibling.idxInParent
+                      thisSibling.parent.children.patchInPlace(
+                        startIdx,
+                        replacements,
+                        matchedCount
+                      )
+                      // two choices: stay where we are, or jump to the next untouched node
+                      (
+                        parent.children.findSibling(startIdx),
+                        parent.children.findSibling(
+                          startIdx + replacements.size
+                        )
+                      ).pure
+                    case thisRoot: Node.Root =>
+                      throw RuntimeException("tried to rewrite root node")
 
-  class Lookahead[T](val manip: Manip[T]) extends AnyVal:
-    def flatMap[U](fn: T => Manip[U]): Manip[U] =
-      Manip.FlatMap(manip, fn)
+    extension [T](lhs: Manip[T])
+      def |(rhs: Manip[T]): Manip[T] =
+        Manip.Disjunction(lhs, rhs)
+      def flatMap[U](fn: T => Manip[U]): Manip[U] =
+        Manip.FlatMap(lhs, t => commit(fn(t)))
+      def effect[U](fn: T => Manip[U]): Manip[U] =
+        lhs.flatMap(fn)
+      def lookahead: Lookahead[T] =
+        Lookahead(lhs)
 
-  object Lookahead:
-    given alternative: cats.Alternative[Lookahead] with
-      def ap[A, B](ff: Lookahead[A => B])(fa: Lookahead[A]): Lookahead[B] =
-        Lookahead(ff.manip.ap(fa.manip))
-      def combineK[A](x: Lookahead[A], y: Lookahead[A]): Lookahead[A] =
-        Lookahead(x.manip.combineK(y.manip))
-      def empty[A]: Lookahead[A] =
-        Lookahead(Manip.Backtrack)
-      def pure[A](x: A): Lookahead[A] =
-        Lookahead(Manip.Pure(x))
+    class Lookahead[T](val manip: Manip[T]) extends AnyVal:
+      def flatMap[U](fn: T => Manip[U]): Manip[U] =
+        Manip.FlatMap(manip, fn)
 
-  final case class Splice(nodes: Node.Child*)
-  case object Delete
-  case object TryNext
-  case object Skip
+    object Lookahead:
+      given alternative: cats.Alternative[Lookahead] with
+        def ap[A, B](ff: Lookahead[A => B])(fa: Lookahead[A]): Lookahead[B] =
+          Lookahead(ff.manip.ap(fa.manip))
+        def combineK[A](x: Lookahead[A], y: Lookahead[A]): Lookahead[A] =
+          Lookahead(x.manip.combineK(y.manip))
+        def empty[A]: Lookahead[A] =
+          Lookahead(Manip.Backtrack)
+        def pure[A](x: A): Lookahead[A] =
+          Lookahead(Manip.Pure(x))
 
-  type RewriteOp =
-    Node.Child | Splice | Delete.type | TryNext.type | Skip.type
+    final case class Splice(nodes: Node.Child*)
+    case object Delete
+    case object TryNext
+    case object Skip
 
-  final class pass(
-      strategy: pass.TraversalStrategy = pass.topDown,
-      once: Boolean = false
-  ):
-    def rules(rules: Manip[(Node.Sibling, Node.Sibling)]): Manip[Unit] =
-      lazy val impl: Manip[Unit] =
-        strategy
-          .traverse(rules)
-          .flatMap: madeChange =>
-            if madeChange && !once
-            then impl
-            else Manip.unit
+    type RewriteOp =
+      Node.Child | Splice | Delete.type | TryNext.type | Skip.type
 
-      impl
-  end pass
-
-  object pass:
-    trait TraversalStrategy:
-      def traverse(rules: Manip[(Node.Sibling, Node.Sibling)]): Manip[Boolean]
-
-    object topDown extends TraversalStrategy:
-      def traverse(rules: Manip[(Node.Sibling, Node.Sibling)]): Manip[Boolean] =
-        lazy val impl: Manip[Boolean] =
-          rules.flatMap: (_, nextSibling) =>
-            atNode(nextSibling):
-              impl.as(true)
-          | atFirstChild:
-            commit(defer(impl))
-          | atRightSibling:
-            commit(defer(impl))
-          | atParent:
-            atRightSibling:
-              commit(defer(impl))
-          | false.pure
+    final class pass(
+        strategy: pass.TraversalStrategy = pass.topDown,
+        once: Boolean = false
+    ):
+      def rules(rules: Manip[(Node.Sibling, Node.Sibling)]): Manip[Unit] =
+        lazy val impl: Manip[Unit] =
+          strategy
+            .traverse(rules)
+            .flatMap: madeChange =>
+              if madeChange && !once
+              then impl
+              else Manip.unit
 
         impl
+    end pass
 
-    object bottomUp extends TraversalStrategy:
-      def traverse(rules: Manip[(Node.Sibling, Node.Sibling)]): Manip[Boolean] =
-        def atBottomLeft[T](manip: Manip[T]): Manip[T] =
-          lazy val impl: Manip[T] =
-            atFirstChild(defer(impl))
-              | manip
+    object pass:
+      trait TraversalStrategy:
+        def traverse(rules: Manip[(Node.Sibling, Node.Sibling)]): Manip[Boolean]
+
+      object topDown extends TraversalStrategy:
+        def traverse(
+            rules: Manip[(Node.Sibling, Node.Sibling)]
+        ): Manip[Boolean] =
+          lazy val impl: Manip[Boolean] =
+            rules.flatMap: (_, nextSibling) =>
+              atNode(nextSibling):
+                impl.as(true)
+            | atFirstChild:
+              commit(defer(impl))
+            | atRightSibling:
+              commit(defer(impl))
+            | atParent:
+              atRightSibling:
+                commit(defer(impl))
+            | false.pure
 
           impl
 
-        lazy val impl: Manip[Boolean] =
-          rules.flatMap: (_, nextSibling) =>
-            atNode(nextSibling):
-              impl.as(true)
-          | atRightSibling:
-            commit(defer(impl))
-          | atParent:
-            atRightSibling:
-              atFirstChild:
-                commit(defer(impl))
-            | atFirstSibling:
-              commit(defer(impl))
-          | false.pure
+      object bottomUp extends TraversalStrategy:
+        def traverse(
+            rules: Manip[(Node.Sibling, Node.Sibling)]
+        ): Manip[Boolean] =
+          def atBottomLeft[T](manip: Manip[T]): Manip[T] =
+            lazy val impl: Manip[T] =
+              atFirstChild(defer(impl))
+                | manip
 
-        atBottomLeft(impl)
+            impl
+
+          lazy val impl: Manip[Boolean] =
+            rules.flatMap: (_, nextSibling) =>
+              atNode(nextSibling):
+                impl.as(true)
+            | atRightSibling:
+              commit(defer(impl))
+            | atParent:
+              atRightSibling:
+                atFirstChild:
+                  commit(defer(impl))
+              | atFirstSibling:
+                commit(defer(impl))
+            | false.pure
+
+          atBottomLeft(impl)
+  end ops
 end Manip

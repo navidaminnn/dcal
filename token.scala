@@ -1,6 +1,9 @@
 package distcompiler
 
 trait Token extends Equals, Named:
+  def mkNode(childrenInit: IterableOnce[Node.Child] = Nil): Node =
+    Node(this)(childrenInit)
+
   final override def canEqual(that: Any): Boolean =
     that.isInstanceOf[Token]
 

@@ -2,3 +2,4 @@
 //> using options -Yexplicit-nulls
 //> using dep com.lihaoyi::os-lib:0.10.7
 //> using dep org.typelevel::cats-core:2.12.0
+//> using dep dev.zio::izumi-reflect:2.3.10

@@ -14,8 +14,12 @@ final class ById[T <: AnyRef](val ref: T) extends Equals:
 
   override def toString(): String =
     s"ById(@${hashCode()} $ref)"
+
+  def isEmpty: false = false
+
+  def get: T = ref
 end ById
 
 object ById:
-  def unapply[T <: AnyRef](byId: ById[T]): Some[T] = Some(byId.ref)
+  def unapply[T <: AnyRef](byId: ById[T]): ById[T] = byId
 end ById

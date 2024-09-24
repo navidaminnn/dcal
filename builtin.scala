@@ -3,7 +3,7 @@ package distcompiler
 import cats.syntax.all.given
 
 object Builtin:
-  object tuple extends Token
+  object Tuple extends Token
 
   object Error extends Token:
     def apply(msg: String, ast: Node.Child): Node =
@@ -31,8 +31,7 @@ object Builtin:
     object Payload extends Token
     object Replacement extends Token
 
-    import Manip.*
-    import Pattern.*
+    import dsl.*
     lazy val rules: Rules =
       on(
         (tok(Lift) *> firstChild(tok(Lift.DestinationToken)))

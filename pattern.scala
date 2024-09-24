@@ -3,7 +3,7 @@ package distcompiler
 import cats.data.Chain
 import cats.syntax.all.given
 import scala.util.NotGiven
-import scala.reflect.TypeTest
+import izumi.reflect.Tag
 
 enum Pattern[+T]:
   import Pattern.*
@@ -13,8 +13,9 @@ enum Pattern[+T]:
   case FlatMap[T, U](pattern: Pattern[T], fn: T => Pattern[U])
       extends Pattern[U]
 
+  case TheTop extends Pattern[Node.Top]
   case ThisChild extends Pattern[Node.Child]
-  case ThisEmbed[T](typeTest: TypeTest[Any, T]) extends Pattern[Node.Embed[T]]
+  case ThisEmbed[T](tag: Tag[T]) extends Pattern[Node.Embed[T]]
   case ThisNode extends Pattern[Node]
   case AtEnd extends Pattern[Unit]
   case AtParent(pattern: Pattern[T])
@@ -51,15 +52,19 @@ enum Pattern[+T]:
             case Result.Accepted(value, matchedCount) =>
               impl(fn(value), node)
                 .map(_.combineMatchedCount(matchedCount))
+        case TheTop =>
+          node match
+            case top: Node.Top => Eval.now(Result.Accepted(top, 1))
+            case _             => Eval.now(Result.Rejected)
         case ThisChild =>
           node match
             case child: Node.Child => Eval.now(Result.Accepted(child, 1))
-            case _ => Eval.now(Result.Rejected)
+            case _                 => Eval.now(Result.Rejected)
         case thisEmbed: ThisEmbed[t] =>
-          given TypeTest[Any, t] = thisEmbed.typeTest
           node match
-            case embed: Node.Embed[`t`] if embed.value.isInstanceOf[t] =>
-              Eval.now(Result.Accepted(embed, 1))
+            case embed: Node.Embed[`t`]
+                if embed.nodeMeta.tag <:< thisEmbed.tag =>
+              Eval.now(Result.Accepted(embed.asInstanceOf, 1))
             case _ => Eval.now(Result.Rejected)
         case ThisNode =>
           node match
@@ -93,7 +98,8 @@ enum Pattern[+T]:
           impl(dest, node).flatMap:
             case Result.Accepted(destNode, matchedCount) =>
               impl(pattern, destNode).map:
-                case Result.Accepted(value, _) => Result.Accepted(value, matchedCount)
+                case Result.Accepted(value, _) =>
+                  Result.Accepted(value, matchedCount)
                 case Result.Rejected => Result.Rejected
             case Result.Rejected => Eval.now(Result.Rejected)
         case Restrict(pattern, fn) =>
@@ -158,114 +164,136 @@ object Pattern:
         case Accepted(value, matchedCount) => Accepted(value, matchedCount + 1)
   end Result
 
-  extension [T](lhs: Pattern[T])
-    infix def *>:[U](rhs: Pattern[U]): Pattern[U] =
-      lhs *> rightSibling(rhs)
-    infix def <*:[U](rhs: Pattern[U]): Pattern[T] =
-      lhs <* rightSibling(rhs)
+  object ops:
+    extension [T](lhs: Pattern[T])
+      infix def *>:[U](rhs: Pattern[U]): Pattern[U] =
+        lhs *> rightSibling(rhs)
+      infix def <*:[U](rhs: Pattern[U]): Pattern[T] =
+        lhs <* rightSibling(rhs)
 
-  extension [T](lhs: Pattern[T])
-    infix def *:[U <: Tuple](rhs: Pattern[U]): Pattern[T *: U] =
-      (lhs, rhs).mapN(_ *: _)
-    infix def *:[U](rhs: Pattern[U])(using
-        NotGiven[U <:< Tuple]
-    ): Pattern[(T, U)] =
-      lhs.product(rhs)
+    extension [T](lhs: Pattern[T])
+      infix def *:[U <: Tuple](rhs: Pattern[U]): Pattern[T *: U] =
+        (lhs, rhs).mapN(_ *: _)
+      infix def *:[U](rhs: Pattern[U])(using
+          NotGiven[U <:< Tuple]
+      ): Pattern[(T, U)] =
+        lhs.product(rhs)
 
-  extension [T](lhs: Pattern[T])
-    infix def **:[U <: Tuple](rhs: Pattern[U]): Pattern[T *: U] =
-      (lhs, rightSibling(rhs)).mapN(_ *: _)
-    infix def **:[U](rhs: Pattern[U])(using
-        NotGiven[U <:< Tuple]
-    ): Pattern[(T, U)] =
-      lhs.product(rightSibling(rhs))
+    extension [T <: Tuple](lhs: Pattern[T])
+      infix def :*[U](rhs: Pattern[U]): Pattern[Tuple.Append[T, U]] =
+        (lhs, rhs).mapN(_ :* _)
 
-  extension [T](lhs: Pattern[T])
-    infix def |(rhs: Pattern[T]): Pattern[T] =
-      Pattern.Disjunction(lhs, rhs)
-    def restrict[U](fn: PartialFunction[T, U]): Pattern[U] =
-      Pattern.Restrict(lhs, fn)
-    def flatMap[U](fn: T => Pattern[U]): Pattern[U] =
-      Pattern.FlatMap(lhs, fn)
-  
-  extension (dest: Pattern[Node.All])
-    def here[T](pattern: Pattern[T]): Pattern[T] =
-      Pattern.AtNode(dest, pattern)
+    extension [T](lhs: Pattern[T])(using NotGiven[T <:< Tuple])
+      infix def :*[U](rhs: Pattern[U]): Pattern[(T, U)] =
+        lhs.product(rhs)
 
-  def atEnd: Pattern[Unit] = Pattern.AtEnd
+    extension [T](lhs: Pattern[T])
+      infix def **:[U <: Tuple](rhs: Pattern[U]): Pattern[T *: U] =
+        (lhs, rightSibling(rhs)).mapN(_ *: _)
+      infix def **:[U](rhs: Pattern[U])(using
+          NotGiven[U <:< Tuple]
+      ): Pattern[(T, U)] =
+        lhs.product(rightSibling(rhs))
 
-  def anyTok: Pattern[Node] = Pattern.ThisNode
+    extension [T <: Tuple](lhs: Pattern[T])
+      infix def ++:[U <: Tuple](rhs: Pattern[U]): Pattern[Tuple.Concat[T, U]] =
+        (lhs, rhs).mapN(_ ++ _)
 
-  def anyChild: Pattern[Node.Child] = Pattern.ThisChild
+    extension [T <: Tuple](lhs: Pattern[T])
+      infix def ++*:[U <: Tuple](rhs: Pattern[U]): Pattern[Tuple.Concat[T, U]] =
+        (lhs, rightSibling(rhs)).mapN(_ ++ _)
 
-  def embed[T](using typeTest: TypeTest[Any, T]): Pattern[Node.Embed[T]] =
-    Pattern.ThisEmbed(typeTest)
+    extension [T](lhs: Pattern[T])
+      infix def |(rhs: Pattern[T]): Pattern[T] =
+        Pattern.Disjunction(lhs, rhs)
+      def restrict[U](fn: PartialFunction[T, U]): Pattern[U] =
+        Pattern.Restrict(lhs, fn)
+      def flatMap[U](fn: T => Pattern[U]): Pattern[U] =
+        Pattern.FlatMap(lhs, fn)
 
-  def embedValue[T](using TypeTest[Any, T]): Pattern[T] =
-    embed[T].map(_.value)
+    extension (dest: Pattern[Node.All])
+      def here[T](pattern: Pattern[T]): Pattern[T] =
+        Pattern.AtNode(dest, pattern)
 
-  def pure[T](value: T): Pattern[T] = Pattern.Pure(value)
+    def atEnd: Pattern[Unit] = Pattern.AtEnd
 
-  def tok(token: Token, tokens: Token*): Pattern[Node] =
-    anyTok.restrict:
-      case node if node.token == token         => node
-      case node if tokens.contains(node.token) => node
+    def anyTok: Pattern[Node] = Pattern.ThisNode
 
-  def parent[T](pattern: Pattern[T]): Pattern[T] =
-    Pattern.AtParent(pattern)
+    def theTop: Pattern[Node.Top] = Pattern.TheTop
 
-  def ancestor[T](pattern: Pattern[T]): Pattern[T] =
-    lazy val impl: Pattern[T] =
-      pattern | defer(parent(impl))
+    def anyChild: Pattern[Node.Child] = Pattern.ThisChild
 
-    parent(impl)
+    def embed[T](using tag: Tag[T]): Pattern[Node.Embed[T]] =
+      Pattern.ThisEmbed(tag)
 
-  def repeated[T](pattern: Pattern[T]): Pattern[List[T]] =
-    lazy val impl: Pattern[Chain[T]] =
-      (pattern *: defer(impl))
-        .map(_ +: _)
-        | pure(Chain.empty)
+    def embedValue[T: Tag]: Pattern[T] =
+      embed[T].map(_.value)
 
-    impl.map(_.toList)
+    def not(pattern: Pattern[?]): Pattern[Unit] = Pattern.Negation(pattern)
 
-  def rightSibling[T](pattern: Pattern[T]): Pattern[T] =
-    Pattern.AtRightSibling(pattern)
+    def tok(token: Token, tokens: Token*): Pattern[Node] =
+      anyTok.restrict:
+        case node if node.token == token         => node
+        case node if tokens.contains(node.token) => node
 
-  def firstChild[T](pattern: Pattern[T]): Pattern[T] =
-    Pattern.AtFirstChild(pattern)
+    def parent[T](pattern: Pattern[T]): Pattern[T] =
+      Pattern.AtParent(pattern)
 
-  // Convenience alias, because it looks better in context.
-  // Lets us write children(...) when we mean all children,
-  // even though technically we're just moving to the first child.
-  def children[T](pattern: Pattern[T]): Pattern[T] =
-    firstChild(pattern)
+    def ancestor[T](pattern: Pattern[T]): Pattern[T] =
+      lazy val impl: Pattern[T] =
+        pattern | defer(parent(impl))
 
-  def defer[T](pattern: => Pattern[T]): Pattern[T] =
-    lazy val impl = pattern
-    Pattern.Deferred(() => impl)
+      parent(impl)
 
-  def find[T](pattern: Pattern[T]): Pattern[T] =
-    lazy val impl: Pattern[T] =
-      pattern | defer(rightSibling(impl))
+    def repeated[T](pattern: Pattern[T]): Pattern[List[T]] =
+      lazy val impl: Pattern[Chain[T]] =
+        (pattern *: defer(impl))
+          .map(_ +: _)
+          | Chain.empty.pure
 
-    impl
+      impl.map(_.toList)
 
-  def onlyChild[T](pattern: Pattern[T]): Pattern[T] =
-    firstChild:
-      pattern <*: atEnd
+    def rightSibling[T](pattern: Pattern[T]): Pattern[T] =
+      Pattern.AtRightSibling(pattern)
 
-  def refersTo[T](pattern: Pattern[T]): Pattern[T] =
-    anyTok
-      .map(_.lookup)
-      .restrict:
-        case List(singleResult) => singleResult
-      .here(pattern)
+    def firstChild[T](pattern: Pattern[T]): Pattern[T] =
+      Pattern.AtFirstChild(pattern)
 
-  def refersToRelative[T](relativeTo: Pattern[Node])(pattern: Pattern[T]): Pattern[T] =
-    (anyTok, relativeTo)
-      .mapN: (thisNode, relativeTo) =>
-        thisNode.lookupRelativeTo(relativeTo)
-      .restrict:
-        case List(singleResult) => singleResult
-      .here(pattern)
+    // Convenience alias, because it looks better in context.
+    // Lets us write children(...) when we mean all children,
+    // even though technically we're just moving to the first child.
+    def children[T](pattern: Pattern[T]): Pattern[T] =
+      firstChild(pattern)
+
+    def defer[T](pattern: => Pattern[T]): Pattern[T] =
+      lazy val impl = pattern
+      Pattern.Deferred(() => impl)
+
+    def find[T](pattern: Pattern[T]): Pattern[T] =
+      lazy val impl: Pattern[T] =
+        pattern | defer(rightSibling(impl))
+
+      impl
+
+    def onlyChild[T](pattern: Pattern[T]): Pattern[T] =
+      firstChild:
+        pattern <*: atEnd
+
+    def refersTo[T](pattern: Pattern[T]): Pattern[T] =
+      anyTok
+        .map(_.lookup)
+        .restrict:
+          case List(singleResult) => singleResult
+        .here(pattern)
+
+    def refersToRelative[T](
+        relativeTo: Pattern[Node]
+    )(pattern: Pattern[T]): Pattern[T] =
+      (anyTok, relativeTo)
+        .mapN: (thisNode, relativeTo) =>
+          thisNode.lookupRelativeTo(relativeTo)
+        .restrict:
+          case List(singleResult) => singleResult
+        .here(pattern)
+  end ops
 end Pattern

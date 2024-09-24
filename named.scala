@@ -24,13 +24,12 @@ object Named:
         if symTermRef <:< typeReprOfSingleton
         then symTermRef
         else report.errorAndAbort(s"${symTermRef.show} is not a singleton")
-      else
-        report.errorAndAbort(s"${sym.fullName} not a class/object")
+      else report.errorAndAbort(s"${sym.fullName} not a class/object")
 
     val theName = stripMacroConstructorStuff(Symbol.spliceOwner).show
 
-    '{OwnName(${Expr(theName)})}
+    '{ OwnName(${ Expr(theName) }) }
 
   inline given findOwnName: OwnName =
-    ${findOwnNameImpl}
+    ${ findOwnNameImpl }
 end Named
