@@ -119,11 +119,13 @@ object Pattern:
         case Accepted(value, matchedCount) => Accepted(value, matchedCount + 1)
   end Result
 
-  protected transparent trait NodeTypeTest[T <: Node.All](using typeTest: TypeTest[Node.All, T]) extends PartialFunction[Node.All, T]:
+  protected transparent trait NodeTypeTest[T <: Node.All](using
+      typeTest: TypeTest[Node.All, T]
+  ) extends PartialFunction[Node.All, T]:
     def isDefinedAt(node: Node.All): Boolean =
       node match
         case typeTest(_) => true
-        case _ => false
+        case _           => false
     def apply(node: Node.All): T =
       require(isDefinedAt(node))
       node.asInstanceOf[T]
@@ -134,20 +136,23 @@ object Pattern:
   case object IsChild extends NodeTypeTest[Node.Child]
   case object IsNode extends NodeTypeTest[Node]
 
-  final case class NodeHasToken(token: Token, tokens: Token*) extends PartialFunction[Node.All, Node]:
+  final case class NodeHasToken(token: Token, tokens: Token*)
+      extends PartialFunction[Node.All, Node]:
     def isDefinedAt(node: Node.All): Boolean =
       node match
-        case node: Node if node.token == token || tokens.contains(node.token) => true
+        case node: Node if node.token == token || tokens.contains(node.token) =>
+          true
         case _ => false
     def apply(node: Node.All): Node =
       require(isDefinedAt(node))
       node.asInstanceOf[Node]
 
-  final case class IsEmbed[T](tag: Tag[T]) extends PartialFunction[Node.All, Node.Embed[T]]:
+  final case class IsEmbed[T](tag: Tag[T])
+      extends PartialFunction[Node.All, Node.Embed[T]]:
     def isDefinedAt(node: Node.All): Boolean =
       node match
         case embed: Node.Embed[?] if embed.nodeMeta.tag <:< tag => true
-        case _ => false
+        case _                                                  => false
     def apply(node: Node.All): Node.Embed[T] =
       require(isDefinedAt(node))
       node.asInstanceOf[Node.Embed[T]]
@@ -196,6 +201,9 @@ object Pattern:
         Pattern.Disjunction(lhs, rhs)
       def restrict[U](fn: PartialFunction[T, U]): Pattern[U] =
         Pattern.Restrict(lhs, fn)
+      def filter(fn: T => Boolean): Pattern[T] =
+        lhs.restrict:
+          case t if fn(t) => t
       def flatMap[U](fn: T => Pattern[U]): Pattern[U] =
         Pattern.FlatMap(lhs, fn)
       private def markProgress: Pattern[T] =
@@ -276,21 +284,11 @@ object Pattern:
       firstChild:
         pattern <*: atEnd
 
-    def refersTo[T](pattern: Pattern[T]): Pattern[T] =
-      anyNode
-        .map(_.lookup)
-        .restrict:
-          case List(singleResult) => singleResult
-        .here(pattern)
+    def refersToAny[T]: Pattern[List[Node]] =
+      anyNode.map(_.lookup)
 
-    def refersToRelative[T](
-        relativeTo: Pattern[Node]
-    )(pattern: Pattern[T]): Pattern[T] =
-      (anyNode, relativeTo)
-        .mapN: (thisNode, relativeTo) =>
-          thisNode.lookupRelativeTo(relativeTo)
-        .restrict:
-          case List(singleResult) => singleResult
-        .here(pattern)
+    def refersTo[T]: Pattern[Node] =
+      refersToAny.restrict:
+        case List(node) => node
   end ops
 end Pattern

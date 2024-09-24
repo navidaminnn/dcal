@@ -5,10 +5,8 @@ import distcompiler.Builtin.Error
 
 final class Wellformed private (wfTop: Node.Top, topPattern: Pattern[Unit]):
   lazy val rules: Manip[Unit] =
-    val goodPattern = Wellformed.rulesBuilder.perform(wfTop.clone())
-
     import dsl.*
-
+    val goodPattern = Wellformed.rulesBuilder.perform(wfTop.clone())
     pass()
       .rules:
         on(
@@ -32,6 +30,7 @@ final class Wellformed private (wfTop: Node.Top, topPattern: Pattern[Unit]):
               child.unparent()
             )
           )
+  end rules
 
   def makeDerived(fn: Wellformed.Builder ?=> Unit): Wellformed =
     val builder =
@@ -73,7 +72,7 @@ object Wellformed:
         ).rewrite: pattern =>
           Splice(Node.Embed(pattern))
     *> on(
-      onlyChild(embedValue[Pattern[Unit]])
+      theTop *> onlyChild(embedValue[Pattern[Unit]])
     ).value
   end rulesBuilder
 
@@ -92,31 +91,45 @@ object Wellformed:
       top: Node.Top = Node.Top(List(Namespace())),
       private var topPatternOpt: Option[Pattern[Unit]] = None
   ):
-    private val ns = top.children.head.asNode
+    private val ns = top(Namespace)
+
+    private def mkDefn(token: Token, pattern: Pattern[?]): Node =
+      Defn(
+        Name().at(Source(token.name).range),
+        Node.Embed(Shape(pattern.void))
+      )
 
     extension (top: Node.Top.type)
       def ::=(pattern: Pattern[?]): Unit =
+        require(topPatternOpt.isEmpty)
+        topPatternOpt = Some(pattern.void)
+      def ::=!(pattern: Pattern[?]): Unit =
+        require(topPatternOpt.nonEmpty)
         topPatternOpt = Some(pattern.void)
 
-    extension (tok: Token)
+    extension (token: Token)
       def ::=(pattern: Pattern[?]): Unit =
-        ns.children.addOne(
-          Defn(
-            Name().at(Source(tok.name).range),
-            Node.Embed(Shape(pattern.void))
-          )
-        )
+        val toInsert = mkDefn(token, pattern)
+        val name = toInsert(Name)
+        require(name.lookupRelativeTo(ns).isEmpty)
+        ns.children.addOne(toInsert)
+
+      def ::=!(pattern: Pattern[?]): Unit =
+        val toInsert = mkDefn(token, pattern)
+        val name = toInsert(Name)
+        val targets = name.lookupRelativeTo(ns)
+        require(targets.size == 1)
+        val List(target) = targets
+        // just replace the shape; might make lookups more efficient (eventually)
+        target(Shape).replaceThis(toInsert(Shape))
 
     private[Wellformed] def build(): Wellformed =
       require(topPatternOpt.nonEmpty)
       new Wellformed(top, topPattern = topPatternOpt.get)
+  end Builder
 
   final class Shape(val pattern: Pattern[Unit])
 
   object Shape extends Token:
-    given meta: NodeMeta[Shape] with
-      // TODO: best-effort rendering from pattern to Node.
-      // For most straightforward patterns this will work. For some it will not, and that's ok.
-      extension (self: Shape) def asNode: Node = ???
-      def doClone(self: Shape): Shape = self
+    given meta: NodeMeta[Shape] = NodeMeta.byToString()
 end Wellformed

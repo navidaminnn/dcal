@@ -237,6 +237,16 @@ object Node:
 
     val children: Node.Children = Node.Children(thisParent, childrenInit)
 
+    final def apply(tok: Token): Node =
+      val results = children.iterator
+        .collect:
+          case node: Node if node.token == tok =>
+            node
+        .toList
+
+      require(results.size == 1)
+      results.head
+
     final def firstChild: Node.Sibling =
       children.headOption match
         case None        => RightSiblingSentinel(this)
