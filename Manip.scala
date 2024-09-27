@@ -9,6 +9,9 @@ enum Manip[+T]:
   case FlatMap[T, U](manip: Manip[T], fn: T => Manip[U]) extends Manip[U]
   case Effect(manip: Manip[T])
 
+  case KeepLeft(left: Manip[T], right: Manip[?])
+  case KeepRight(left: Manip[?], right: Manip[T])
+
   case Commit(manip: Manip[T], debugInfo: DebugInfo)
 
   case RefInit[T, U](ref: Manip.Ref[T], init: T, manip: Manip[U])
@@ -29,83 +32,83 @@ enum Manip[+T]:
   case Disjunction(first: Manip[T], second: Manip[T])
   case Deferred(fn: () => Manip[T])
 
-  def perform(top: Node.Top): T =
-    // TODO: optimize so we use Commit for performance (discard backtrack info in that case)
-    // this would either work via continuation passing, or by taking a more imperative approach
-    // and managing a mutable stack type structure directly
+  def perform(using DebugInfo)(top: Node.Top): T =
     import cats.Eval
 
-    enum Result[+T]:
-      case Ok(value: T)
-      case Backtrack(debugInfo: DebugInfo)
-    end Result
-    import Result.Ok
+    import Pattern.Result.*
 
-    def impl[T](self: Manip[T], node: Node.All)(using
-        refs: Map[ById[Manip.Ref[?]], Any]
-    ): Eval[Result[T]] =
+    type Continue[-T, +U] = T => Eval[U]
+    type Backtrack[+U] = DebugInfo => Eval[U]
+    type RefMap = Map[ById[Manip.Ref[?]], Any]
+
+    def emptyBacktrack(ctxInfo: DebugInfo): Backtrack[Nothing] = posInfo =>
+      throw RuntimeException(s"unrecovered backtrack at $posInfo, caught at $ctxInfo")
+
+    def impl[T,U](self: Manip[T])(using continue: Continue[T, U], backtrack: Backtrack[U], refMap: RefMap, node: Node.All): Eval[U] =
       self match
-        case Manip.Backtrack(debugInfo) => Eval.now(Result.Backtrack(debugInfo))
-        case Pure(value)                => Eval.now(Ok(value))
-        case Ap(ff, fa) =>
-          impl(ff, node).flatMap:
-            case Ok(ff) =>
-              impl(fa, node).map:
-                case Ok(fa)                                   => Ok(ff(fa))
-                case bt: Result.Backtrack[Nothing @unchecked] => bt
-            case bt: Result.Backtrack[Nothing @unchecked] => Eval.now(bt)
-        case FlatMap(manip, fn) =>
-          impl(manip, node).flatMap:
-            case Ok(value) =>
-              impl(fn(value), node)
-            case bt: Result.Backtrack[Nothing @unchecked] => Eval.now(bt)
-        case Effect(manip) => impl(manip, node)
-        case Commit(manip, debugInfo1) =>
-          impl(manip, node).map:
-            case ok @ Ok(_) => ok
-            case Result.Backtrack(debugInfo2) =>
-              throw RuntimeException(
-                s"unrecovered backtrack at $debugInfo2, caught at $debugInfo1"
-              )
+        case Backtrack(debugInfo) => Eval.defer(backtrack(debugInfo))
+        case Pure(value) => Eval.defer(continue(value))
+        case ap: Ap[t, u] =>
+          given Continue[t => u, U] = ff =>
+            given Continue[t, U] = fa =>
+              Eval.defer(continue(ff(fa)))
+            Eval.defer(impl(ap.fa))
+          impl(ap.ff)
+        case flatMap: FlatMap[t, u] =>
+          given Continue[t, U] = value =>
+            given Continue[u, U] = continue
+            Eval.defer(impl(flatMap.fn(value)))
+          impl(flatMap.manip)
+        case Effect(manip) => impl(manip)
+        case KeepLeft(left, right: Manip[t]) =>
+          given Continue[T, U] = value =>
+            given Continue[t, U] = _ => continue(value)
+            impl(right)
+          impl(left)
+        case KeepRight(left: Manip[t], right) =>
+          given Continue[t, U] = _ =>
+            given Continue[T, U] = continue
+            Eval.defer(impl[T, U](right))
+          impl(left)
+        case Commit(manip, debugInfo) =>
+          given Backtrack[U] = emptyBacktrack(debugInfo)
+          impl(manip)
         case RefInit(ref, init, manip) =>
-          impl(manip, node)(using refs.updated(ById(ref), init))
-        case refGet: RefGet[t] =>
-          refs.get(ById(refGet.ref)) match
-            case None        => Eval.now(Result.Backtrack(refGet.debugInfo))
-            case Some(value) => Eval.now(Ok(value.asInstanceOf[t]))
-        case refUpdated: RefUpdated[t, u] =>
-          refs.get(ById(refUpdated.ref)) match
-            case None => Eval.now(Result.Backtrack(refUpdated.debugInfo))
+          given RefMap = refMap.updated(ById(ref), init)
+          impl(manip)
+        case RefGet(ref, debugInfo) =>
+          refMap.get(ById(ref)) match
+            case None => Eval.defer(backtrack(debugInfo))
+            case Some(value) => Eval.defer(continue(value.asInstanceOf[T]))
+        case refUpdated: RefUpdated[t, T @unchecked] =>
+          refMap.get(ById(refUpdated.ref)) match
+            case None => Eval.defer(backtrack(refUpdated.debugInfo))
             case Some(value) =>
-              impl(refUpdated.manip, node)(using
-                refs.updated(
-                  ById(refUpdated.ref),
-                  refUpdated.fn(value.asInstanceOf[t])
-                )
-              )
-        case ThisNode => Eval.now(Ok(node))
+              given RefMap = refMap.updated(ById(refUpdated.ref), refUpdated.fn(value.asInstanceOf[t]))
+              impl(refUpdated.manip)
+        case ThisNode => Eval.defer(continue(node))
         case onPattern: OnPattern[t] =>
           onPattern.pattern.check(node) match
-            case accepted: Pattern.Result.Accepted[`t`] =>
-              Eval.now(Ok(accepted))
-            case Pattern.Result.Rejected =>
-              Eval.now(Result.Backtrack(onPattern.debugInfo))
-        case AtNode(manip, node) => impl(manip, node)
+            case Rejected =>
+              Eval.defer(backtrack(onPattern.debugInfo))
+            case accepted: Accepted[`t`] =>
+              Eval.defer(continue(accepted))
+        case AtNode(manip, node) =>
+          given Node.All = node
+          impl(manip)
         case Disjunction(first, second) =>
-          impl(first, node).flatMap:
-            case ok @ Ok(_) => Eval.now(ok)
-            case bt: Result.Backtrack[Nothing @unchecked] =>
-              impl(second, node).map:
-                case ok @ Ok(_) => ok
-                case bt2: Result.Backtrack[Nothing @unchecked] =>
-                  Result.Backtrack(bt.debugInfo ++ bt2.debugInfo)
-        case Deferred(fn) =>
-          impl(fn(), node)
+          given Backtrack[U] = debugInfo1 =>
+            given Backtrack[U] = debugInfo2 =>
+              backtrack(debugInfo1 ++ debugInfo2)
+            Eval.defer(impl(second))
+          impl(first)
+        case Deferred(fn) => impl(fn())
 
-    impl(this, top)(using Map.empty).value match
-      case bt: Result.Backtrack[?] =>
-        throw RuntimeException(s"unrecovered backtrack at ${bt.debugInfo}")
-      case Ok(value) => value
+    given Continue[T, T] = Eval.now
+    given Backtrack[T] = emptyBacktrack(summon[DebugInfo])
+    given RefMap = Map.empty
+    given Node.All = top
+    impl[T,T](this).value
   end perform
 
   // TODO: optimize disjunctions to decision tries
@@ -132,6 +135,12 @@ object Manip:
     def ap[A, B](ff: Manip[A => B])(fa: Manip[A]): Manip[B] =
       Manip.Ap(ff, fa)
     def pure[A](x: A): Manip[A] = Manip.Pure(x)
+    override def as[A, B](fa: Manip[A], b: B): Manip[B] =
+      productR(fa)(pure(b))
+    override def productL[A, B](fa: Manip[A])(fb: Manip[B]): Manip[A] =
+      Manip.KeepLeft(fa, fb)
+    override def productR[A, B](fa: Manip[A])(fb: Manip[B]): Manip[B] =
+      Manip.KeepRight(fa, fb)
 
   given monoidK(using DebugInfo): cats.MonoidK[Manip] with
     def combineK[A](x: Manip[A], y: Manip[A]): Manip[A] =
