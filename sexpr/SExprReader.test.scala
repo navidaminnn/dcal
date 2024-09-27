@@ -44,8 +44,13 @@ object SExprReaderTests extends TestSuite:
       ")".parse ==> Node.Top(Error("unexpected end of list", SourceMarker()))
 
     test("error: stray list close, recovery"):
-      ") 3:foo".parse ==> Node.Top(Error("unexpected end of list", SourceMarker()), Atom("foo"))
+      ") 3:foo".parse ==> Node.Top(
+        Error("unexpected end of list", SourceMarker()),
+        Atom("foo")
+      )
 
     test("error: missing list terminator"):
-      "(4: foo".parse ==> Node.Top(tokens.List(Atom(" foo"), Error("unexpected EOF", SourceMarker())))
+      "(4: foo".parse ==> Node.Top(
+        tokens.List(Atom(" foo"), Error("unexpected EOF", SourceMarker()))
+      )
   }

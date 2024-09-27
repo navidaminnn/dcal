@@ -1,6 +1,6 @@
 package distcompiler.sexpr
 
-import distcompiler.{Token, Named, Node}
+import distcompiler.Token
 
 object tokens:
   object List extends Token

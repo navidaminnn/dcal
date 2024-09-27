@@ -1,7 +1,6 @@
 package distcompiler.sexpr
 
-import distcompiler.Wellformed
-import distcompiler.Node
+import distcompiler.{Wellformed, Node}
 
 val SExprWellformed: Wellformed =
   import distcompiler.dsl.*
