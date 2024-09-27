@@ -12,19 +12,17 @@ object Named:
   private def findOwnNameImpl(using quotes: Quotes): Expr[OwnName] =
     import quotes.reflect.*
 
-    val typeReprOfSingleton = TypeRepr.of[scala.Singleton]
-
     @scala.annotation.tailrec
     def stripMacroConstructorStuff(sym: Symbol): TypeRepr =
       if sym.flags.is(Flags.Macro) || sym.isClassConstructor
       then stripMacroConstructorStuff(sym.owner)
-      else if sym.isClassDef
+      else if sym.isClassDef && sym.companionModule.exists
       then
         val symTermRef = sym.companionModule.termRef
-        if symTermRef <:< typeReprOfSingleton
+        if symTermRef.isSingleton
         then symTermRef
         else report.errorAndAbort(s"${symTermRef.show} is not a singleton")
-      else report.errorAndAbort(s"${sym.fullName} not a class/object")
+      else report.errorAndAbort(s"${sym.fullName} not a class/object, or has no companion object")
 
     val theName = stripMacroConstructorStuff(Symbol.spliceOwner).show
 

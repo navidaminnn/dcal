@@ -8,7 +8,7 @@ object Builtin:
   object Error extends Token:
     def apply(msg: String, ast: Node.Child): Node =
       Error(
-        Error.Message().at(Source(msg).range),
+        Error.Message().at(msg),
         Error.AST(ast)
       )
 

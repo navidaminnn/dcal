@@ -95,7 +95,7 @@ object Wellformed:
 
     private def mkDefn(token: Token, pattern: Pattern[?]): Node =
       Defn(
-        Name().at(Source(token.name).range),
+        Name(Node.Embed(token)),
         Node.Embed(Shape(pattern.void))
       )
 

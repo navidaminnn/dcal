@@ -5,6 +5,7 @@ import cats.data.Chain
 import cats.syntax.all.given
 import scala.collection.mutable
 import izumi.reflect.Tag
+import distcompiler.Node.Top
 
 final case class NodeError(msg: String) extends RuntimeException(msg)
 
@@ -12,9 +13,12 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child] = Nil)
     extends Node.Child,
       Node.Sibling,
       Node.Parent(childrenInit),
-      Node.Traversable,
-      Equals:
+      Node.Traversable:
   thisNode =>
+
+  override def asNode: Node = this
+
+  override def asNonFloatingParent: Node | Top = this
 
   override type This = Node
   override def cloneEval(): Eval[Node] =
@@ -22,10 +26,22 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child] = Nil)
       .traverseViaChain(children.toIndexedSeq)(_.cloneEval())
       .map(clonedChildren => Node(token)(clonedChildren.toIterable))
 
-  private var _sourceRange: SourceRange = SourceRange.none
+  private var _sourceRange: SourceRange | Null = null
+
+  def extendLocation(sourceRange: SourceRange): this.type =
+    if _sourceRange eq null
+    then _sourceRange = sourceRange
+    else _sourceRange = _sourceRange.nn <+> sourceRange
+    this
+
+  def at(string: String): this.type =
+    at(Source.fromString(string))
+
+  def at(source: Source): this.type =
+    at(SourceRange.entire(source))
 
   def at(sourceRange: SourceRange): this.type =
-    if _sourceRange eq SourceRange.none
+    if _sourceRange eq null
     then
       _sourceRange = sourceRange
       this
@@ -37,52 +53,22 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child] = Nil)
     else at(other._sourceRange.nn)
 
   def sourceRange: SourceRange =
-    @scala.annotation.tailrec
-    def impl(sibling: Node.Sibling, sourceRange: SourceRange): SourceRange =
-      sibling match
-        case node: Node =>
-          val nextSourceRange =
-            if node._sourceRange ne null
-            then sourceRange <+> node._sourceRange.nn
-            else sourceRange
+    var rangeAcc: SourceRange | Null = null
+    traverse:
+      case node: Node =>
+        if node._sourceRange ne null
+        then
+          if rangeAcc ne null
+          then rangeAcc = rangeAcc.nn <+> node._sourceRange.nn
+          else rangeAcc = node._sourceRange
+          Node.TraversalAction.SkipChildren
+        else Node.TraversalAction.Continue
+      case _: Node.Leaf =>
+        Node.TraversalAction.SkipChildren
 
-          impl(node.firstChild, sourceRange <+> node._sourceRange)
-        case sentinel: Node.RightSiblingSentinel =>
-          sentinel.parent match
-            case parentNode: Node =>
-              impl(parentNode.rightSibling, sourceRange)
-            case _: Node.Root =>
-              sourceRange
-        case _: Node.Leaf =>
-          impl(sibling.rightSibling, sourceRange)
-
-    impl(thisNode, sourceRange = SourceRange.none)
-  end sourceRange
-
-  override def canEqual(that: Any): Boolean =
-    that.isInstanceOf[Node]
-
-  override def equals(that: Any): Boolean =
-    that match
-      case thatNode: Node =>
-        token == thatNode.token
-        && (!token.showSource || sourceRange == thatNode.sourceRange)
-        && iteratorDescendants
-          .map(Some(_))
-          .zipAll(thatNode.iteratorDescendants.map(Some(_)), None, None)
-          .forall:
-            case (None, None)    => true
-            case (None, Some(_)) => false
-            case (Some(_), None) => false
-            case (Some(lNode: Node), Some(rNode: Node)) =>
-              lNode.token == rNode.token
-              && (!lNode.token.showSource || lNode.sourceRange == rNode.sourceRange)
-            case (Some(lLeaf: Node.Leaf), Some(rLeaf: Node.Leaf)) =>
-              lLeaf == rLeaf
-      case _ => false
-
-  override def hashCode(): Int =
-    (token, children).hashCode()
+    if rangeAcc ne null
+    then rangeAcc.nn
+    else SourceRange.entire(Source.empty)
 
   private var _scopeRelevance: Int =
     if token.canBeLookedUp then 1 else 0
@@ -182,13 +168,64 @@ object Node:
         case Pattern.Result.Accepted(value, _) =>
           Some(value)
 
-    final def asNode: Node =
-      require(this.isInstanceOf[Node])
-      this.asInstanceOf[Node]
+    def asNode: Node =
+      throw NodeError("not a node")
 
-    final def asTop: Top =
-      require(this.isInstanceOf[Top])
-      this.asInstanceOf[Top]
+    def asTop: Top =
+      throw NodeError("not a top")
+
+    override def hashCode(): Int =
+      this match
+        case node: Node =>
+          (Node, node.token, node.children).hashCode()
+        case top: Top =>
+          (Top, top.children).hashCode()
+        case floating: Floating =>
+          (Floating, floating.children).hashCode()
+        case sentinel: RightSiblingSentinel =>
+          (RightSiblingSentinel, sentinel.idxInParent).hashCode()
+        case Embed(value) =>
+          (Embed, value).hashCode()
+
+    override def equals(that: Any): Boolean =
+      if this eq that.asInstanceOf[AnyRef]
+      then return true
+      (this, that) match
+        case (thisNode: Node, thatNode: Node) =>
+          thisNode.token == thatNode.token
+          && (if thisNode.token.showSource
+              then thisNode._sourceRange == thatNode._sourceRange
+              else true)
+          && thisNode.children == thatNode.children
+        case (thisTop: Top, thatTop: Top) =>
+          thisTop.children == thatTop.children
+        case (thisFloating: Floating, thatFloating: Floating) =>
+          thisFloating.children == thatFloating.children
+        case (
+              thisSentinel: RightSiblingSentinel,
+              thatSentinel: RightSiblingSentinel
+            ) =>
+          thisSentinel.idxInParent == thatSentinel.idxInParent
+        case (thisEmbed: Embed[?], thatEmbed: Embed[?]) =>
+          thisEmbed.value == thatEmbed.value
+        case _ => false
+
+    override def toString(): String =
+      this match
+        case node: Node =>
+          val atSuffix =
+            if node.token.showSource
+            then s".at(${node.sourceRange.decodeString()})"
+            else ""
+          s"Node(${node.token})(${node.children.mkString(", ")})$atSuffix"
+        case top: Top =>
+          s"Top(${top.children.mkString(", ")})"
+        case floating: Floating =>
+          s"Floating(${floating.children.mkString(", ")})"
+        case sentinel: RightSiblingSentinel =>
+          s"RightSiblingSentinel(${sentinel.idxInParent})"
+        case Embed(value) =>
+          s"Embed($value)"
 
   sealed trait Root extends All:
     override type This <: Root
@@ -201,7 +238,11 @@ object Node:
       extends Root,
         Parent(childrenInit),
         Traversable:
-    def this() = this(Nil)
+    def this(childrenInit: Node.Child*) = this(childrenInit)
+
+    override def asTop: Top = this
+
+    override def asNonFloatingParent: Node | Top = this
 
     override type This = Top
     override def cloneEval(): Eval[Top] =
@@ -216,9 +257,15 @@ object Node:
   final class Floating(child: Node.Child)
       extends Root,
         Parent(Iterator.single(child)):
+
+    override def asNonFloatingParent: Node | Top =
+      throw NodeError("was floating parent")
+
     override type This = Floating
     override def cloneEval(): Eval[Floating] =
       children.head.cloneEval().map(_.parent.asInstanceOf[Floating])
+
+  object Floating
 
   // TODO: is this a good or bad idea? Could save allocations, could waste memory...
   // object Floating:
@@ -233,6 +280,9 @@ object Node:
 
   sealed trait Parent(childrenInit: IterableOnce[Node.Child]) extends All:
     thisParent =>
+
+    def asNonFloatingParent: Node | Top
+
     override type This <: Parent
 
     val children: Node.Children = Node.Children(thisParent, childrenInit)
@@ -355,6 +405,8 @@ object Node:
         "tried to find the right sibling sentinel's right sibling"
       )
   end RightSiblingSentinel
+
+  object RightSiblingSentinel
 
   sealed trait Child extends Sibling, Traversable, Leaf:
     thisChild =>
@@ -506,6 +558,6 @@ object NodeMeta:
     def doClone(self: T): T = self
     extension (self: T)
       def asNode: Node =
-        byToString.mkNode().at(Source(self.toString()).range)
+        byToString.mkNode().at(self.toString())
 
   object byToString extends Token

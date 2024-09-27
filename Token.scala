@@ -1,17 +1,23 @@
 package distcompiler
 
 trait Token extends Equals, Named:
-  def mkNode(childrenInit: IterableOnce[Node.Child] = Nil): Node =
+  final def mkNode(childrenInit: IterableOnce[Node.Child] = Nil): Node =
     Node(this)(childrenInit)
 
-  final override def canEqual(that: Any): Boolean =
+  final def mkNode(childrenInit: Node.Child*): Node =
+    Node(this)(childrenInit)
+
+  override def canEqual(that: Any): Boolean =
     that.isInstanceOf[Token]
 
-  final override def equals(that: Any): Boolean =
+  override def equals(that: Any): Boolean =
     this eq that.asInstanceOf[AnyRef]
 
-  final override def hashCode(): Int =
+  override def hashCode(): Int =
     System.identityHashCode(this)
+
+  override def toString(): String =
+    s"Token(@${hashCode()} $name)"
 
   final def canBeLookedUp: Boolean = lookedUpBy ne Pattern.Reject
 
@@ -26,4 +32,8 @@ object Token:
       Node(token)(children)
     def apply(children: IterableOnce[Node.Child]): Node =
       Node(token)(children)
+    def apply(sourceRange: String): Node =
+      Node(token)().at(sourceRange)
+    def apply(sourceRange: SourceRange): Node =
+      Node(token)().at(sourceRange)
 end Token
