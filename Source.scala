@@ -24,6 +24,9 @@ object Source:
   def fromString(string: String): Source =
     StringSource(string)
 
+  def fromByteBuffer(byteBuffer: ByteBuffer): Source =
+    ByteBufferSource(None, byteBuffer)
+
   def mapFromFile(path: os.Path): Source =
     Using.resource(FileChannel.open(path.toNIO)): channel =>
       val mappedBuf = channel.map(MapMode.READ_ONLY, 0, channel.size())

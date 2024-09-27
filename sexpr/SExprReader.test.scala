@@ -53,4 +53,41 @@ object SExprReaderTests extends TestSuite:
       "(4: foo".parse ==> Node.Top(
         tokens.List(Atom(" foo"), Error("unexpected EOF", SourceMarker()))
       )
+
+    test("empty string literal"):
+      "\"\"".parse ==> Node.Top(tokens.String(""))
+
+    test("3 empty string literals with a list"):
+      "\"\" (\"\" ) \"\"".parse ==> Node.Top(
+        tokens.String(""),
+        tokens.List(tokens.String("")),
+        tokens.String("")
+      )
+
+    test("list of 3 string literals"):
+      raw"""("foo" "bar" " ")""".parse ==> Node.Top(
+        tokens.List(
+          tokens.String("foo"),
+          tokens.String("bar"),
+          tokens.String(" ")
+        )
+      )
+
+    test("string with escapes"):
+      raw""" "\tfoo\\bar" """.parse ==> Node.Top(tokens.String("\\tfoo\\\\bar"))
+
+    test("error: invalid string escape"):
+      raw""" "\^" """.parse ==> Node.Top(
+        Error("invalid string escape", SourceMarker()),
+        tokens.String("\\^")
+      )
+
+    test("misc token atoms"):
+      "foo bar =ping= :this /42a".parse ==> Node.Top(
+        Atom("foo"),
+        Atom("bar"),
+        Atom("=ping="),
+        Atom(":this"),
+        Atom("/42a")
+      )
   }

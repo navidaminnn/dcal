@@ -42,16 +42,22 @@ enum Manip[+T]:
     type RefMap = Map[ById[Manip.Ref[?]], Any]
 
     def emptyBacktrack(ctxInfo: DebugInfo): Backtrack[Nothing] = posInfo =>
-      throw RuntimeException(s"unrecovered backtrack at $posInfo, caught at $ctxInfo")
+      throw RuntimeException(
+        s"unrecovered backtrack at $posInfo, caught at $ctxInfo"
+      )
 
-    def impl[T,U](self: Manip[T])(using continue: Continue[T, U], backtrack: Backtrack[U], refMap: RefMap, node: Node.All): Eval[U] =
+    def impl[T, U](self: Manip[T])(using
+        continue: Continue[T, U],
+        backtrack: Backtrack[U],
+        refMap: RefMap,
+        node: Node.All
+    ): Eval[U] =
       self match
         case Backtrack(debugInfo) => Eval.defer(backtrack(debugInfo))
-        case Pure(value) => Eval.defer(continue(value))
+        case Pure(value)          => Eval.defer(continue(value))
         case ap: Ap[t, u] =>
           given Continue[t => u, U] = ff =>
-            given Continue[t, U] = fa =>
-              Eval.defer(continue(ff(fa)))
+            given Continue[t, U] = fa => Eval.defer(continue(ff(fa)))
             Eval.defer(impl(ap.fa))
           impl(ap.ff)
         case flatMap: FlatMap[t, u] =>
@@ -78,13 +84,16 @@ enum Manip[+T]:
           impl(manip)
         case RefGet(ref, debugInfo) =>
           refMap.get(ById(ref)) match
-            case None => Eval.defer(backtrack(debugInfo))
+            case None        => Eval.defer(backtrack(debugInfo))
             case Some(value) => Eval.defer(continue(value.asInstanceOf[T]))
         case refUpdated: RefUpdated[t, T @unchecked] =>
           refMap.get(ById(refUpdated.ref)) match
             case None => Eval.defer(backtrack(refUpdated.debugInfo))
             case Some(value) =>
-              given RefMap = refMap.updated(ById(refUpdated.ref), refUpdated.fn(value.asInstanceOf[t]))
+              given RefMap = refMap.updated(
+                ById(refUpdated.ref),
+                refUpdated.fn(value.asInstanceOf[t])
+              )
               impl(refUpdated.manip)
         case ThisNode => Eval.defer(continue(node))
         case onPattern: OnPattern[t] =>
@@ -108,7 +117,7 @@ enum Manip[+T]:
     given Backtrack[T] = emptyBacktrack(summon[DebugInfo])
     given RefMap = Map.empty
     given Node.All = top
-    impl[T,T](this).value
+    impl[T, T](this).value
   end perform
 
   // TODO: optimize disjunctions to decision tries

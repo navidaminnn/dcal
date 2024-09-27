@@ -16,6 +16,9 @@ final class SourceRange private (
     s"invalid offset = $offset, length = $length into source with limit ${source.byteBuffer.limit()}"
   )
 
+  override def toString(): String =
+    s"SourceRange(${{ decodeString() }})"
+
   def apply(i: Int): Byte =
     source.byteBuffer
       .get(offset + i)
@@ -34,6 +37,15 @@ final class SourceRange private (
     var count = 0
     while count < length
     do count += channel.write(bufSlice)
+
+  def emptyAtOffset: SourceRange =
+    dropRight(length)
+
+  def extendLeftBy(count: Int): SourceRange =
+    SourceRange(source, offset - count, length)
+
+  def extendLeft: SourceRange =
+    extendLeftBy(1)
 
   def extendRightBy(count: Int): SourceRange =
     SourceRange(source, offset, length + count)
@@ -55,6 +67,13 @@ final class SourceRange private (
     require(n <= length)
     slice(n, length)
 
+  override def dropRight(n: Int): SourceRange =
+    require(n <= length)
+    slice(0, length - n)
+
+  override def init: SourceRange =
+    dropRight(1)
+
   override def tail: SourceRange =
     drop(1)
 
@@ -64,7 +83,14 @@ final class SourceRange private (
     else if other.source eq Source.empty
     then this
     else if source eq other.source
-    then SourceRange(source, offset.min(other.offset), length.max(other.length))
+    then
+      // convert to [start,end) spans so we can do min/max merge.
+      // Doesn't work on lengths because those are relative to offset,
+      // but start / end are independent.
+      val (startL, endL) = (offset, offset + length)
+      val (startR, endR) = (other.offset, other.offset + other.length)
+      val (startC, endC) = (startL.min(startR), endL.max(endR))
+      SourceRange(source, startC, endC - startC)
     else this
 
 object SourceRange:

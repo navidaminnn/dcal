@@ -143,8 +143,13 @@ object Node:
           case node: Node =>
             import TraversalAction.*
             fn(node) match
-              case SkipChildren => impl(node.rightSibling)
-              case Continue     => impl(node.firstChild)
+              case SkipChildren =>
+                // .rightSibling looks at the parent node. If we're looking at thisTraversable,
+                // then that means we should stop or we'll be traversing our parent's siblings.
+                if node ne thisTraversable
+                then impl(node.rightSibling)
+                else ()
+              case Continue => impl(node.firstChild)
 
           case leaf: (Node.Leaf & Node.Child) => fn(leaf)
 
@@ -194,7 +199,7 @@ object Node:
         case (thisNode: Node, thatNode: Node) =>
           thisNode.token == thatNode.token
           && (if thisNode.token.showSource
-              then thisNode._sourceRange == thatNode._sourceRange
+              then thisNode.sourceRange == thatNode.sourceRange
               else true)
           && thisNode.children == thatNode.children
         case (thisTop: Top, thatTop: Top) =>

@@ -1,6 +1,9 @@
 package distcompiler
 
 import cats.syntax.all.given
+import scala.annotation.targetName
+import java.nio.charset.{StandardCharsets, Charset}
+import java.nio.CharBuffer
 
 trait Reader:
   protected def rules: Manip[SourceRange]
@@ -48,31 +51,97 @@ object Reader:
         matchedRef.updated(_.extendRight):
           manip
 
-    class selecting[T] private (private val map: Map[Byte, Manip[T]])
+    class selecting[T] private (private val cell: selecting.Cell[T])
         extends AnyVal:
+      @targetName("onOneOfChars")
+      def onOneOf(chars: IterableOnce[Char])(manip: => Manip[T]): selecting[T] =
+        onOneOf(chars.iterator.map(_.toByte))(manip)
+
       def on(char: Char)(manip: => Manip[T]): selecting[T] =
         on(char.toByte)(manip)
 
-      def on(bytes: IterableOnce[Byte])(manip: => Manip[T]): selecting[T] =
-        val impl = defer(manip)
-        new selecting(map ++ bytes.iterator.map(_ -> impl))
+      def onOneOf(bytes: IterableOnce[Byte])(manip: => Manip[T]): selecting[T] =
+        lazy val impl = manip
+        bytes.iterator.foldLeft(this)(_.on(_)(impl))
 
       def on(byte: Byte)(manip: => Manip[T]): selecting[T] =
-        new selecting(map.updated(byte, defer(manip)))
+        new selecting(cell.add(Iterator.single(byte), defer(manip)))
+
+      def onSeq(
+          chars: CharSequence,
+          encoding: Charset = StandardCharsets.UTF_8
+      )(manip: => Manip[T]): selecting[T] =
+        val bytes = SourceRange.entire(
+          Source.fromByteBuffer(encoding.encode(CharBuffer.wrap(chars)))
+        )
+        new selecting(cell.add(bytes.iterator, defer(manip)))
 
       def fallback(using DebugInfo)(manip: => Manip[T]): Manip[T] =
-        lazy val fallbackImpl = manip
-        srcRef.get.flatMap: src =>
-          if src.isEmpty
-          then fallbackImpl
-          else
-            map.get(src.head) match
-              case None => fallbackImpl
-              case Some(branch) =>
-                advancingRefs(branch)
+        val fallbackImpl = defer(manip)
+        srcRef.get.lookahead.flatMap: src =>
+          val (matched, manip) = cell.lookup(src, fallbackImpl)
+          srcRef.updated(_.drop(matched.length)):
+            matchedRef.updated(_ <+> matched):
+              manip
 
     object selecting:
-      def apply[T]: selecting[T] = new selecting[T](Map.empty)
+      def apply[T]: selecting[T] =
+        new selecting[T](Cell.Branch(Map.empty, None))
+
+      enum Cell[T]:
+        case Branch(map: Map[Byte, Cell[T]], fallbackOpt: Option[Manip[T]])
+        case Leaf(manip: Manip[T])
+
+        def lookup(
+            src: SourceRange,
+            fallback: Manip[T]
+        ): (SourceRange, Manip[T]) =
+          @scala.annotation.tailrec
+          def impl(
+              cell: Cell[T],
+              src: SourceRange,
+              matched: SourceRange,
+              otherwise: (SourceRange, Manip[T])
+          ): (SourceRange, Manip[T]) =
+            cell match
+              case Branch(map, fallbackOpt) =>
+                def noMatch: (SourceRange, Manip[T]) =
+                  fallbackOpt.fold(otherwise)((matched, _))
+
+                if src.isEmpty
+                then noMatch
+                else
+                  map.get(src.head) match
+                    case None => noMatch
+                    case Some(cell) =>
+                      impl(cell, src.tail, matched.extendRight, noMatch)
+              case Leaf(manip) => (matched, manip)
+
+          impl(this, src, src.emptyAtOffset, (src.emptyAtOffset, fallback))
+
+        def add(seq: Iterator[Byte], manip: Manip[T]): Cell[T] =
+          if seq.hasNext
+          then
+            val seqHead = seq.next()
+            this match
+              case Branch(map, fallback) =>
+                Branch(
+                  map.updatedWith(seqHead)(
+                    _.orElse(Some(Branch[T](Map.empty, None)))
+                      .map(_.add(seq, manip))
+                  ),
+                  fallback
+                )
+              case Leaf(existingManip) =>
+                Branch(
+                  Map(seqHead -> Branch(Map.empty, None).add(seq, manip)),
+                  Some(existingManip)
+                )
+          else
+            this match
+              case Branch(map, fallback) =>
+                Branch(map, Some(fallback.fold(manip)(_ | manip)))
+              case Leaf(manip) => Leaf(manip | manip)
 
     def selectManyLike[T](using DebugInfo)(bytes: Set[Byte])(
         manip: Manip[T]
@@ -86,12 +155,27 @@ object Reader:
 
       impl
 
+    @targetName("selectManyLikeChars")
+    def selectManyLike[T](using DebugInfo)(chars: Set[Char])(
+        manip: Manip[T]
+    ): Manip[T] =
+      selectManyLike(chars.map(_.toByte))(manip)
+
     def selectCount[T](using DebugInfo)(count: Int)(manip: Manip[T]): Manip[T] =
       srcRef.get.lookahead.flatMap: src =>
         if count <= src.length
         then
           srcRef.updated(_.drop(count)):
             matchedRef.updated(_.extendRightBy(count)):
+              manip
+        else Manip.Backtrack(summon[DebugInfo])
+
+    def selectOne[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
+      srcRef.get.lookahead.flatMap: src =>
+        if src.nonEmpty
+        then
+          srcRef.updated(_.tail):
+            matchedRef.updated(_.extendRight):
               manip
         else Manip.Backtrack(summon[DebugInfo])
 
