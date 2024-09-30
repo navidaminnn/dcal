@@ -3,9 +3,8 @@ package distcompiler.sexpr
 import cats.syntax.all.given
 
 import distcompiler.*
-import distcompiler.Reader.bytes.getSrc
 
-object SExprReader extends Reader:
+object reader extends Reader:
   import distcompiler.dsl.*
   import distcompiler.Builtin.{Error, SourceMarker}
   import Reader.*
@@ -113,26 +112,9 @@ object SExprReader extends Reader:
             val stringContents = m.dropRight(1)
             addChild(tokens.String().at(stringContents))
               *> rules
-        .onSeq("\\\\")(stringMode)
-        .onSeq("\\\"")(stringMode)
-        .onSeq("\\'")(stringMode)
-        .onSeq("\\n")(stringMode)
-        .onSeq("\\t")(stringMode)
-        .onSeq("\\r")(stringMode)
-        .onSeq("\\\n")(stringMode)
-        .onSeq("\\\r")(stringMode)
-        .onSeq("\\\r\n")(stringMode)
-        .onSeq("\\\n\r")(stringMode)
-        .on('\\'):
-          getSrc.flatMap: src =>
-            addChild(
-              Error(
-                "invalid string escape",
-                SourceMarker().at(src.emptyAtOffset.extendLeft)
-              )
-            )
-          *> stringMode
+        .onSeq("\\\"")(stringMode) // skip over escaped end quotes
         .fallback:
+          // everything else goes in the literal, except EOF in which case we bail to default rules
           bytes.selectOne:
             stringMode
           | rules

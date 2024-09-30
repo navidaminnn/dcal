@@ -41,10 +41,11 @@ enum Manip[+T]:
     type Backtrack[+U] = DebugInfo => Eval[U]
     type RefMap = Map[ById[Manip.Ref[?]], Any]
 
-    def emptyBacktrack(ctxInfo: DebugInfo): Backtrack[Nothing] = posInfo =>
-      throw RuntimeException(
-        s"unrecovered backtrack at $posInfo, caught at $ctxInfo"
-      )
+    def emptyBacktrack(ctxInfo: DebugInfo, node: Node.All): Backtrack[Nothing] =
+      posInfo =>
+        throw RuntimeException(
+          s"unrecovered backtrack at $posInfo, caught at $ctxInfo while looking at $node"
+        )
 
     def impl[T, U](self: Manip[T])(using
         continue: Continue[T, U],
@@ -77,7 +78,7 @@ enum Manip[+T]:
             Eval.defer(impl[T, U](right))
           impl(left)
         case Commit(manip, debugInfo) =>
-          given Backtrack[U] = emptyBacktrack(debugInfo)
+          given Backtrack[U] = emptyBacktrack(debugInfo, node)
           impl(manip)
         case RefInit(ref, init, manip) =>
           given RefMap = refMap.updated(ById(ref), init)
@@ -114,7 +115,7 @@ enum Manip[+T]:
         case Deferred(fn) => impl(fn())
 
     given Continue[T, T] = Eval.now
-    given Backtrack[T] = emptyBacktrack(summon[DebugInfo])
+    given Backtrack[T] = emptyBacktrack(summon[DebugInfo], top)
     given RefMap = Map.empty
     given Node.All = top
     impl[T, T](this).value
@@ -326,17 +327,15 @@ object Manip:
             rules: Manip[(Node.Sibling, Node.Sibling)]
         ): Manip[Boolean] =
           lazy val impl: Manip[Boolean] =
-            rules.flatMap: (_, nextSibling) =>
-              atNode(nextSibling):
-                impl.as(true)
-            | atFirstChild:
-              commit(defer(impl))
-            | atRightSibling:
-              commit(defer(impl))
-            | atParent:
-              atRightSibling:
-                commit(defer(impl))
-            | false.pure
+            commit:
+              rules.flatMap: (_, nextSibling) =>
+                commit:
+                  atNode(nextSibling):
+                    impl.as(true)
+              | atFirstChild(defer(impl))
+                | atRightSibling(defer(impl))
+                | atParent(atRightSibling(defer(impl)))
+                | atParent(on(Pattern.ops.theTop).check.as(false))
 
           impl
 

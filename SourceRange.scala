@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 import java.nio.channels.Channels
 import java.nio.charset.{StandardCharsets, Charset}
 import scala.collection.immutable.IndexedSeq
+import scala.collection.mutable
 
 final class SourceRange private (
     val source: Source,
@@ -58,18 +59,22 @@ final class SourceRange private (
     SourceRange(source, offset + from, until - from)
 
   override def take(n: Int): SourceRange =
-    slice(0, n)
+    if n >= length
+    then this
+    else slice(0, n)
 
   override def takeWhile(p: Byte => Boolean): SourceRange =
     take(iterator.takeWhile(p).size)
 
   override def drop(n: Int): SourceRange =
-    require(n <= length)
-    slice(n, length)
+    if n <= length
+    then slice(n, length)
+    else emptyAtOffset
 
   override def dropRight(n: Int): SourceRange =
-    require(n <= length)
-    slice(0, length - n)
+    if n <= length
+    then slice(0, length - n)
+    else emptyAtOffset
 
   override def init: SourceRange =
     dropRight(1)
@@ -94,5 +99,66 @@ final class SourceRange private (
     else this
 
 object SourceRange:
+  def newBuilder: mutable.Builder[Byte, SourceRange] =
+    new mutable.Builder[Byte, SourceRange]:
+      private val arrayBuilder = Array.newBuilder[Byte]
+      def addOne(elem: Byte): this.type =
+        arrayBuilder.addOne(elem)
+        this
+      def clear(): Unit = arrayBuilder.clear()
+      def result(): SourceRange =
+        SourceRange.entire(
+          Source.fromByteBuffer(ByteBuffer.wrap(arrayBuilder.result()))
+        )
+
   def entire(source: Source): SourceRange =
     SourceRange(source, 0, source.byteBuffer.limit())
+
+  extension (ctx: StringContext)
+    def src: srcImpl =
+      srcImpl(ctx)
+
+  final class srcImpl(val ctx: StringContext) extends AnyVal:
+    def unapplySeq(sourceRange: SourceRange): Option[Seq[SourceRange]] =
+      val parts = ctx.parts
+      assert(parts.nonEmpty)
+
+      extension (part: String)
+        def bytes: SourceRange =
+          SourceRange.entire:
+            Source.fromByteBuffer:
+              StandardCharsets.UTF_8.encode:
+                StringContext.processEscapes(part)
+
+      val firstPart = parts.head.bytes
+
+      if !sourceRange.startsWith(firstPart)
+      then return None
+
+      var currRange = sourceRange.drop(firstPart.length)
+      val matchedParts = mutable.ListBuffer.empty[SourceRange]
+      val didMatchFail =
+        parts.iterator
+          .drop(1)
+          .map(_.bytes)
+          .map: part =>
+            if part.isEmpty
+            then
+              val idx = currRange.length
+              matchedParts += currRange
+              currRange = currRange.drop(currRange.length)
+              idx
+            else
+              val idx = currRange.indexOfSlice(part)
+              if idx != -1
+              then
+                matchedParts += currRange.take(idx)
+                currRange = currRange.drop(idx)
+
+              idx
+          .contains(-1)
+          || currRange.nonEmpty
+
+      if didMatchFail
+      then None
+      else Some(matchedParts.result())

@@ -241,6 +241,14 @@ object Pattern:
     def tok(token: Token, tokens: Token*): Pattern[Node] =
       current.restrict(NodeHasToken(token, tokens*)).markProgress
 
+    def oneOfToks(tokens: Iterable[Token]): Pattern[Node] =
+      val iter = tokens.iterator
+      if !iter.hasNext
+      then Reject
+      else
+        val head = iter.next()
+        current.restrict(NodeHasToken(head, iter.toSeq*)).markProgress
+
     def parent[T](pattern: Pattern[T]): Pattern[T] =
       anyChild.map(_.parent).here(pattern)
 

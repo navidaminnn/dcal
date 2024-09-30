@@ -1,135 +1,159 @@
 package distcompiler
 
 import cats.syntax.all.given
-import distcompiler.Builtin.Error
+import scala.collection.mutable
+import Builtin.Error
 
-final class Wellformed private (wfTop: Node.Top, topPattern: Pattern[Unit]):
-  lazy val rules: Manip[Unit] =
-    import dsl.*
-    val goodPattern = Wellformed.rulesBuilder.perform(wfTop.clone())
-    pass()
+final class Wellformed private (
+    assigns: Map[Token, Wellformed.Shape],
+    topShape: Wellformed.Shape
+):
+  import Wellformed.Shape
+  import dsl.*
+
+  private lazy val tokensByName: Map[SourceRange, Token] =
+    assigns.map: (token, _) =>
+      SourceRange.entire(Source.fromString(token.name)) -> token
+
+  private lazy val namesByToken: Map[Token, SourceRange] =
+    assigns.map: (token, _) =>
+      token -> SourceRange.entire(Source.fromString(token.name))
+
+  lazy val markErrors: Manip[Unit] =
+    def shapePattern(shape: Wellformed.Shape): Pattern[Node.Sibling] =
+      shape match
+        case Shape.Atom =>
+          atEnd
+        case Shape.Choice(choices) =>
+          oneOfToks(choices)
+        case Shape.Repeat(choice) =>
+          shapePattern(choice)
+        case Shape.Fields(fields) =>
+          fields.iterator.zipWithIndex
+            .map: (field, idx) =>
+              shapePattern(field).restrict:
+                case sibling if sibling.idxInParent == idx => sibling
+            .reduceLeftOption(_ | _)
+            .getOrElse(Pattern.Reject)
+
+    pass(once = true)
       .rules:
         on(
-          theTop <* children(not(topPattern))
-        ).value.effect: top =>
-          val unparentedChildren = top.unparentedChildren
-          val childrenTuple = Builtin.Tuple(unparentedChildren)
-          top.children = List(
-            Error(
-              "unexpected shape at root",
-              childrenTuple
-            )
-          )
-          (childrenTuple.firstChild, childrenTuple.firstChild).pure
-        | on(
-          anyChild <* not(goodPattern)
-        ).rewrite: child =>
+          assigns.foldLeft(shapePattern(topShape) <* parent(theTop)):
+            case (acc, (token, shape)) =>
+              acc
+                | (shapePattern(shape) <* parent(tok(token)))
+        ).rewrite: node =>
           Splice(
             Error(
-              "unexpected shape or token",
-              child.unparent()
+              "unexpected shape",
+              node match
+                case _: Node.Sentinel  => Builtin.SourceMarker()
+                case child: Node.Child => child.unparent()
             )
           )
-  end rules
+  end markErrors
 
   def makeDerived(fn: Wellformed.Builder ?=> Unit): Wellformed =
     val builder =
-      Wellformed.Builder(wfTop.clone(), topPatternOpt = Some(topPattern))
+      Wellformed.Builder(mutable.HashMap.from(assigns), Some(topShape))
     fn(using builder)
     builder.build()
+
+  def checkTree(top: Node.Top): Unit =
+    markErrors.perform(top)
+
+  private lazy val rewriteFromSExpressions: Manip[Unit] =
+    pass(strategy = pass.bottomUp, once = true)
+      .rules:
+        on(
+          tok(sexpr.tokens.List).map(_.sourceRange)
+          *: children:
+            tok(sexpr.tokens.Atom)
+              .map(_.sourceRange)
+              .restrict(tokensByName)
+              *: repeated(anyChild)
+        ).rewrite: (src, token, listOfChildren) =>
+          Splice(token(listOfChildren.iterator.map(_.unparent())).at(src))
+
+  def fromSExpression(top: Node.Top): Unit =
+    locally:
+      sexpr.wellFormed.markErrors
+        *> rewriteFromSExpressions
+        *> markErrors
+    .perform(top)
+
+  private lazy val rewriteToSExpressions: Manip[Unit] =
+    pass(once = true)
+      .rules:
+        on(
+          anyNode
+            *: anyNode
+              .map(_.token)
+              .restrict(namesByToken)
+        ).rewrite: (node, name) =>
+          val list = sexpr.tokens.List()
+          list.children.addOne(sexpr.tokens.Atom(name))
+          list.children.addAll(node.unparentedChildren)
+          Splice(list)
+
+  def toSExpression(top: Node.Top): Unit =
+    locally:
+      markErrors
+        *> rewriteToSExpressions
+        *> sexpr.wellFormed.markErrors
+    .perform(top)
 end Wellformed
 
 object Wellformed:
   def apply(fn: Builder ?=> Unit): Wellformed =
-    val builder = Builder()
+    val builder = Builder(mutable.HashMap.empty, None)
     fn(using builder)
     builder.build()
 
-  private val rulesBuilder: Manip[Pattern[Unit]] =
-    given NodeMeta[Pattern[Unit]] = NodeMeta.byToString()
-    import dsl.*
-
-    val defnPattern: Pattern[(Token, Shape)] =
-      tok(Defn)
-      *>: children:
-        (tok(Name) *>: onlyChild(embedValue[Token]))
-          **: embedValue[Shape]
-
-    pass()
-      .rules:
-        on(
-          defnPattern :* rightSibling(embedValue[Pattern[Unit]])
-        ).rewrite: (token, shape, restPattern) =>
-          Splice(
-            Node.Embed((tok(token) *>: children(shape.pattern)) | restPattern)
-          )
-        | on(
-          defnPattern <*: atEnd
-        ).rewrite: (token, shape) =>
-          Splice(Node.Embed(tok(token) *>: children(shape.pattern)))
-        | on(
-          tok(Namespace) *> onlyChild(embedValue[Pattern[Unit]])
-        ).rewrite: pattern =>
-          Splice(Node.Embed(pattern))
-    *> on(
-      theTop *> onlyChild(embedValue[Pattern[Unit]])
-    ).value
-  end rulesBuilder
-
-  object Namespace extends Token:
-    override def symbolTableFor: List[Token] = List(Wellformed.Name)
-
-  object Defn extends Token:
-    override val lookedUpBy: Pattern[Node] =
-      import dsl.*
-      tok(Defn) *> children:
-        find(tok(Wellformed.Name))
-
-  object Name extends Token
-
   final class Builder private[Wellformed] (
-      top: Node.Top = Node.Top(List(Namespace())),
-      private var topPatternOpt: Option[Pattern[Unit]] = None
+      assigns: mutable.HashMap[Token, Wellformed.Shape],
+      private var topShapeOpt: Option[Wellformed.Shape]
   ):
-    private val ns = top(Namespace)
-
-    private def mkDefn(token: Token, pattern: Pattern[?]): Node =
-      Defn(
-        Name(Node.Embed(token)),
-        Node.Embed(Shape(pattern.void))
-      )
-
     extension (top: Node.Top.type)
-      def ::=(pattern: Pattern[?]): Unit =
-        require(topPatternOpt.isEmpty)
-        topPatternOpt = Some(pattern.void)
-      def ::=!(pattern: Pattern[?]): Unit =
-        require(topPatternOpt.nonEmpty)
-        topPatternOpt = Some(pattern.void)
+      def ::=(shape: Shape): Unit =
+        require(topShapeOpt.isEmpty)
+        topShapeOpt = Some(shape)
+      def ::=!(shape: Shape): Unit =
+        require(topShapeOpt.nonEmpty)
+        topShapeOpt = Some(shape)
 
     extension (token: Token)
-      def ::=(pattern: Pattern[?]): Unit =
-        val toInsert = mkDefn(token, pattern)
-        val name = toInsert(Name)
-        require(name.lookupRelativeTo(ns).isEmpty)
-        ns.children.addOne(toInsert)
+      def ::=(shape: Shape): Unit =
+        require(!assigns.contains(token))
+        assigns(token) = shape
 
-      def ::=!(pattern: Pattern[?]): Unit =
-        val toInsert = mkDefn(token, pattern)
-        val name = toInsert(Name)
-        val targets = name.lookupRelativeTo(ns)
-        require(targets.size == 1)
-        val List(target) = targets
-        // just replace the shape; might make lookups more efficient (eventually)
-        target(Shape).replaceThis(toInsert(Shape))
+      def ::=!(shape: Shape): Unit =
+        require(assigns.contains(token))
+        assigns(token) = shape
 
     private[Wellformed] def build(): Wellformed =
-      require(topPatternOpt.nonEmpty)
-      new Wellformed(top, topPattern = topPatternOpt.get)
+      require(topShapeOpt.nonEmpty)
+      new Wellformed(assigns.toMap, topShape = topShapeOpt.get)
   end Builder
 
-  final class Shape(val pattern: Pattern[Unit])
+  enum Shape:
+    case Atom
+    case Choice(choices: Set[Token])
+    case Repeat(choice: Shape.Choice)
+    case Fields(fields: List[Shape.Choice])
 
-  object Shape extends Token:
-    given meta: NodeMeta[Shape] = NodeMeta.byToString()
+  object Shape:
+    extension (choice: Shape.Choice)
+      def |(other: Shape.Choice): Shape.Choice =
+        Shape.Choice(choice.choices ++ other.choices)
+
+    def repeated(choice: Shape.Choice): Shape.Repeat =
+      Shape.Repeat(choice)
+
+    def fields(fields: Shape.Choice*): Shape.Fields =
+      Shape.Fields(fields.toList)
+
+    def tok(token: Token, tokens: Token*): Shape.Choice =
+      Shape.Choice(Set(tokens*).incl(token))
 end Wellformed
