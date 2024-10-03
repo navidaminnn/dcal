@@ -36,4 +36,14 @@ object Token:
       Node(token)().at(sourceRange)
     def apply(sourceRange: SourceRange): Node =
       Node(token)().at(sourceRange)
+
+    def unapply(node: Node.All): unapplyImpl =
+      node match
+        case node: Node if node.token == token =>
+          unapplyImpl(node)
+        case _ => unapplyImpl(null)
+
+  final class unapplyImpl(val nodeOpt: Node | Null) extends AnyVal:
+    def isEmpty: Boolean = nodeOpt eq null
+    def get: Node = nodeOpt.nn
 end Token

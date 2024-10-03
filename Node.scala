@@ -5,12 +5,13 @@ import cats.data.Chain
 import cats.syntax.all.given
 import scala.collection.mutable
 import izumi.reflect.Tag
-import distcompiler.Node.Top
+import scala.annotation.constructorOnly
 
 final case class NodeError(msg: String) extends RuntimeException(msg)
 
-final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child] = Nil)
-    extends Node.Child,
+final class Node(val token: Token)(
+    childrenInit: IterableOnce[Node.Child] @constructorOnly = Nil
+) extends Node.Child,
       Node.Sibling,
       Node.Parent(childrenInit),
       Node.Traversable:
@@ -18,7 +19,7 @@ final class Node(val token: Token)(childrenInit: IterableOnce[Node.Child] = Nil)
 
   override def asNode: Node = this
 
-  override def asNonFloatingParent: Node | Top = this
+  override def asNonFloatingParent: Node | Node.Top = this
 
   override type This = Node
   override def cloneEval(): Eval[Node] =
@@ -239,7 +240,7 @@ object Node:
   sealed trait Sentinel extends All:
     override type This <: Sentinel
 
-  final class Top(childrenInit: IterableOnce[Node.Child])
+  final class Top(childrenInit: IterableOnce[Node.Child] @constructorOnly)
       extends Root,
         Parent(childrenInit),
         Traversable:
@@ -259,7 +260,7 @@ object Node:
 
   object Top
 
-  final class Floating(child: Node.Child)
+  final class Floating(child: Node.Child @constructorOnly)
       extends Root,
         Parent(Iterator.single(child)):
 
@@ -283,7 +284,8 @@ object Node:
   //         result
   //       case result => result
 
-  sealed trait Parent(childrenInit: IterableOnce[Node.Child]) extends All:
+  sealed trait Parent(childrenInit: IterableOnce[Node.Child] @constructorOnly)
+      extends All:
     thisParent =>
 
     def asNonFloatingParent: Node | Top
@@ -474,7 +476,7 @@ object Node:
 
   final class Children private[Node] (
       val parent: Node.Parent,
-      childrenInit: IterableOnce[Node.Child]
+      childrenInit: IterableOnce[Node.Child] @constructorOnly
   ) extends mutable.IndexedBuffer[Node.Child]:
     private val _children = mutable.ArrayBuffer.from(childrenInit)
     export _children.{length, apply}

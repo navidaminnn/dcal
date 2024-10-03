@@ -302,6 +302,13 @@ object Manip:
     type RewriteOp =
       Node.Child | Splice | Delete.type | TryNext | Skip.type
 
+    // TODO: debug info as implicit param.
+    // - optionally print AST after pass
+    // - for initial AST, give direct option to print that in reader
+    // - include link to file + line num in printed info
+    // - option to print after every edit?
+    // - don't discount ability to make debug adapter for this later...
+
     final class pass(
         strategy: pass.TraversalStrategy = pass.topDown,
         once: Boolean = false
