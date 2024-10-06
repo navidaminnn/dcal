@@ -8,16 +8,48 @@ final class Wellformed private (
     assigns: Map[Token, Wellformed.Shape],
     topShape: Wellformed.Shape
 ):
+  require:
+    assigns.iterator.map(_._1.name).distinct.size == assigns.size
   import Wellformed.Shape
   import dsl.*
 
-  private lazy val tokensByName: Map[SourceRange, Token] =
-    assigns.map: (token, _) =>
-      SourceRange.entire(Source.fromString(token.name)) -> token
+  private lazy val shortNameByToken: Map[Token, SourceRange] =
+    val tokenNameSegments = assigns.iterator
+      .map: (token, _) =>
+        token.name.split('.') -> token
+      .toArray
 
-  private lazy val namesByToken: Map[Token, SourceRange] =
-    assigns.map: (token, _) =>
-      token -> SourceRange.entire(Source.fromString(token.name))
+    def impl(
+        tokenNameSegments: Array[(Array[String], Token)]
+    ): Map[Token, String] =
+      tokenNameSegments
+        .groupBy(_._1.last)
+        .iterator
+        .flatMap:
+          case (shortName, Array((_, tok))) =>
+            Iterator.single(tok -> shortName)
+          case (dupName, arr) =>
+            impl:
+              arr.mapInPlace: (segments, tok) =>
+                segments.init -> tok
+            .map: (tok, name) =>
+              tok -> s"$name.$dupName"
+        .toMap
+
+    impl(tokenNameSegments)
+      .map: (tok, name) =>
+        tok -> SourceRange.entire(Source.fromString(name))
+
+  private lazy val tokenByShortName: Map[SourceRange, Token] =
+    shortNameByToken.map(_.reverse)
+
+  // private lazy val tokensByName: Map[SourceRange, Token] =
+  //   assigns.map: (token, _) =>
+  //     SourceRange.entire(Source.fromString(token.name)) -> token
+
+  // private lazy val namesByToken: Map[Token, SourceRange] =
+  //   assigns.map: (token, _) =>
+  //     token -> SourceRange.entire(Source.fromString(token.name))
 
   lazy val markErrors: Manip[Unit] =
     def shapePattern(shape: Wellformed.Shape): Pattern[Node.Sibling] =
@@ -34,15 +66,17 @@ final class Wellformed private (
               shapePattern(field).restrict:
                 case sibling if sibling.idxInParent == idx => sibling
             .reduceLeftOption(_ | _)
-            .getOrElse(Pattern.Reject)
+            .getOrElse(Pattern.reject)
 
     pass(once = true)
       .rules:
         on(
-          assigns.foldLeft(shapePattern(topShape) <* parent(theTop)):
-            case (acc, (token, shape)) =>
-              acc
-                | (shapePattern(shape) <* parent(tok(token)))
+          anySibling
+          <* not:
+            assigns.foldLeft(shapePattern(topShape) <* parent(theTop)):
+              case (acc, (token, shape)) =>
+                acc
+                  | (shapePattern(shape) <* parent(tok(token)))
         ).rewrite: node =>
           Splice(
             Error(
@@ -60,52 +94,170 @@ final class Wellformed private (
     fn(using builder)
     builder.build()
 
-  def checkTree(top: Node.Top): Unit =
-    markErrors.perform(top)
+  // def checkTree(top: Node.Top): Unit =
+  //   markErrors.perform(top)
 
-  private lazy val rewriteFromSExpressions: Manip[Unit] =
-    pass(strategy = pass.bottomUp, once = true)
+  // private lazy val rewriteFromSExpressions: Manip[Unit] =
+  //   pass(strategy = pass.bottomUp, once = true)
+  //     .rules:
+  //       on(
+  //         tok(sexpr.tokens.List).map(_.sourceRange)
+  //         *: children:
+  //           tok(sexpr.tokens.Atom)
+  //             .map(_.sourceRange)
+  //             .restrict(tokensByName)
+  //             *: repeated(anyChild)
+  //       ).rewrite: (src, token, listOfChildren) =>
+  //         Splice(token(listOfChildren.iterator.map(_.unparent())).at(src))
+
+  // def fromSExpression(top: Node.Top): Unit =
+  //   locally:
+  //     sexpr.wellFormed.markErrors
+  //       *> rewriteFromSExpressions
+  //       *> markErrors
+  //   .perform(top)
+
+  // private lazy val rewriteToSExpressions: Manip[Unit] =
+  //   pass(once = true)
+  //     .rules:
+  //       on(
+  //         anyNode
+  //           *: anyNode
+  //             .map(_.token)
+  //             .restrict(namesByToken)
+  //       ).rewrite: (node, name) =>
+  //         val list = sexpr.tokens.List()
+  //         list.children.addOne(sexpr.tokens.Atom(name))
+  //         list.children.addAll(node.unparentedChildren)
+  //         Splice(list)
+
+  // def toSExpression(top: Node.Top): Unit =
+  //   locally:
+  //     markErrors
+  //       *> rewriteToSExpressions
+  //       *> sexpr.wellFormed.markErrors
+  //   .perform(top)
+
+  lazy val serializeTree: Manip[Unit] =
+    extension (node: Node)
+      def shortName =
+        shortNameByToken.getOrElse(
+          node.token,
+          SourceRange.entire(Source.fromString(node.token.name))
+        )
+
+    markErrors
+    *> pass(once = true)
       .rules:
         on(
-          tok(sexpr.tokens.List).map(_.sourceRange)
-          *: children:
-            tok(sexpr.tokens.Atom)
-              .map(_.sourceRange)
-              .restrict(tokensByName)
-              *: repeated(anyChild)
-        ).rewrite: (src, token, listOfChildren) =>
-          Splice(token(listOfChildren.iterator.map(_.unparent())).at(src))
+          tok(Wellformed.SkipMarker)
+        ).rewrite(_ => Skip)
+        | on(
+          anyNode
+            .filter(n => !n.token.showSource)
+            <* children(atEnd)
+        ).rewrite: node =>
+          Splice(sexpr.tokens.Atom(node.shortName))
+        | on(
+          anyNode
+        ).rewrite: node =>
+          val toSkip = Wellformed.SkipMarker(sexpr.tokens.Atom(node.shortName))
+          if node.token.showSource
+          then
+            toSkip.children.addOne(sexpr.tokens.Atom("::src"))
+            toSkip.children.addOne:
+              val src = node.sourceRange
+              src.source.origin match
+                case None =>
+                  sexpr.tokens.Atom(src)
+                case Some(origin) =>
+                  sexpr.tokens.List(
+                    sexpr.tokens.Atom(origin.toString),
+                    sexpr.tokens.Atom(src.offset.toString()),
+                    sexpr.tokens.Atom(src.length.toString())
+                  )
+          val list = sexpr.tokens.List(toSkip)
+          list.children.addAll(node.unparentedChildren)
+          Splice(list)
+    *> pass(once = true)
+      .rules:
+        on(
+          tok(Wellformed.SkipMarker)
+        ).rewrite: marker =>
+          Splice(marker.unparentedChildren.iterator.toSeq*)
 
-  def fromSExpression(top: Node.Top): Unit =
-    locally:
-      sexpr.wellFormed.markErrors
-        *> rewriteFromSExpressions
-        *> markErrors
-    .perform(top)
-
-  private lazy val rewriteToSExpressions: Manip[Unit] =
+  lazy val deserializeTree: Manip[Unit] =
+    import sexpr.tokens.Atom
+    val src = SourceRange.entire(Source.fromString("::src"))
     pass(once = true)
       .rules:
         on(
-          anyNode
-            *: anyNode
-              .map(_.token)
-              .restrict(namesByToken)
-        ).rewrite: (node, name) =>
-          val list = sexpr.tokens.List()
-          list.children.addOne(sexpr.tokens.Atom(name))
-          list.children.addAll(node.unparentedChildren)
-          Splice(list)
+          tok(Atom)
+        ).rewrite: atom =>
+          tokenByShortName.get(atom.sourceRange) match
+            case None =>
+              Splice(
+                Builtin.Error(s"unknown token \"${atom.sourceRange}\"", atom)
+              )
+            case Some(token) =>
+              Splice(token(atom.sourceRange))
+        | on(
+          tok(sexpr.tokens.List)
+          *>: children:
+            tok(Atom)
+            *>:
+              locally[Pattern[Either[List[Node.Child], Either[
+                (Node, List[Node.Child]),
+                ((Node, Node, Node), List[Node.Child])
+              ]]]]:
+                tok(Atom).filter(_.sourceRange == src)
+                  *>:
+                    locally:
+                      (tok(Atom) **: repeated(anyChild)).map(Left(_))
+                        | locally:
+                          (tok(sexpr.tokens.List)
+                          *> children:
+                            tok(Atom) **: tok(Atom) **: tok(Atom) <*: atEnd
+                          )
+                            **: repeated(anyChild)
+                        .map(Right(_))
+                    .map(Right(_))
+                    | repeated(anyChild).map(Left(_))
+        ).rewrite: result =>
+          ???
+        | on(
+          tok(sexpr.tokens.List)
+          *> children:
+            tok(Atom).map(_.sourceRange).restrict(tokenByShortName)
+              **: (tok(Atom).filter(_.sourceRange == src)
+                *>: tok(Atom).map(_.sourceRange)
+                **: repeated(anyChild))
+        ).rewrite: (tok, src, children) =>
+          Splice(tok(children.map(_.unparent())).at(src))
+        | on(
+          tok(sexpr.tokens.List)
+          *> children:
+            tok(Atom).map(_.sourceRange).restrict(tokenByShortName)
+              **: (tok(Atom).filter(_.sourceRange == src)
+                *>: (tok(sexpr.tokens.List)
+                *> children:
+                  tok(Atom) **: tok(Atom) **: tok(Atom) <*: atEnd
+                )
+                **: repeated(anyChild))
+        ).rewrite: (tok, bounds, children) =>
+          val (orig, offset, len) = bounds
+          val path = os.Path(orig.sourceRange.decodeString())
+          // TODO: actually merge the source files so they don't get mapped N times
+          // probably make rewrite support Manip and use state to store a map
+          // ... now I think about it, why not just pass the pattern match result via state too
+          ???
 
-  def toSExpression(top: Node.Top): Unit =
-    locally:
-      markErrors
-        *> rewriteToSExpressions
-        *> sexpr.wellFormed.markErrors
-    .perform(top)
+    ???
 end Wellformed
 
 object Wellformed:
+  private object SkipMarker extends Token
+
   def apply(fn: Builder ?=> Unit): Wellformed =
     val builder = Builder(mutable.HashMap.empty, None)
     fn(using builder)

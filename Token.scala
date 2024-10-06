@@ -19,14 +19,24 @@ trait Token extends Equals, Named:
   override def toString(): String =
     s"Token(@${hashCode()} $name)"
 
-  final def canBeLookedUp: Boolean = lookedUpBy ne Pattern.Reject
+  final def canBeLookedUp: Boolean = !lookedUpBy.isBacktrack
 
   def symbolTableFor: List[Token] = Nil
-  def lookedUpBy: Pattern[Node] = Pattern.Reject
+  def lookedUpBy: Pattern[Node] = Pattern.reject
   def showSource: Boolean = false
 end Token
 
 object Token:
+  private var _freshCounter: Long = 0
+  private def incFreshCounter(): Long =
+    val result = _freshCounter
+    _freshCounter += 1
+    result
+
+  abstract class Fresh
+      extends Token,
+        Named(using Named.OwnName(s"$$${{ incFreshCounter() }}"))
+
   extension (token: Token)
     def apply(children: Node.Child*): Node =
       Node(token)(children)

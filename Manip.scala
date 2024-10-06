@@ -7,14 +7,22 @@ enum Manip[+T]:
   case Pure(value: T)
   case Ap[T, U](ff: Manip[T => U], fa: Manip[T]) extends Manip[U]
   case FlatMap[T, U](manip: Manip[T], fn: T => Manip[U]) extends Manip[U]
-  case Effect(manip: Manip[T])
+
+  case Restrict[T, U](
+      manip: Manip[T],
+      pred: PartialFunction[T, U],
+      debugInfo: DebugInfo
+  ) extends Manip[U]
+
+  case Effect(fn: () => T)
 
   case KeepLeft(left: Manip[T], right: Manip[?])
   case KeepRight(left: Manip[?], right: Manip[T])
 
   case Commit(manip: Manip[T], debugInfo: DebugInfo)
+  case Negated(manip: Manip[?], debugInfo: DebugInfo) extends Manip[Unit]
 
-  case RefInit[T, U](ref: Manip.Ref[T], init: T, manip: Manip[U])
+  case RefInit[T, U](ref: Manip.Ref[T], initFn: () => T, manip: Manip[U])
       extends Manip[U]
   case RefGet[T](ref: Manip.Ref[T], debugInfo: DebugInfo) extends Manip[T]
   case RefUpdated[T, U](
@@ -25,17 +33,18 @@ enum Manip[+T]:
   ) extends Manip[U]
 
   case ThisNode extends Manip[Node.All]
-  case OnPattern[T](pattern: Pattern[T], debugInfo: DebugInfo)
-      extends Manip[Pattern.Result.Accepted[T]]
   case AtNode(manip: Manip[T], node: Node.All)
 
   case Disjunction(first: Manip[T], second: Manip[T])
   case Deferred(fn: () => Manip[T])
 
-  def perform(using DebugInfo)(top: Node.Top): T =
-    import cats.Eval
+  def isBacktrack: Boolean =
+    this match
+      case Backtrack(_) => true
+      case _            => false
 
-    import Pattern.Result.*
+  def perform(using DebugInfo)(node: Node.All): T =
+    import cats.Eval
 
     type Continue[-T, +U] = T => Eval[U]
     type Backtrack[+U] = DebugInfo => Eval[U]
@@ -66,7 +75,17 @@ enum Manip[+T]:
             given Continue[u, U] = continue
             Eval.defer(impl(flatMap.fn(value)))
           impl(flatMap.manip)
-        case Effect(manip) => impl(manip)
+        case restrict: Restrict[t, u] =>
+          given Continue[t, U] = value =>
+            restrict.pred.unapply(value) match
+              case None =>
+                Eval.defer(backtrack(restrict.debugInfo))
+              case Some(value) =>
+                Eval.defer(continue(value))
+          impl(restrict.manip)
+        case Effect(fn) =>
+          val value = fn()
+          Eval.defer(continue(value))
         case KeepLeft(left, right: Manip[t]) =>
           given Continue[T, U] = value =>
             given Continue[t, U] = _ => continue(value)
@@ -80,8 +99,12 @@ enum Manip[+T]:
         case Commit(manip, debugInfo) =>
           given Backtrack[U] = emptyBacktrack(debugInfo, node)
           impl(manip)
-        case RefInit(ref, init, manip) =>
-          given RefMap = refMap.updated(ById(ref), init)
+        case Negated(manip: Manip[t], debugInfo) =>
+          given Backtrack[U] = _ => continue(())
+          given Continue[t, U] = _ => backtrack(debugInfo)
+          impl(manip)
+        case RefInit(ref, initFn, manip) =>
+          given RefMap = refMap.updated(ById(ref), initFn())
           impl(manip)
         case RefGet(ref, debugInfo) =>
           refMap.get(ById(ref)) match
@@ -97,12 +120,6 @@ enum Manip[+T]:
               )
               impl(refUpdated.manip)
         case ThisNode => Eval.defer(continue(node))
-        case onPattern: OnPattern[t] =>
-          onPattern.pattern.check(node) match
-            case Rejected =>
-              Eval.defer(backtrack(onPattern.debugInfo))
-            case accepted: Accepted[`t`] =>
-              Eval.defer(continue(accepted))
         case AtNode(manip, node) =>
           given Node.All = node
           impl(manip)
@@ -115,9 +132,9 @@ enum Manip[+T]:
         case Deferred(fn) => impl(fn())
 
     given Continue[T, T] = Eval.now
-    given Backtrack[T] = emptyBacktrack(summon[DebugInfo], top)
+    given Backtrack[T] = emptyBacktrack(summon[DebugInfo], node)
     given RefMap = Map.empty
-    given Node.All = top
+    given Node.All = node
     impl[T, T](this).value
   end perform
 
@@ -126,8 +143,8 @@ end Manip
 
 object Manip:
   trait Ref[T]:
-    final def init[U](init: T)(manip: Manip[U]): Manip[U] =
-      Manip.RefInit(this, init, manip)
+    final def init[U](init: => T)(manip: Manip[U]): Manip[U] =
+      Manip.RefInit(this, () => init, manip)
     final def get(using DebugInfo): Manip[T] =
       Manip.RefGet(this, summon[DebugInfo])
     final def updated[U](using DebugInfo)(fn: T => T)(
@@ -152,10 +169,31 @@ object Manip:
     override def productR[A, B](fa: Manip[A])(fb: Manip[B]): Manip[B] =
       Manip.KeepRight(fa, fb)
 
-  given monoidK(using DebugInfo): cats.MonoidK[Manip] with
+  given semigroupK: cats.SemigroupK[Manip] with
     def combineK[A](x: Manip[A], y: Manip[A]): Manip[A] =
       Manip.Disjunction(x, y)
+
+  given monoidK(using DebugInfo): cats.MonoidK[Manip] with
+    export semigroupK.combineK
     def empty[A]: Manip[A] = Manip.Backtrack(summon[DebugInfo])
+
+  class Lookahead[T](val manip: Manip[T]) extends AnyVal:
+    def flatMap[U](fn: T => Manip[U]): Manip[U] =
+      Manip.FlatMap(manip, fn)
+
+  object Lookahead:
+    given applicative: cats.Applicative[Lookahead] with
+      def ap[A, B](ff: Lookahead[A => B])(fa: Lookahead[A]): Lookahead[B] =
+        Lookahead(ff.manip.ap(fa.manip))
+      def pure[A](x: A): Lookahead[A] =
+        Lookahead(Manip.Pure(x))
+    given semigroupK: cats.SemigroupK[Lookahead] with
+      def combineK[A](x: Lookahead[A], y: Lookahead[A]): Lookahead[A] =
+        Lookahead(x.manip.combineK(y.manip))
+    given monoidK(using DebugInfo): cats.MonoidK[Lookahead] with
+      export semigroupK.combineK
+      def empty[A]: Lookahead[A] =
+        Lookahead(Manip.Backtrack(summon[DebugInfo]))
 
   object ops:
     def defer[T](manip: => Manip[T]): Manip[T] =
@@ -164,6 +202,9 @@ object Manip:
 
     def commit[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       Manip.Commit(manip, summon[DebugInfo])
+
+    def effect[T](fn: => T): Manip[T] =
+      Manip.Effect(() => fn)
 
     def atNode[T](node: Node.All)(manip: Manip[T]): Manip[T] =
       Manip.AtNode(manip, node)
@@ -197,19 +238,20 @@ object Manip:
           Manip.Backtrack(summon[DebugInfo])
 
     def addChild[T](using DebugInfo)(child: => Node.Child): Manip[Node.Child] =
-      Manip.ThisNode.effect:
+      Manip.ThisNode.flatMap:
         case thisParent: Node.Parent =>
-          val tmp = child
-          thisParent.children.addOne(tmp)
-          pure(tmp)
+          effect:
+            val tmp = child
+            thisParent.children.addOne(tmp)
+            tmp
         case _ => Manip.Backtrack(summon[DebugInfo])
 
-    final class on[T](val pattern: Pattern[T]) extends AnyVal:
-      def raw(using DebugInfo): Manip[Pattern.Result.Accepted[T]] =
-        Manip.OnPattern(pattern, summon[DebugInfo])
+    final class on[T](val pattern: Pattern[T]):
+      def raw: Manip[(Int, T)] =
+        pattern.manip
 
       def value(using DebugInfo): Manip[T] =
-        raw.map(_.value)
+        raw.map(_._2)
 
       def check(using DebugInfo): Manip[Unit] =
         raw.as(())
@@ -218,8 +260,9 @@ object Manip:
           action: T => RewriteOp
       ): Manip[(Node.Sibling, Node.Sibling)] =
         raw.flatMap:
-          case Pattern.Result.Accepted(value, matchedCount) =>
-            Manip.ThisNode.effect: thisNode =>
+          case (matchedCount, value) =>
+            // TODO: replace with FX
+            Manip.ThisNode.flatMap: thisNode =>
               val replacementsOpt
                   : Manip.Backtrack[Nothing] | Skip.type | Iterable[
                     Node.Child
@@ -266,33 +309,15 @@ object Manip:
         Manip.Disjunction(lhs, rhs)
       def flatMap[U](using DebugInfo)(fn: T => Manip[U]): Manip[U] =
         Manip.FlatMap(lhs, t => commit(fn(t)))
-      def effect[U](fn: T => Manip[U]): Manip[U] =
-        lhs.flatMap(fn)
       def lookahead: Lookahead[T] =
         Lookahead(lhs)
+      def restrict[U](using DebugInfo)(fn: PartialFunction[T, U]): Manip[U] =
+        Manip.Restrict(lhs, fn, summon[DebugInfo])
 
     extension (lhs: Manip[Node.All])
       def here[U](manip: Manip[U]): Manip[U] =
         lhs.lookahead.flatMap: node =>
           atNode(node)(manip)
-
-    class Lookahead[T](val manip: Manip[T]) extends AnyVal:
-      def flatMap[U](fn: T => Manip[U]): Manip[U] =
-        Manip.FlatMap(manip, fn)
-      def effect[U](fn: T => Manip[U]): Manip[U] =
-        flatMap(t => Manip.Effect(fn(t)))
-
-    object Lookahead:
-      given applicative: cats.Applicative[Lookahead] with
-        def ap[A, B](ff: Lookahead[A => B])(fa: Lookahead[A]): Lookahead[B] =
-          Lookahead(ff.manip.ap(fa.manip))
-        def pure[A](x: A): Lookahead[A] =
-          Lookahead(Manip.Pure(x))
-      given monoidK(using DebugInfo): cats.MonoidK[Lookahead] with
-        def combineK[A](x: Lookahead[A], y: Lookahead[A]): Lookahead[A] =
-          Lookahead(x.manip.combineK(y.manip))
-        def empty[A]: Lookahead[A] =
-          Lookahead(Manip.Backtrack(summon[DebugInfo]))
 
     final case class Splice(nodes: Node.Child*)
     case object Delete
@@ -313,7 +338,7 @@ object Manip:
         strategy: pass.TraversalStrategy = pass.topDown,
         once: Boolean = false
     ):
-      def rules(rules: Manip[(Node.Sibling, Node.Sibling)]): Manip[Unit] =
+      def rules(rules: Rules): Manip[Unit] =
         lazy val impl: Manip[Unit] =
           strategy
             .traverse(rules)
@@ -327,11 +352,11 @@ object Manip:
 
     object pass:
       trait TraversalStrategy:
-        def traverse(rules: Manip[(Node.Sibling, Node.Sibling)]): Manip[Boolean]
+        def traverse(rules: Rules): Manip[Boolean]
 
       object topDown extends TraversalStrategy:
         def traverse(
-            rules: Manip[(Node.Sibling, Node.Sibling)]
+            rules: Rules
         ): Manip[Boolean] =
           lazy val impl: Manip[Boolean] =
             commit:
@@ -348,8 +373,9 @@ object Manip:
 
       object bottomUp extends TraversalStrategy:
         def traverse(
-            rules: Manip[(Node.Sibling, Node.Sibling)]
+            rules: Rules
         ): Manip[Boolean] =
+          // TODO: fix this code, not tested and probably has similar bug to what topDown had
           def atBottomLeft[T](manip: Manip[T]): Manip[T] =
             lazy val impl: Manip[T] =
               atFirstChild(defer(impl))

@@ -36,10 +36,10 @@ object Reader:
 
   def extendThisNodeWithMatch[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
     consumeMatch: m =>
-      Manip.ThisNode.lookahead.effect:
+      Manip.ThisNode.lookahead.flatMap:
         case node: Node =>
-          node.extendLocation(m)
-          manip
+          effect(node.extendLocation(m))
+            *> manip
         case top: Node.Top =>
           // if top is an extend target, ignore it.
           manip

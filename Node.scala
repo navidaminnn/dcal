@@ -119,6 +119,8 @@ final class Node(val token: Token)(
     assert(token.canBeLookedUp)
     referencePoint.findNodeByKey(thisNode)
 
+  override def lookupKeyOpt: Option[Node] =
+    this.inspect(token.lookedUpBy)
 end Node
 
 object Node:
@@ -169,10 +171,8 @@ object Node:
       cloneEval().value
 
     final def inspect[T](pattern: Pattern[T]): Option[T] =
-      pattern.check(this) match
-        case Pattern.Result.Rejected => None
-        case Pattern.Result.Accepted(value, _) =>
-          Some(value)
+      import dsl.*
+      (pattern.map(Some(_)) | Pattern.pure(None)).manip.perform(this)._2
 
     def asNode: Node =
       throw NodeError("not a node")
@@ -453,6 +453,13 @@ object Node:
 
     override def idxInParent: Int = _idxInParent
 
+    def lookupKeyOpt: Option[Node] = None
+
+    final def lookupKey: Node =
+      val keyOpt = lookupKeyOpt
+      require(keyOpt.nonEmpty)
+      keyOpt.get
+
     final def replaceThis(replacement: => Node.Child): Node.Child =
       val parentTmp = parent
       val idxInParentTmp = idxInParent
@@ -489,6 +496,12 @@ object Node:
 
     // can't export due to redef rules
     override def knownSize: Int = _children.knownSize
+
+    def ensureWithKey(elem: Node): this.type =
+      val key = elem.lookupKey
+      if !_children.exists(_.lookupKeyOpt.contains(key))
+      then addOne(elem)
+      this
 
     override def prepend(elem: Node.Child): this.type =
       _children.prepend(elem.ensureParent(parent, 0))

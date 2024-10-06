@@ -6,118 +6,33 @@ import scala.util.NotGiven
 import izumi.reflect.Tag
 import scala.reflect.TypeTest
 
-enum Pattern[+T]:
-  import Pattern.*
-
-  case Pure(value: T)
-  case Ap[T, U](ff: Pattern[T => U], fa: Pattern[T]) extends Pattern[U]
-  case FlatMap[T, U](pattern: Pattern[T], fn: T => Pattern[U])
-      extends Pattern[U]
-
-  case Current extends Pattern[Node.All]
-  case MarkProgress(pattern: Pattern[T])
-  case AtNode(dest: Pattern[Node.All], pattern: Pattern[T])
-
-  case Restrict[T, U](pattern: Pattern[T], fn: PartialFunction[T, U])
-      extends Pattern[U]
-
-  case Reject extends Pattern[Nothing]
-  case Deferred(fn: () => Pattern[T])
-
-  case Negation(pattern: Pattern[?]) extends Pattern[Unit]
-  case Disjunction(first: Pattern[T], second: Pattern[T])
-
-  def check(node: Node.All): Result[T] =
-    import cats.Eval
-
-    def impl[T](self: Pattern[T], node: Node.All): Eval[Result[T]] =
-      self match
-        case Pure(value) => Eval.now(Result.Accepted(value, 0))
-        case Ap(ff, fa) =>
-          impl(ff, node).flatMap:
-            case Result.Rejected => Eval.now(Result.Rejected)
-            case Result.Accepted(ff, matchedCount) =>
-              impl(fa, node).map:
-                case Result.Rejected => Result.Rejected
-                case Result.Accepted(value, matchedCount2) =>
-                  Result.Accepted(ff(value), matchedCount.max(matchedCount2))
-        case FlatMap(pattern, fn) =>
-          impl(pattern, node).flatMap:
-            case Result.Rejected => Eval.now(Result.Rejected)
-            case Result.Accepted(value, matchedCount) =>
-              impl(fn(value), node)
-                .map(_.combineMatchedCount(matchedCount))
-        case Current => Eval.now(Result.Accepted(node, 0))
-        case MarkProgress(pattern) =>
-          impl(pattern, node).map:
-            case Result.Accepted(value, matchedCount) =>
-              Result.Accepted(value, matchedCount + 1)
-            case Result.Rejected => Result.Rejected
-        case AtNode(dest, pattern) =>
-          impl(dest, node).flatMap:
-            case Result.Accepted(destNode, matchedCount) =>
-              impl(pattern, destNode).map:
-                case Result.Accepted(value, _) =>
-                  Result.Accepted(value, matchedCount)
-                case Result.Rejected => Result.Rejected
-            case Result.Rejected => Eval.now(Result.Rejected)
-        case Restrict(pattern, fn) =>
-          impl(pattern, node)
-            .map:
-              case Result.Rejected => Result.Rejected
-              case Result.Accepted(fn(u), matchedCount) =>
-                Result.Accepted(u, matchedCount)
-              case Result.Accepted(_, _) => Result.Rejected
-        case Reject       => Eval.now(Result.Rejected)
-        case Deferred(fn) => impl(fn(), node)
-        case Negation(pattern) =>
-          impl(pattern, node).map:
-            case Result.Rejected       => Result.Accepted((), 0)
-            case Result.Accepted(_, _) => Result.Rejected
-        case Disjunction(first, second) =>
-          impl(first, node).flatMap:
-            case accepted @ Result.Accepted(_, _) => Eval.now(accepted)
-            case Result.Rejected                  => impl(second, node)
-
-    impl(this, node).value
-  end check
-end Pattern
+final class Pattern[+T](val manip: Manip[(Int, T)]) extends AnyVal:
+  def isBacktrack: Boolean = manip.isBacktrack
 
 object Pattern:
-  given alternative: cats.Alternative[Pattern] with
-    override val unit: Pattern[Unit] = Pattern.Pure(())
-    def pure[A](value: A): Pattern[A] = Pattern.Pure(value)
+  import Manip.ops.{*, given}
+
+  export applicative.{pure, unit}
+  export ops.reject
+
+  given applicative: cats.Applicative[Pattern] with
+    override val unit: Pattern[Unit] = pure(())
+    def pure[A](value: A): Pattern[A] =
+      Pattern(Manip.pure((0, value)))
     def ap[A, B](ff: Pattern[A => B])(fa: Pattern[A]): Pattern[B] =
-      Pattern.Ap(ff, fa)
-    def empty[A]: Pattern[A] = Pattern.Reject
+      Pattern:
+        (ff.manip, fa.manip).mapN:
+          case ((progL, ff), (progR, fa)) =>
+            (progL.max(progR), ff(fa))
+
+  given semigroupK: cats.SemigroupK[Pattern] with
     def combineK[A](x: Pattern[A], y: Pattern[A]): Pattern[A] =
-      Pattern.Disjunction(x, y)
+      Pattern(x.manip.combineK(y.manip))
 
-  enum Result[+T]:
-    case Rejected
-    case Accepted[T](value: T, matchedCount: Int) extends Result[T]
-
-    def map[U](fn: T => U): Result[U] =
-      this match
-        case Rejected                      => Rejected
-        case Accepted(value, matchedCount) => Accepted(fn(value), matchedCount)
-
-    def combineMatchedCount(matchedCount: Int): Result[T] =
-      this match
-        case Rejected => Rejected
-        case Accepted(value, matchedCount2) =>
-          Accepted(value, matchedCount `max` matchedCount2)
-
-    def ignoreMatchedCount: Result[T] =
-      this match
-        case Rejected           => Rejected
-        case Accepted(value, _) => Accepted(value, 0)
-
-    def incMatchedCount: Result[T] =
-      this match
-        case Rejected                      => Rejected
-        case Accepted(value, matchedCount) => Accepted(value, matchedCount + 1)
-  end Result
+  given monoidK(using DebugInfo): cats.MonoidK[Pattern] with
+    export semigroupK.combineK
+    def empty[A]: Pattern[A] =
+      Pattern(Manip.monoidK.empty)
 
   protected transparent trait NodeTypeTest[T <: Node.All](using
       typeTest: TypeTest[Node.All, T]
@@ -133,6 +48,7 @@ object Pattern:
   case object IsEnd extends NodeTypeTest[Node.RightSiblingSentinel]
   case object IsTop extends NodeTypeTest[Node.Top]
   case object IsParent extends NodeTypeTest[Node.Parent]
+  case object IsSibling extends NodeTypeTest[Node.Sibling]
   case object IsChild extends NodeTypeTest[Node.Child]
   case object IsNode extends NodeTypeTest[Node]
 
@@ -158,6 +74,9 @@ object Pattern:
       node.asInstanceOf[Node.Embed[T]]
 
   object ops:
+    def reject(using DebugInfo): Pattern[Nothing] =
+      Pattern(Manip.Backtrack(summon[DebugInfo]))
+
     extension [T](lhs: Pattern[T])
       infix def *>:[U](rhs: Pattern[U]): Pattern[U] =
         lhs *> rightSibling(rhs)
@@ -197,23 +116,33 @@ object Pattern:
         (lhs, rightSibling(rhs)).mapN(_ ++ _)
 
     extension [T](lhs: Pattern[T])
+      @scala.annotation.targetName("orPattern")
       infix def |(rhs: Pattern[T]): Pattern[T] =
-        Pattern.Disjunction(lhs, rhs)
-      def restrict[U](fn: PartialFunction[T, U]): Pattern[U] =
-        Pattern.Restrict(lhs, fn)
-      def filter(fn: T => Boolean): Pattern[T] =
+        Pattern(Manip.ops.`|`(lhs.manip)(rhs.manip))
+      @scala.annotation.targetName("restrictPattern")
+      def restrict[U](using DebugInfo)(fn: PartialFunction[T, U]): Pattern[U] =
+        Pattern:
+          Manip.ops.restrict(lhs.manip):
+            case (count, fn(value)) => (count, value)
+      def filter(using DebugInfo)(fn: T => Boolean): Pattern[T] =
         lhs.restrict:
           case t if fn(t) => t
       def flatMap[U](fn: T => Pattern[U]): Pattern[U] =
-        Pattern.FlatMap(lhs, fn)
+        Pattern:
+          lhs.manip.lookahead.flatMap: (count, value) =>
+            fn(value).manip.map: (count2, value) =>
+              (count.max(count2), value)
       private def markProgress: Pattern[T] =
-        Pattern.MarkProgress(lhs)
+        Pattern(lhs.manip.map((count, value) => (count + 1, value)))
 
     extension (dest: Pattern[Node.All])
+      @scala.annotation.targetName("patternHere")
       def here[T](pattern: Pattern[T]): Pattern[T] =
-        Pattern.AtNode(dest, pattern)
+        dest.flatMap: node =>
+          Pattern(Manip.AtNode(pattern.manip, node))
 
-    def current: Pattern[Node.All] = Pattern.Current
+    def current: Pattern[Node.All] =
+      Pattern(Manip.ThisNode.map((0, _)))
 
     def atEnd: Pattern[Node.RightSiblingSentinel] =
       current.restrict(IsEnd)
@@ -223,6 +152,9 @@ object Pattern:
 
     def anyParent: Pattern[Node.Parent] =
       current.restrict(IsParent).markProgress
+
+    def anySibling: Pattern[Node.Sibling] =
+      current.restrict(IsSibling).markProgress
 
     def theTop: Pattern[Node.Top] =
       current.restrict(IsTop)
@@ -236,15 +168,19 @@ object Pattern:
     def embedValue[T: Tag]: Pattern[T] =
       embed[T].map(_.value)
 
-    def not(pattern: Pattern[?]): Pattern[Unit] = Pattern.Negation(pattern)
+    def not(using DebugInfo)(pattern: Pattern[?]): Pattern[Unit] =
+      Pattern:
+        Manip
+          .Negated(pattern.manip, summon[DebugInfo])
+          .map(_ => (0, ()))
 
-    def tok(token: Token, tokens: Token*): Pattern[Node] =
+    def tok(using DebugInfo)(token: Token, tokens: Token*): Pattern[Node] =
       current.restrict(NodeHasToken(token, tokens*)).markProgress
 
-    def oneOfToks(tokens: Iterable[Token]): Pattern[Node] =
+    def oneOfToks(using DebugInfo)(tokens: Iterable[Token]): Pattern[Node] =
       val iter = tokens.iterator
       if !iter.hasNext
-      then Reject
+      then reject
       else
         val head = iter.next()
         current.restrict(NodeHasToken(head, iter.toSeq*)).markProgress
@@ -278,9 +214,9 @@ object Pattern:
     def children[T](pattern: Pattern[T]): Pattern[T] =
       firstChild(pattern)
 
+    @scala.annotation.targetName("deferPattern")
     def defer[T](pattern: => Pattern[T]): Pattern[T] =
-      lazy val impl = pattern
-      Pattern.Deferred(() => impl)
+      Pattern(Manip.defer(pattern.manip))
 
     def find[T](pattern: Pattern[T]): Pattern[T] =
       lazy val impl: Pattern[T] =
