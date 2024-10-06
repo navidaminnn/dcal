@@ -268,18 +268,22 @@ object Wellformed:
       private var topShapeOpt: Option[Wellformed.Shape]
   ):
     extension (top: Node.Top.type)
+      @scala.annotation.targetName("setTopShape")
       def ::=(shape: Shape): Unit =
         require(topShapeOpt.isEmpty)
         topShapeOpt = Some(shape)
+      @scala.annotation.targetName("resetTopShape")
       def ::=!(shape: Shape): Unit =
         require(topShapeOpt.nonEmpty)
         topShapeOpt = Some(shape)
 
     extension (token: Token)
+      @scala.annotation.targetName("setShape")
       def ::=(shape: Shape): Unit =
         require(!assigns.contains(token))
         assigns(token) = shape
 
+      @scala.annotation.targetName("resetShape")
       def ::=!(shape: Shape): Unit =
         require(assigns.contains(token))
         assigns(token) = shape
@@ -297,6 +301,7 @@ object Wellformed:
 
   object Shape:
     extension (choice: Shape.Choice)
+      @scala.annotation.targetName("combineChoices")
       def |(other: Shape.Choice): Shape.Choice =
         Shape.Choice(choice.choices ++ other.choices)
 

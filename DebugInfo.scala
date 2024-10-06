@@ -21,6 +21,7 @@ enum DebugInfo:
 
     getSingles(this).map(singleToString).mkString("\nand ")
 
+  @scala.annotation.targetName("concat")
   def ++(other: DebugInfo): DebugInfo =
     DebugInfo.Multi(this, other)
 

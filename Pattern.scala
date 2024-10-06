@@ -78,40 +78,50 @@ object Pattern:
       Pattern(Manip.Backtrack(summon[DebugInfo]))
 
     extension [T](lhs: Pattern[T])
+      @scala.annotation.targetName("keepRightOnSibling")
       infix def *>:[U](rhs: Pattern[U]): Pattern[U] =
         lhs *> rightSibling(rhs)
+      @scala.annotation.targetName("keepLeftOnSibling")
       infix def <*:[U](rhs: Pattern[U]): Pattern[T] =
         lhs <* rightSibling(rhs)
 
     extension [T](lhs: Pattern[T])
+      @scala.annotation.targetName("tupleCons")
       infix def *:[U <: Tuple](rhs: Pattern[U]): Pattern[T *: U] =
         (lhs, rhs).mapN(_ *: _)
+      @scala.annotation.targetName("tupleConsPairOf")
       infix def *:[U](rhs: Pattern[U])(using
           NotGiven[U <:< Tuple]
       ): Pattern[(T, U)] =
         lhs.product(rhs)
 
     extension [T <: Tuple](lhs: Pattern[T])
+      @scala.annotation.targetName("tupleAppend")
       infix def :*[U](rhs: Pattern[U]): Pattern[Tuple.Append[T, U]] =
         (lhs, rhs).mapN(_ :* _)
 
     extension [T](lhs: Pattern[T])(using NotGiven[T <:< Tuple])
+      @scala.annotation.targetName("tupleAppendPairOf")
       infix def :*[U](rhs: Pattern[U]): Pattern[(T, U)] =
         lhs.product(rhs)
 
     extension [T](lhs: Pattern[T])
+      @scala.annotation.targetName("tupleConsOnSibling")
       infix def **:[U <: Tuple](rhs: Pattern[U]): Pattern[T *: U] =
         (lhs, rightSibling(rhs)).mapN(_ *: _)
+      @scala.annotation.targetName("tupleConsPairOfOnSibling")
       infix def **:[U](rhs: Pattern[U])(using
           NotGiven[U <:< Tuple]
       ): Pattern[(T, U)] =
         lhs.product(rightSibling(rhs))
 
     extension [T <: Tuple](lhs: Pattern[T])
+      @scala.annotation.targetName("tupleConcat")
       infix def ++:[U <: Tuple](rhs: Pattern[U]): Pattern[Tuple.Concat[T, U]] =
         (lhs, rhs).mapN(_ ++ _)
 
     extension [T <: Tuple](lhs: Pattern[T])
+      @scala.annotation.targetName("tupleConcatOnSibling")
       infix def ++*:[U <: Tuple](rhs: Pattern[U]): Pattern[Tuple.Concat[T, U]] =
         (lhs, rightSibling(rhs)).mapN(_ ++ _)
 

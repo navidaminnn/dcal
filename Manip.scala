@@ -305,6 +305,7 @@ object Manip:
                       throw RuntimeException("tried to rewrite root node")
 
     extension [T](lhs: Manip[T])
+      @scala.annotation.targetName("or")
       def |(rhs: Manip[T]): Manip[T] =
         Manip.Disjunction(lhs, rhs)
       def flatMap[U](using DebugInfo)(fn: T => Manip[U]): Manip[U] =

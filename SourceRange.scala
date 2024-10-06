@@ -82,6 +82,7 @@ final class SourceRange private (
   override def tail: SourceRange =
     drop(1)
 
+  @scala.annotation.targetName("combine")
   def <+>(other: SourceRange): SourceRange =
     if source eq Source.empty
     then other
