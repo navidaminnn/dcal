@@ -265,7 +265,7 @@ object Node:
 
   final class Floating(child: Node.Child @constructorOnly)
       extends Root,
-        Parent(Iterator.single(child)):
+        Parent(Iterator.single(child), needEnsureParent = false):
 
     override def asNonFloatingParent: Node | Top =
       throw NodeError("was floating parent")
@@ -287,15 +287,18 @@ object Node:
   //         result
   //       case result => result
 
-  sealed trait Parent(childrenInit: IterableOnce[Node.Child] @constructorOnly)
-      extends All:
+  sealed trait Parent(
+      childrenInit: IterableOnce[Node.Child] @constructorOnly,
+      needEnsureParent: Boolean @constructorOnly = true
+  ) extends All:
     thisParent =>
 
     def asNonFloatingParent: Node | Top
 
     override type This <: Parent
 
-    val children: Node.Children = Node.Children(thisParent, childrenInit)
+    val children: Node.Children =
+      Node.Children(thisParent, childrenInit, needEnsureParent)
 
     final def apply(tok: Token): Node =
       val results = children.iterator
@@ -431,7 +434,7 @@ object Node:
     private var _idxInParent: Int = 0
 
     def ensureParent(parent: Parent, idxInParent: Int): this.type =
-      if (_parent eq parent)
+      if _parent eq parent
       then
         // reparenting within the same parent shouldn't really do anything,
         // so don't make a fuss if it happens. The seq ops on Children might do this.
@@ -488,9 +491,13 @@ object Node:
 
   final class Children private[Node] (
       val parent: Node.Parent,
-      childrenInit: IterableOnce[Node.Child] @constructorOnly
+      childrenInit: IterableOnce[Node.Child] @constructorOnly,
+      needEnsureParent: Boolean @constructorOnly
   ) extends mutable.IndexedBuffer[Node.Child]:
     private val _children = mutable.ArrayBuffer.from(childrenInit)
+    if needEnsureParent then
+      _children.iterator.zipWithIndex.foreach: (child, idx) =>
+        child.ensureParent(parent, idx)
     export _children.{length, apply}
 
     private def reIdxFromIdx(idx: Int): this.type =

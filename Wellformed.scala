@@ -43,19 +43,13 @@ final class Wellformed private (
   private lazy val tokenByShortName: Map[SourceRange, Token] =
     shortNameByToken.map(_.reverse)
 
-  // private lazy val tokensByName: Map[SourceRange, Token] =
-  //   assigns.map: (token, _) =>
-  //     SourceRange.entire(Source.fromString(token.name)) -> token
-
-  // private lazy val namesByToken: Map[Token, SourceRange] =
-  //   assigns.map: (token, _) =>
-  //     token -> SourceRange.entire(Source.fromString(token.name))
-
   lazy val markErrors: Manip[Unit] =
     def shapePattern(shape: Wellformed.Shape): Pattern[Node.Sibling] =
       shape match
         case Shape.Atom =>
           atEnd
+        case Shape.AnyShape =>
+          anySibling
         case Shape.Choice(choices) =>
           oneOfToks(choices)
         case Shape.Repeat(choice) =>
@@ -102,50 +96,6 @@ final class Wellformed private (
     fn(using builder)
     builder.build()
 
-  // def checkTree(top: Node.Top): Unit =
-  //   markErrors.perform(top)
-
-  // private lazy val rewriteFromSExpressions: Manip[Unit] =
-  //   pass(strategy = pass.bottomUp, once = true)
-  //     .rules:
-  //       on(
-  //         tok(sexpr.tokens.List).map(_.sourceRange)
-  //         *: children:
-  //           tok(sexpr.tokens.Atom)
-  //             .map(_.sourceRange)
-  //             .restrict(tokensByName)
-  //             *: repeated(anyChild)
-  //       ).rewrite: (src, token, listOfChildren) =>
-  //         Splice(token(listOfChildren.iterator.map(_.unparent())).at(src))
-
-  // def fromSExpression(top: Node.Top): Unit =
-  //   locally:
-  //     sexpr.wellFormed.markErrors
-  //       *> rewriteFromSExpressions
-  //       *> markErrors
-  //   .perform(top)
-
-  // private lazy val rewriteToSExpressions: Manip[Unit] =
-  //   pass(once = true)
-  //     .rules:
-  //       on(
-  //         anyNode
-  //           *: anyNode
-  //             .map(_.token)
-  //             .restrict(namesByToken)
-  //       ).rewrite: (node, name) =>
-  //         val list = sexpr.tokens.List()
-  //         list.children.addOne(sexpr.tokens.Atom(name))
-  //         list.children.addAll(node.unparentedChildren)
-  //         Splice(list)
-
-  // def toSExpression(top: Node.Top): Unit =
-  //   locally:
-  //     markErrors
-  //       *> rewriteToSExpressions
-  //       *> sexpr.wellFormed.markErrors
-  //   .perform(top)
-
   lazy val serializeTree: Manip[Unit] =
     extension (node: Node)
       def shortName =
@@ -154,12 +104,12 @@ final class Wellformed private (
           SourceRange.entire(Source.fromString(node.token.name))
         )
 
-    markErrors
-    *> pass(once = true)
+    pass(once = true)
       .rules:
         on(
           tok(Wellformed.SkipMarker)
-        ).rewrite(_ => SkipMatch)
+        ).rewrite: _ =>
+          SkipMatch
         | on(
           anyNode
             .filter(n => !n.token.showSource)
@@ -186,13 +136,13 @@ final class Wellformed private (
                   )
           val list = sexpr.tokens.List(toSkip)
           list.children.addAll(node.unparentedChildren)
-          Splice(list)
+          SpliceAndFirstChild(list)
     *> pass(once = true)
       .rules:
         on(
           tok(Wellformed.SkipMarker)
         ).rewrite: marker =>
-          Splice(marker.unparentedChildren.iterator.toSeq*)
+          SpliceAndFirstChild(marker.unparentedChildren.iterator.toSeq*)
 
   lazy val deserializeTree: Manip[Unit] =
     import sexpr.tokens.Atom
@@ -291,7 +241,7 @@ object Wellformed:
   end Builder
 
   enum Shape:
-    case Atom
+    case Atom, AnyShape
     case Choice(choices: Set[Token])
     case Repeat(choice: Shape.Choice)
     case Fields(fields: List[Shape.Choice])

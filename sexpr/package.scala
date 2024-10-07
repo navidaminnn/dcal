@@ -115,6 +115,11 @@ object serialize:
 
       impl
 
+  def toPrettyString(top: Node.Top): String =
+    val out = java.io.ByteArrayOutputStream()
+    toPrettyWritable(top).writeBytesTo(out)
+    out.toString()
+
   def toCompactWritable(top: Node.Top): geny.Writable =
     new geny.Writable:
       override def writeBytesTo(out: java.io.OutputStream): Unit =

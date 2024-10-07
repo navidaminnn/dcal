@@ -154,28 +154,31 @@ object Pattern:
     private def current: Pattern[Node.All] =
       Pattern(Manip.ThisNode.map((0, _)))
 
-    def allNode: Pattern[Node.All] =
+    def allNode(using DebugInfo): Pattern[Node.All] =
       current.markProgress
 
-    def atEnd: Pattern[Node.RightSiblingSentinel] =
+    def atEnd(using DebugInfo): Pattern[Node.RightSiblingSentinel] =
       current.restrict(IsEnd)
 
-    def anyNode: Pattern[Node] =
+    def anyNode(using DebugInfo): Pattern[Node] =
       current.restrict(IsNode).markProgress
 
-    def anyParent: Pattern[Node.Parent] =
+    def anyParent(using DebugInfo): Pattern[Node.Parent] =
       current.restrict(IsParent).markProgress
 
-    def anySibling: Pattern[Node.Sibling] =
+    def anySibling(using DebugInfo): Pattern[Node.Sibling] =
       current.restrict(IsSibling).markProgress
 
-    def theTop: Pattern[Node.Top] =
+    def theTop(using DebugInfo): Pattern[Node.Top] =
       current.restrict(IsTop)
 
-    def anyChild: Pattern[Node.Child] =
+    def anyChild(using DebugInfo): Pattern[Node.Child] =
       current.restrict(IsChild).markProgress
 
-    def embed[T](using tag: Tag[T]): Pattern[Node.Embed[T]] =
+    def embed[T](using
+        tag: Tag[T],
+        debugInfo: DebugInfo
+    ): Pattern[Node.Embed[T]] =
       current.restrict(IsEmbed(tag)).markProgress
 
     def embedValue[T: Tag]: Pattern[T] =

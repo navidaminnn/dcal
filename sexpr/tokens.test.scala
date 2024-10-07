@@ -1,9 +1,6 @@
 package distcompiler.sexpr
 
-import utest.*
-
-object tokensTest extends TestSuite:
-  def tests = Tests:
-    test("token names"):
-      tokens.Atom.name ==> "distcompiler.sexpr.tokens.Atom"
-      tokens.List.name ==> "distcompiler.sexpr.tokens.List"
+class tokensTest extends munit.FunSuite:
+  test("token names"):
+    assertEquals(tokens.Atom.name, "distcompiler.sexpr.tokens.Atom")
+    assertEquals(tokens.List.name, "distcompiler.sexpr.tokens.List")
