@@ -61,16 +61,24 @@ final class Wellformed private (
         case Shape.Repeat(choice) =>
           shapePattern(choice)
         case Shape.Fields(fields) =>
+          val expectedEndIdx = fields.size
+          val endPat =
+            atEnd.restrict:
+              case sentinel if sentinel.idxInParent == expectedEndIdx =>
+                sentinel
+
           fields.iterator.zipWithIndex
             .map: (field, idx) =>
               shapePattern(field).restrict:
                 case sibling if sibling.idxInParent == idx => sibling
-            .reduceLeftOption(_ | _)
-            .getOrElse(Pattern.reject)
+            .foldLeft(endPat: Pattern[Node.Sibling])(_ | _)
 
     pass(once = true)
       .rules:
         on(
+          tok(Builtin.Error)
+        ).rewrite(_ => SkipMatch)
+        | on(
           anySibling
           <* not:
             assigns.foldLeft(shapePattern(topShape) <* parent(theTop)):
@@ -151,7 +159,7 @@ final class Wellformed private (
       .rules:
         on(
           tok(Wellformed.SkipMarker)
-        ).rewrite(_ => Skip)
+        ).rewrite(_ => SkipMatch)
         | on(
           anyNode
             .filter(n => !n.token.showSource)
@@ -189,7 +197,9 @@ final class Wellformed private (
   lazy val deserializeTree: Manip[Unit] =
     import sexpr.tokens.Atom
     val src = SourceRange.entire(Source.fromString("::src"))
+    object srcMapRef extends Manip.Ref[mutable.HashMap[os.Path, Source]]
     pass(once = true)
+      .withState(srcMapRef)(mutable.HashMap.empty)
       .rules:
         on(
           tok(Atom)
@@ -203,37 +213,14 @@ final class Wellformed private (
               Splice(token(atom.sourceRange))
         | on(
           tok(sexpr.tokens.List)
-          *>: children:
-            tok(Atom)
-            *>:
-              locally[Pattern[Either[List[Node.Child], Either[
-                (Node, List[Node.Child]),
-                ((Node, Node, Node), List[Node.Child])
-              ]]]]:
-                tok(Atom).filter(_.sourceRange == src)
-                  *>:
-                    locally:
-                      (tok(Atom) **: repeated(anyChild)).map(Left(_))
-                        | locally:
-                          (tok(sexpr.tokens.List)
-                          *> children:
-                            tok(Atom) **: tok(Atom) **: tok(Atom) <*: atEnd
-                          )
-                            **: repeated(anyChild)
-                        .map(Right(_))
-                    .map(Right(_))
-                    | repeated(anyChild).map(Left(_))
-        ).rewrite: result =>
-          ???
-        | on(
-          tok(sexpr.tokens.List)
           *> children:
             tok(Atom).map(_.sourceRange).restrict(tokenByShortName)
               **: (tok(Atom).filter(_.sourceRange == src)
                 *>: tok(Atom).map(_.sourceRange)
                 **: repeated(anyChild))
         ).rewrite: (tok, src, children) =>
-          Splice(tok(children.map(_.unparent())).at(src))
+          children.foreach(_.unparent())
+          SpliceAndFirstChild(tok(children).at(src))
         | on(
           tok(sexpr.tokens.List)
           *> children:
@@ -247,12 +234,22 @@ final class Wellformed private (
         ).rewrite: (tok, bounds, children) =>
           val (orig, offset, len) = bounds
           val path = os.Path(orig.sourceRange.decodeString())
-          // TODO: actually merge the source files so they don't get mapped N times
-          // probably make rewrite support Manip and use state to store a map
-          // ... now I think about it, why not just pass the pattern match result via state too
-          ???
-
-    ???
+          val offsetInt = offset.sourceRange.decodeString().toInt
+          val lenInt = offset.sourceRange.decodeString().toInt
+          srcMapRef.get.flatMap: srcMap =>
+            val src = srcMap.getOrElseUpdate(path, Source.mapFromFile(path))
+            children.foreach(_.unparent())
+            SpliceAndFirstChild(tok(children).at(src))
+        | on(
+          anyChild
+        ).rewrite: err =>
+          Splice(
+            Builtin.Error(
+              "could not recognize node",
+              err.unparent()
+            )
+          )
+    *> markErrors
 end Wellformed
 
 object Wellformed:

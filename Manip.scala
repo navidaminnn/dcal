@@ -151,7 +151,7 @@ object Manip:
         manip: Manip[U]
     ): Manip[U] = Manip.RefUpdated(this, fn, manip, summon[DebugInfo])
 
-  type Rules = Manip[(Node.Sibling, Node.Sibling)]
+  type Rules = Manip[Node.All]
 
   val unit: Manip[Unit] = ().pure
   export ops.defer
@@ -257,52 +257,44 @@ object Manip:
         raw.as(())
 
       def rewrite(using DebugInfo)(
-          action: T => RewriteOp
-      ): Manip[(Node.Sibling, Node.Sibling)] =
-        raw.flatMap:
-          case (matchedCount, value) =>
-            // TODO: replace with FX
-            Manip.ThisNode.flatMap: thisNode =>
-              val replacementsOpt
-                  : Manip.Backtrack[Nothing] | Skip.type | Iterable[
-                    Node.Child
-                  ] =
-                action(value) match
-                  case node: Node.Child => node :: Nil
-                  case Splice(nodes*)   => nodes
-                  case Delete           => Nil
-                  case tn @ TryNext()   => Manip.Backtrack(tn.debugInfo)
-                  case Skip             => Skip
+          action: on.Ctx ?=> T => Rules
+      ): Rules =
+        raw
+          .product(Manip.ThisNode)
+          .flatMap:
+            case ((matchedCount, value), node) =>
+              action(using on.Ctx(matchedCount, node))(value)
 
-              replacementsOpt match
-                case Skip =>
-                  thisNode match
-                    case thisChild: Node.Child =>
-                      (thisChild, thisChild.rightSibling).pure
-                    case _: (Node.Sentinel | Node.Root) =>
-                      throw RuntimeException(
-                        "tried to continue at sentinel or root"
-                      )
-                case bt: Manip.Backtrack[Nothing] => bt
-                case replacements: Iterable[Node.Child] =>
-                  thisNode match
-                    case thisSibling: Node.Sibling =>
-                      val parent = thisSibling.parent
-                      val startIdx = thisSibling.idxInParent
-                      thisSibling.parent.children.patchInPlace(
-                        startIdx,
-                        replacements,
-                        matchedCount
-                      )
-                      // two choices: stay where we are, or jump to the next untouched node
-                      (
-                        parent.children.findSibling(startIdx),
-                        parent.children.findSibling(
-                          startIdx + replacements.size
-                        )
-                      ).pure
-                    case thisRoot: Node.Root =>
-                      throw RuntimeException("tried to rewrite root node")
+    object on:
+      final case class Ctx(count: Int, node: Node.All)
+
+    def Splice(using ctx: on.Ctx)(nodes: Node.Child*): Rules =
+      effect:
+        val sibling = ctx.node.asSibling
+        val parent = sibling.parent
+        val idx = sibling.idxInParent
+        parent.children.patchInPlace(idx, nodes, ctx.count)
+        parent.children.findSibling(idx + nodes.size)
+
+    def SpliceAndRetry(using ctx: on.Ctx)(nodes: Node.Child*): Rules =
+      (effect:
+        val sibling = ctx.node.asSibling
+        (sibling.parent, sibling.idxInParent)
+      <* Splice(nodes*))
+        .map(_.children.findSibling(_))
+
+    def SpliceAndFirstChild(using ctx: on.Ctx)(nodes: Node.Child*): Rules =
+      SpliceAndRetry(nodes*).map(_.asNode.firstChild)
+
+    def SkipMatch(using ctx: on.Ctx): Rules =
+      pure:
+        Iterator
+          .iterate(ctx.node)(_.asSibling.rightSibling)
+          .drop(ctx.count)
+          .next()
+
+    def Goto(node: Node.All): Rules =
+      pure(node)
 
     extension [T](lhs: Manip[T])
       @scala.annotation.targetName("or")
@@ -320,14 +312,6 @@ object Manip:
         lhs.lookahead.flatMap: node =>
           atNode(node)(manip)
 
-    final case class Splice(nodes: Node.Child*)
-    case object Delete
-    final case class TryNext()(using val debugInfo: DebugInfo)
-    case object Skip
-
-    type RewriteOp =
-      Node.Child | Splice | Delete.type | TryNext | Skip.type
-
     // TODO: debug info as implicit param.
     // - optionally print AST after pass
     // - for initial AST, give direct option to print that in reader
@@ -337,7 +321,8 @@ object Manip:
 
     final class pass(
         strategy: pass.TraversalStrategy = pass.topDown,
-        once: Boolean = false
+        once: Boolean = false,
+        wrapFn: Manip[Unit] => Manip[Unit] = identity
     ):
       def rules(rules: Rules): Manip[Unit] =
         lazy val impl: Manip[Unit] =
@@ -348,7 +333,14 @@ object Manip:
               then impl
               else Manip.unit
 
-        impl
+        wrapFn(impl)
+
+      def withState[T](ref: Ref[T])(init: => T): pass =
+        pass(
+          strategy = strategy,
+          once = once,
+          wrapFn = manip => ref.init(init)(defer(wrapFn(manip)))
+        )
     end pass
 
     object pass:
@@ -361,9 +353,9 @@ object Manip:
         ): Manip[Boolean] =
           lazy val impl: Manip[Boolean] =
             commit:
-              rules.flatMap: (_, nextSibling) =>
+              rules.flatMap: nextNode =>
                 commit:
-                  atNode(nextSibling):
+                  atNode(nextNode):
                     impl.as(true)
               | atFirstChild(defer(impl))
                 | atRightSibling(defer(impl))
@@ -385,8 +377,8 @@ object Manip:
             impl
 
           lazy val impl: Manip[Boolean] =
-            rules.flatMap: (_, nextSibling) =>
-              atNode(nextSibling):
+            rules.flatMap: nextNode =>
+              atNode(nextNode):
                 impl.as(true)
             | atRightSibling:
               commit(defer(impl))

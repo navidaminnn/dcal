@@ -43,9 +43,9 @@ object Builtin:
             <*: atEnd
       ).rewrite: (destination, payload, replacement) =>
         destination.children.addOne(payload.unparent())
-        replacement.unparent()
+        Splice(replacement.unparent())
       | on(tok(Lift))
         .rewrite: badLift =>
-          Error("malformed lift node", badLift.unparent())
+          Splice(Error("malformed lift node", badLift.unparent()))
   end Lift
 end Builtin

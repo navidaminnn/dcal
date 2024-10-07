@@ -151,8 +151,11 @@ object Pattern:
         dest.flatMap: node =>
           Pattern(Manip.AtNode(pattern.manip, node))
 
-    def current: Pattern[Node.All] =
+    private def current: Pattern[Node.All] =
       Pattern(Manip.ThisNode.map((0, _)))
+
+    def allNode: Pattern[Node.All] =
+      current.markProgress
 
     def atEnd: Pattern[Node.RightSiblingSentinel] =
       current.restrict(IsEnd)
@@ -213,7 +216,7 @@ object Pattern:
       impl.map(_.toList)
 
     def rightSibling[T](pattern: Pattern[T]): Pattern[T] =
-      anyChild.map(_.rightSibling).here(pattern)
+      anyChild.map(_.rightSibling).markProgress.here(pattern)
 
     def firstChild[T](pattern: Pattern[T]): Pattern[T] =
       anyParent.map(_.firstChild).here(pattern)

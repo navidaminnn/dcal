@@ -174,6 +174,9 @@ object Node:
       import dsl.*
       (pattern.map(Some(_)) | Pattern.pure(None)).manip.perform(this)._2
 
+    def asSibling: Sibling =
+      throw NodeError("not a sibling")
+
     def asNode: Node =
       throw NodeError("not a node")
 
@@ -375,6 +378,8 @@ object Node:
     thisSibling =>
 
     override type This <: Sibling
+
+    override def asSibling: Sibling = this
 
     def isChild: Boolean = false
 
