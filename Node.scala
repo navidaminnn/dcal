@@ -503,7 +503,9 @@ object Node:
     private def reIdxFromIdx(idx: Int): this.type =
       var curr = idx
       while curr < length
-      do _children(curr).ensureParent(parent, curr)
+      do
+        _children(curr).ensureParent(parent, curr)
+        curr += 1
       this
 
     // can't export due to redef rules

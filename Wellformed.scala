@@ -133,7 +133,7 @@ final class Wellformed private (
           val list = sexpr.tokens.List(toSkip)
           list.children.addAll(node.unparentedChildren)
           Splice(list)
-          *> Goto(list.children.findSibling(toSkip.length))
+            *> Goto(list.children.findSibling(toSkip.length))
 
   lazy val deserializeTree: Manip[Unit] =
     import sexpr.tokens.Atom
@@ -148,46 +148,75 @@ final class Wellformed private (
           tokenByShortName.get(atom.sourceRange) match
             case None =>
               Splice(
-                Builtin.Error(s"unknown token \"${atom.sourceRange.decodeString()}\"", atom.unparent())
+                Builtin.Error(
+                  s"unknown token \"${atom.sourceRange.decodeString()}\"",
+                  atom.unparent()
+                )
               )
             case Some(token) =>
               Splice(token(atom.sourceRange))
         | on(
           tok(sexpr.tokens.List)
           *> children:
-            tok(Atom).map(_.sourceRange).restrict(tokenByShortName)
-              **: tok(Atom).filter(_.sourceRange == src)
-              *>: tok(Atom).map(_.sourceRange)
-              **: repeated(anyChild)
+            Fields()
+              .field(tok(Atom).map(_.sourceRange).restrict(tokenByShortName))
+              .skip(tok(Atom).filter(_.sourceRange == src))
+              .field(tok(Atom).map(_.sourceRange))
+              .field(repeated(anyChild))
+              .pattern
         ).rewrite: (tok, src, children) =>
           children.foreach(_.unparent())
           SpliceAndFirstChild(tok(children).at(src))
         | on(
-            // TODO: this proves that **: and co are not fit for purpose. The deeply nested atEnd looks at the wrong node! :skull:
-            tok(sexpr.tokens.List)
-            *> children:
-              tok(Atom).map(_.sourceRange)
-                .restrict(tokenByShortName)
-                **: (tok(Atom).filter(_.sourceRange == src)
-                  *>: (tok(sexpr.tokens.List)
-                  *> children:
-                    tok(Atom)
-                    **: tok(Atom)
-                    **: tok(Atom)
-                    <*: log(atEnd))
-                  **: repeated(anyChild))
+          tok(sexpr.tokens.List)
+          *> children:
+            Fields()
+              .field:
+                tok(Atom)
+                  .map(_.sourceRange)
+                  .restrict(tokenByShortName)
+              .skip(tok(Atom).filter(_.sourceRange == src))
+              .field:
+                tok(sexpr.tokens.List)
+                *> children:
+                  Fields()
+                    .field(tok(Atom))
+                    .field(tok(Atom))
+                    .field(tok(Atom))
+                    .atEnd
+              .field(repeated(anyChild))
+              .pattern
         ).rewrite: (tok, bounds, children) =>
           val (orig, offset, len) = bounds
           val path = os.Path(orig.sourceRange.decodeString())
           val offsetInt = offset.sourceRange.decodeString().toInt
-          val lenInt = offset.sourceRange.decodeString().toInt
+          val lenInt = len.sourceRange.decodeString().toInt
           srcMapRef.get.flatMap: srcMap =>
             val src = srcMap.getOrElseUpdate(path, Source.mapFromFile(path))
             children.foreach(_.unparent())
-            SpliceAndFirstChild(tok(children).at(src))
+            SpliceAndFirstChild(
+              tok(children).at(SourceRange(src, offsetInt, lenInt))
+            )
         | on(
           tok(sexpr.tokens.List)
-          *: firstChild(tok(Atom).map(_.sourceRange).filter(src => !tokenByShortName.contains(src)))
+          *> children:
+            Fields()
+              .field:
+                tok(Atom)
+                  .map(_.sourceRange)
+                  .restrict(tokenByShortName)
+              .field(repeated(anyChild))
+              .pattern
+        ).rewrite: (tok, children) =>
+          children.foreach(_.unparent())
+          SpliceAndFirstChild(tok(children))
+        | on(
+          tok(sexpr.tokens.List)
+            *: firstChild(
+              tok(Atom)
+                .map(_.sourceRange)
+                .filter(src => !tokenByShortName.contains(src))
+            )
         ).rewrite: (node, badSrc) =>
           Splice(
             Builtin.Error(

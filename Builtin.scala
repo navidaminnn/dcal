@@ -37,10 +37,11 @@ object Builtin:
         (tok(Lift) *> firstChild(tok(Lift.DestinationToken)))
           .flatMap(dest => ancestor(tok(dest.token)))
         *: children:
-          (tok(Lift.DestinationToken) <* children(atEnd))
-            *>: tok(Lift.Payload)
-            **: tok(Lift.Replacement)
-            <*: atEnd
+          Fields()
+            .skip(tok(Lift.DestinationToken) <* children(atEnd))
+            .field(tok(Lift.Payload))
+            .field(tok(Lift.Replacement))
+            .atEnd
       ).rewrite: (destination, payload, replacement) =>
         destination.children.addOne(payload.unparent())
         Splice(replacement.unparent())

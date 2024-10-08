@@ -43,17 +43,13 @@ class WellformedTests extends munit.FunSuite:
     yield Node.Top(children)
 
   test("back and forth"):
-    println(examples(3).size)
     examples(3).foreach: tree =>
       val orig = tree.clone()
-      println(s"try $tree")
       wf.serializeTree.perform(tree)
-      println(s"done ${sexpr.serialize.toPrettyString(tree)}")
       if orig.children.nonEmpty
       then assertNotEquals(tree, orig)
-      
+
       wf.deserializeTree.perform(tree)
-      println(s"done2 $tree")
       assertEquals(tree, orig)
 
 object WellformedTests:

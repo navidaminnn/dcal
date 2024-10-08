@@ -6,7 +6,7 @@ import java.nio.charset.{StandardCharsets, Charset}
 import scala.collection.immutable.IndexedSeq
 import scala.collection.mutable
 
-final class SourceRange private (
+final class SourceRange(
     val source: Source,
     val offset: Int,
     val length: Int

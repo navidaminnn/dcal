@@ -1,8 +1,6 @@
 package distcompiler
 
 import cats.syntax.all.given
-import distcompiler.Node.Child
-import distcompiler.Manip.ops.on.Ctx
 
 enum Manip[+T]:
   case Backtrack(debugInfo: DebugInfo)
@@ -223,6 +221,14 @@ object Manip:
     def effect[T](fn: => T): Manip[T] =
       Manip.Effect(() => fn)
 
+    def assertNode(using DebugInfo)(fn: Node.All => Boolean): Manip[Nothing] =
+      Manip.ThisNode.lookahead.flatMap:
+        case node if !fn(node) =>
+          throw NodeError(
+            s"assertion failed at ${summon[DebugInfo]}, looking at $node"
+          )
+        case _ => backtrack
+
     def backtrack(using DebugInfo): Manip[Nothing] =
       Manip.Backtrack(summon[DebugInfo])
 
@@ -281,8 +287,17 @@ object Manip:
         raw
           .product(Manip.ThisNode)
           .flatMap:
-            case ((matchedCount, value), node) =>
-              action(using on.Ctx(matchedCount, node.asSibling.parent, node.asSibling.idxInParent))(value)
+            case ((maxIdx, value), node) =>
+              val count =
+                if maxIdx == -1 then 0
+                else maxIdx - node.asSibling.idxInParent + 1
+              action(using
+                on.Ctx(
+                  count,
+                  node.asSibling.parent,
+                  node.asSibling.idxInParent
+                )
+              )(value)
 
     object on:
       final case class Ctx(count: Int, parent: Node.Parent, idxInParent: Int)
@@ -309,14 +324,16 @@ object Manip:
       override protected def rules(using
           ctx: on.Ctx
       )(nodes: Iterable[Node.Child]): Rules =
-        super.rules(nodes).as(ctx.parent.children.findSibling(ctx.idxInParent))
+        super.rules(nodes)
+          *> effect(ctx.parent.children.findSibling(ctx.idxInParent))
 
     object SpliceAndFirstChild extends SpliceOps:
       override protected def rules(using
-          ctx: Ctx
-      )(nodes: Iterable[Child]): Rules =
+          ctx: on.Ctx
+      )(nodes: Iterable[Node.Child]): Rules =
         super.rules(nodes)
-          .as(ctx.parent.children.findSibling(ctx.idxInParent).asNode.firstChild)
+        *> effect:
+          ctx.parent.children.findSibling(ctx.idxInParent).asNode.firstChild
 
     def SkipMatch(using ctx: on.Ctx): Rules =
       pure(ctx.parent.children.findSibling(ctx.idxInParent + ctx.count))
@@ -404,7 +421,8 @@ object Manip:
         ): Manip[Boolean] =
           lazy val impl: Manip[Boolean] =
             commit:
-              rules.flatMap: nextNode =>
+              atParent(assertNode(n => !n.isInstanceOf[Node.Floating]))
+              | rules.flatMap: nextNode =>
                 commit:
                   atNode(nextNode):
                     impl.as(true)

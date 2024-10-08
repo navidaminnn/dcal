@@ -81,13 +81,40 @@ object Pattern:
     def log[T](using DebugInfo)(pattern: Pattern[T]): Pattern[T] =
       Pattern(Manip.ops.log(pattern.manip))
 
-    extension [T](lhs: Pattern[T])
-      @scala.annotation.targetName("keepRightOnSibling")
-      infix def *>:[U](rhs: Pattern[U]): Pattern[U] =
-        lhs *> rightSibling(rhs)
-      @scala.annotation.targetName("keepLeftOnSibling")
-      infix def <*:[U](rhs: Pattern[U]): Pattern[T] =
-        lhs <* rightSibling(rhs)
+    def siblingAtOffset[T](using DebugInfo)(offset: Int)(
+        pattern: Pattern[T]
+    ): Pattern[T] =
+      anySibling.flatMap: sibling =>
+        val idx = sibling.idxInParent + offset
+        val siblings = sibling.parent.children
+        if siblings.isDefinedAt(idx) || siblings.isDefinedAt(idx - 1)
+        then
+          val target = siblings.findSibling(idx)
+          Pattern(atNode(target)(Manip.pure((idx, ())) *> pattern.manip))
+        else Pattern(backtrack)
+
+    final class Fields[Tpl <: Tuple] private (
+        val pattern: Pattern[Tpl],
+        offset: Int
+    ):
+      def field[T](using
+          DebugInfo
+      )(pattern: Pattern[T]): Fields[Tuple.Append[Tpl, T]] =
+        new Fields(
+          (this.pattern, siblingAtOffset(offset)(pattern)).mapN(_ :* _),
+          offset + 1
+        )
+
+      def skip[T](using DebugInfo)(pattern: Pattern[T]): Fields[Tpl] =
+        new Fields(this.pattern <* siblingAtOffset(offset)(pattern), offset + 1)
+
+      def atEnd(using DebugInfo): Pattern[Tpl] =
+        skip(ops.atEnd).pattern
+
+      // TODO: repeat
+
+    object Fields:
+      def apply(): Fields[EmptyTuple] = new Fields(pure(EmptyTuple), 0)
 
     extension [T](lhs: Pattern[T])
       @scala.annotation.targetName("tupleCons")
@@ -109,25 +136,10 @@ object Pattern:
       infix def :*[U](rhs: Pattern[U]): Pattern[(T, U)] =
         lhs.product(rhs)
 
-    extension [T](lhs: Pattern[T])
-      @scala.annotation.targetName("tupleConsOnSibling")
-      infix def **:[U <: Tuple](rhs: Pattern[U]): Pattern[T *: U] =
-        (lhs, rightSibling(rhs)).mapN(_ *: _)
-      @scala.annotation.targetName("tupleConsPairOfOnSibling")
-      infix def **:[U](rhs: Pattern[U])(using
-          NotGiven[U <:< Tuple]
-      ): Pattern[(T, U)] =
-        lhs.product(rightSibling(rhs))
-
     extension [T <: Tuple](lhs: Pattern[T])
       @scala.annotation.targetName("tupleConcat")
       infix def ++:[U <: Tuple](rhs: Pattern[U]): Pattern[Tuple.Concat[T, U]] =
         (lhs, rhs).mapN(_ ++ _)
-
-    extension [T <: Tuple](lhs: Pattern[T])
-      @scala.annotation.targetName("tupleConcatOnSibling")
-      infix def ++*:[U <: Tuple](rhs: Pattern[U]): Pattern[Tuple.Concat[T, U]] =
-        (lhs, rightSibling(rhs)).mapN(_ ++ _)
 
     extension [T](lhs: Pattern[T])
       @scala.annotation.targetName("orPattern")
@@ -146,46 +158,49 @@ object Pattern:
           lhs.manip.lookahead.flatMap: (count, value) =>
             fn(value).manip.map: (count2, value) =>
               (count.max(count2), value)
-      private def markProgress: Pattern[T] =
-        Pattern(lhs.manip.map((count, value) => (count + 1, value)))
-      private def dropProgress: Pattern[T] =
-        Pattern(lhs.manip.map((_, value) => (0, value)))
+      private def dropIdx: Pattern[T] =
+        Pattern(lhs.manip.map((_, value) => (-1, value)))
 
     extension (dest: Pattern[Node.All])
       @scala.annotation.targetName("patternHere")
       def here[T](pattern: Pattern[T]): Pattern[T] =
         dest.flatMap: node =>
-          Pattern(atNode(node)(pattern.dropProgress.manip))
+          Pattern(atNode(node)(pattern.dropIdx.manip))
 
     private def current: Pattern[Node.All] =
-      Pattern(Manip.ThisNode.map((0, _)))
+      Pattern:
+        Manip.ThisNode.map: node =>
+          node match
+            case sibling: Node.Sibling =>
+              (sibling.idxInParent, node)
+            case _: Node.Root =>
+              (-1, node)
 
-    def allNode(using DebugInfo): Pattern[Node.All] =
-      current.markProgress
+    def allNode: Pattern[Node.All] = current
 
     def atEnd(using DebugInfo): Pattern[Node.RightSiblingSentinel] =
       current.restrict(IsEnd)
 
     def anyNode(using DebugInfo): Pattern[Node] =
-      current.restrict(IsNode).markProgress
+      current.restrict(IsNode)
 
     def anyParent(using DebugInfo): Pattern[Node.Parent] =
-      current.restrict(IsParent).markProgress
+      current.restrict(IsParent)
 
     def anySibling(using DebugInfo): Pattern[Node.Sibling] =
-      current.restrict(IsSibling).markProgress
+      current.restrict(IsSibling)
 
     def theTop(using DebugInfo): Pattern[Node.Top] =
       current.restrict(IsTop)
 
     def anyChild(using DebugInfo): Pattern[Node.Child] =
-      current.restrict(IsChild).markProgress
+      current.restrict(IsChild)
 
     def embed[T](using
         tag: Tag[T],
         debugInfo: DebugInfo
     ): Pattern[Node.Embed[T]] =
-      current.restrict(IsEmbed(tag)).markProgress
+      current.restrict(IsEmbed(tag))
 
     def embedValue[T: Tag]: Pattern[T] =
       embed[T].map(_.value)
@@ -197,7 +212,7 @@ object Pattern:
           .map(_ => (0, ()))
 
     def tok(using DebugInfo)(token: Token, tokens: Token*): Pattern[Node] =
-      current.restrict(NodeHasToken(token, tokens*)).markProgress
+      current.restrict(NodeHasToken(token, tokens*))
 
     def oneOfToks(using DebugInfo)(tokens: Iterable[Token]): Pattern[Node] =
       val iter = tokens.iterator
@@ -205,7 +220,7 @@ object Pattern:
       then reject
       else
         val head = iter.next()
-        current.restrict(NodeHasToken(head, iter.toSeq*)).markProgress
+        current.restrict(NodeHasToken(head, iter.toSeq*))
 
     def parent[T](pattern: Pattern[T]): Pattern[T] =
       anyChild.map(_.parent).here(pattern)
@@ -218,15 +233,17 @@ object Pattern:
 
     def repeated[T](pattern: Pattern[T]): Pattern[List[T]] =
       lazy val impl: Pattern[Chain[T]] =
-        (pattern **: defer(impl))
+        (pattern *: rightSibling(defer(impl)))
           .map(_ +: _)
           | Chain.empty.pure
 
       impl.map(_.toList)
 
     def rightSibling[T](pattern: Pattern[T]): Pattern[T] =
-      anyChild.map(_.rightSibling).flatMap: node =>
-        Pattern(atNode(node)(pattern.manip))
+      anyChild
+        .map(_.rightSibling)
+        .flatMap: node =>
+          Pattern(atNode(node)(pattern.manip))
 
     def firstChild[T](pattern: Pattern[T]): Pattern[T] =
       anyParent.map(_.firstChild).here(pattern)
@@ -249,7 +266,7 @@ object Pattern:
 
     def onlyChild[T](pattern: Pattern[T]): Pattern[T] =
       firstChild:
-        pattern <*: atEnd
+        pattern <* rightSibling(atEnd)
 
     def refersToAny[T]: Pattern[List[Node]] =
       anyNode.map(_.lookup)
