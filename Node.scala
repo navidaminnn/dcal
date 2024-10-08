@@ -25,7 +25,7 @@ final class Node(val token: Token)(
   override def cloneEval(): Eval[Node] =
     Chain
       .traverseViaChain(children.toIndexedSeq)(_.cloneEval())
-      .map(clonedChildren => Node(token)(clonedChildren.toIterable))
+      .map(clonedChildren => Node(token)(clonedChildren.toIterable).like(this))
 
   private var _sourceRange: SourceRange | Null = null
 

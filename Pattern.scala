@@ -77,6 +77,10 @@ object Pattern:
     def reject(using DebugInfo): Pattern[Nothing] =
       Pattern(Manip.Backtrack(summon[DebugInfo]))
 
+    @scala.annotation.targetName("logPattern")
+    def log[T](using DebugInfo)(pattern: Pattern[T]): Pattern[T] =
+      Pattern(Manip.ops.log(pattern.manip))
+
     extension [T](lhs: Pattern[T])
       @scala.annotation.targetName("keepRightOnSibling")
       infix def *>:[U](rhs: Pattern[U]): Pattern[U] =
@@ -144,12 +148,14 @@ object Pattern:
               (count.max(count2), value)
       private def markProgress: Pattern[T] =
         Pattern(lhs.manip.map((count, value) => (count + 1, value)))
+      private def dropProgress: Pattern[T] =
+        Pattern(lhs.manip.map((_, value) => (0, value)))
 
     extension (dest: Pattern[Node.All])
       @scala.annotation.targetName("patternHere")
       def here[T](pattern: Pattern[T]): Pattern[T] =
         dest.flatMap: node =>
-          Pattern(Manip.AtNode(pattern.manip, node))
+          Pattern(atNode(node)(pattern.dropProgress.manip))
 
     private def current: Pattern[Node.All] =
       Pattern(Manip.ThisNode.map((0, _)))
@@ -212,14 +218,15 @@ object Pattern:
 
     def repeated[T](pattern: Pattern[T]): Pattern[List[T]] =
       lazy val impl: Pattern[Chain[T]] =
-        (pattern *: defer(impl))
+        (pattern **: defer(impl))
           .map(_ +: _)
           | Chain.empty.pure
 
       impl.map(_.toList)
 
     def rightSibling[T](pattern: Pattern[T]): Pattern[T] =
-      anyChild.map(_.rightSibling).markProgress.here(pattern)
+      anyChild.map(_.rightSibling).flatMap: node =>
+        Pattern(atNode(node)(pattern.manip))
 
     def firstChild[T](pattern: Pattern[T]): Pattern[T] =
       anyParent.map(_.firstChild).here(pattern)

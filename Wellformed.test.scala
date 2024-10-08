@@ -21,20 +21,20 @@ class WellformedTests extends munit.FunSuite:
         for
           hd <- iterFn()
           tl <- joinN(breadth - 1, iterFn)
-        yield hd :: tl
+        yield hd.clone() :: tl
 
   def exampleNodes(depth: Int): Iterator[Node] =
     depth match
-      case 0 =>
-        Iterator(tok1(src1), tok2(src2), tok1(src3), tok1())
-      case _ =>
+      case 0 => Iterator.empty
+      case _ if depth > 0 =>
         for
           breadth <- (0 until 3).iterator
-          parent <- exampleNodes(0)
+          parent <- Iterator(tok1(src1), tok2(src2), tok1(src3), tok1())
           children <- joinN(breadth, () => exampleNodes(depth - 1))
         yield locally:
-          parent.children.addAll(children)
-          parent
+          val p = parent.clone()
+          p.children.addAll(children)
+          p
 
   def examples(depth: Int): Iterator[Node.Top] =
     for
@@ -43,15 +43,18 @@ class WellformedTests extends munit.FunSuite:
     yield Node.Top(children)
 
   test("back and forth"):
-    examples(2).foreach: tree =>
+    println(examples(3).size)
+    examples(3).foreach: tree =>
       val orig = tree.clone()
       println(s"try $tree")
       wf.serializeTree.perform(tree)
       println(s"done ${sexpr.serialize.toPrettyString(tree)}")
       if orig.children.nonEmpty
       then assertNotEquals(tree, orig)
-      // wf.deserializeTree.perform(tree)
-      // assertEquals(tree, orig)
+      
+      wf.deserializeTree.perform(tree)
+      println(s"done2 $tree")
+      assertEquals(tree, orig)
 
 object WellformedTests:
   object tok1 extends Token:

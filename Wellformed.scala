@@ -107,10 +107,6 @@ final class Wellformed private (
     pass(once = true)
       .rules:
         on(
-          tok(Wellformed.SkipMarker)
-        ).rewrite: _ =>
-          SkipMatch
-        | on(
           anyNode
             .filter(n => !n.token.showSource)
             <* children(atEnd)
@@ -119,11 +115,11 @@ final class Wellformed private (
         | on(
           anyNode
         ).rewrite: node =>
-          val toSkip = Wellformed.SkipMarker(sexpr.tokens.Atom(node.shortName))
+          val toSkip = mutable.ListBuffer(sexpr.tokens.Atom(node.shortName))
           if node.token.showSource
           then
-            toSkip.children.addOne(sexpr.tokens.Atom("::src"))
-            toSkip.children.addOne:
+            toSkip.addOne(sexpr.tokens.Atom("::src"))
+            toSkip.addOne:
               val src = node.sourceRange
               src.source.origin match
                 case None =>
@@ -136,13 +132,8 @@ final class Wellformed private (
                   )
           val list = sexpr.tokens.List(toSkip)
           list.children.addAll(node.unparentedChildren)
-          SpliceAndFirstChild(list)
-    *> pass(once = true)
-      .rules:
-        on(
-          tok(Wellformed.SkipMarker)
-        ).rewrite: marker =>
-          SpliceAndFirstChild(marker.unparentedChildren.iterator.toSeq*)
+          Splice(list)
+          *> Goto(list.children.findSibling(toSkip.length))
 
   lazy val deserializeTree: Manip[Unit] =
     import sexpr.tokens.Atom
@@ -157,7 +148,7 @@ final class Wellformed private (
           tokenByShortName.get(atom.sourceRange) match
             case None =>
               Splice(
-                Builtin.Error(s"unknown token \"${atom.sourceRange}\"", atom)
+                Builtin.Error(s"unknown token \"${atom.sourceRange.decodeString()}\"", atom.unparent())
               )
             case Some(token) =>
               Splice(token(atom.sourceRange))
@@ -165,22 +156,26 @@ final class Wellformed private (
           tok(sexpr.tokens.List)
           *> children:
             tok(Atom).map(_.sourceRange).restrict(tokenByShortName)
-              **: (tok(Atom).filter(_.sourceRange == src)
-                *>: tok(Atom).map(_.sourceRange)
-                **: repeated(anyChild))
+              **: tok(Atom).filter(_.sourceRange == src)
+              *>: tok(Atom).map(_.sourceRange)
+              **: repeated(anyChild)
         ).rewrite: (tok, src, children) =>
           children.foreach(_.unparent())
           SpliceAndFirstChild(tok(children).at(src))
         | on(
-          tok(sexpr.tokens.List)
-          *> children:
-            tok(Atom).map(_.sourceRange).restrict(tokenByShortName)
-              **: (tok(Atom).filter(_.sourceRange == src)
-                *>: (tok(sexpr.tokens.List)
-                *> children:
-                  tok(Atom) **: tok(Atom) **: tok(Atom) <*: atEnd
-                )
-                **: repeated(anyChild))
+            // TODO: this proves that **: and co are not fit for purpose. The deeply nested atEnd looks at the wrong node! :skull:
+            tok(sexpr.tokens.List)
+            *> children:
+              tok(Atom).map(_.sourceRange)
+                .restrict(tokenByShortName)
+                **: (tok(Atom).filter(_.sourceRange == src)
+                  *>: (tok(sexpr.tokens.List)
+                  *> children:
+                    tok(Atom)
+                    **: tok(Atom)
+                    **: tok(Atom)
+                    <*: log(atEnd))
+                  **: repeated(anyChild))
         ).rewrite: (tok, bounds, children) =>
           val (orig, offset, len) = bounds
           val path = os.Path(orig.sourceRange.decodeString())
@@ -191,15 +186,15 @@ final class Wellformed private (
             children.foreach(_.unparent())
             SpliceAndFirstChild(tok(children).at(src))
         | on(
-          anyChild
-        ).rewrite: err =>
+          tok(sexpr.tokens.List)
+          *: firstChild(tok(Atom).map(_.sourceRange).filter(src => !tokenByShortName.contains(src)))
+        ).rewrite: (node, badSrc) =>
           Splice(
             Builtin.Error(
-              "could not recognize node",
-              err.unparent()
+              s"could not recognize token name ${badSrc.decodeString()}",
+              node.unparent()
             )
           )
-    *> markErrors
 end Wellformed
 
 object Wellformed:

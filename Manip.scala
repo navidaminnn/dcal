@@ -282,10 +282,10 @@ object Manip:
           .product(Manip.ThisNode)
           .flatMap:
             case ((matchedCount, value), node) =>
-              action(using on.Ctx(matchedCount, node))(value)
+              action(using on.Ctx(matchedCount, node.asSibling.parent, node.asSibling.idxInParent))(value)
 
     object on:
-      final case class Ctx(count: Int, node: Node.All)
+      final case class Ctx(count: Int, parent: Node.Parent, idxInParent: Int)
 
     transparent trait SpliceOps:
       final def apply(using on.Ctx)(nodes: Node.Child*): Rules =
@@ -298,9 +298,8 @@ object Manip:
           nodes: Iterable[Node.Child]
       ): Rules =
         effect:
-          val sibling = ctx.node.asSibling
-          val parent = sibling.parent
-          val idx = sibling.idxInParent
+          val parent = ctx.parent
+          val idx = ctx.idxInParent
           parent.children.patchInPlace(idx, nodes, ctx.count)
           parent.children.findSibling(idx + nodes.size)
 
@@ -310,28 +309,17 @@ object Manip:
       override protected def rules(using
           ctx: on.Ctx
       )(nodes: Iterable[Node.Child]): Rules =
-        (effect:
-          val sibling = ctx.node.asSibling
-          (sibling.parent, sibling.idxInParent)
-        <* super.rules(nodes))
-          .map(_.children.findSibling(_))
+        super.rules(nodes).as(ctx.parent.children.findSibling(ctx.idxInParent))
 
     object SpliceAndFirstChild extends SpliceOps:
       override protected def rules(using
           ctx: Ctx
       )(nodes: Iterable[Child]): Rules =
-        (effect:
-          val sibling = ctx.node.asSibling
-          (sibling.parent, sibling.idxInParent)
-        <* super.rules(nodes))
-          .map(_.children.findSibling(_).asNode.firstChild)
+        super.rules(nodes)
+          .as(ctx.parent.children.findSibling(ctx.idxInParent).asNode.firstChild)
 
     def SkipMatch(using ctx: on.Ctx): Rules =
-      pure:
-        Iterator
-          .iterate(ctx.node)(_.asSibling.rightSibling)
-          .drop(ctx.count)
-          .next()
+      pure(ctx.parent.children.findSibling(ctx.idxInParent + ctx.count))
 
     def Goto(node: Node.All): Rules =
       pure(node)
