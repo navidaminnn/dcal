@@ -1,13 +1,15 @@
 package distcompiler
 
+import scala.annotation.constructorOnly
 import scala.quoted.*
 
-transparent trait Named(using ownName: Named.OwnName):
-  final def name: String = ownName.name
+transparent trait Named(using ownName: Named.OwnName @constructorOnly):
+  final val name: String = ownName.segments.mkString(".")
+  final val nameSegments: List[String] = ownName.segments
 end Named
 
 object Named:
-  final class OwnName(val name: String) extends AnyVal
+  final class OwnName(val segments: List[String]) extends AnyVal
 
   private def findOwnNameImpl(using quotes: Quotes): Expr[OwnName] =
     import quotes.reflect.*
@@ -27,9 +29,18 @@ object Named:
           s"${sym.fullName} is not a class/object, or has no companion object"
         )
 
-    val theName = stripMacroConstructorStuff(Symbol.spliceOwner).show
+    def getNameSegments(sym: Symbol): List[String] =
+      if sym == defn.RootClass
+      then Nil
+      // Not sure about stripSuffix, but it seems to work well, I guess until a package
+      // has non-alphanumeric chars in its name.
+      // Not sure how else I might try to access the name without the $.
+      else sym.name.stripSuffix("$") :: getNameSegments(sym.owner)
 
-    '{ OwnName(${ Expr(theName) }) }
+    val theType = stripMacroConstructorStuff(Symbol.spliceOwner)
+    val nameSegments = getNameSegments(theType.typeSymbol).reverse
+
+    '{ OwnName(${ Expr(nameSegments) }) }
 
   inline given findOwnName: OwnName =
     ${ findOwnNameImpl }

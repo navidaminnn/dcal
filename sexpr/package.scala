@@ -82,7 +82,7 @@ object parse:
           impl(str)
 
           nodeBuffer += tokens.Atom(locBuilder.result())
-          Splice(nodeBuffer.result()*)
+          splice(nodeBuffer.result())
 
 object serialize:
   // using TailCalls rather than cats.Eval because we are mixing imperative

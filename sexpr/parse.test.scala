@@ -22,7 +22,7 @@ class parseTests extends munit.FunSuite:
     assertEquals(
       "\"\\^\"".parse,
       Node.Top(
-        Error("invalid string escape", Builtin.SourceMarker()),
+        Error("invalid string escape", Builtin.SourceMarker("^")),
         Atom("?")
       )
     )

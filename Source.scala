@@ -11,7 +11,27 @@ trait Source:
   def origin: Option[os.Path]
   def byteBuffer: ByteBuffer
 
-  object lines
+  object lines:
+    val nlOffsets: IArray[Int] =
+      IArray.from:
+        SourceRange.entire(Source.this)
+          .iterator
+          .zipWithIndex
+          .collect:
+            case ('\n', idx) => idx
+    
+    def lineColAtOffset(offset: Int): (Int, Int) =
+      import scala.collection.Searching.*
+      val lineIdx =
+        nlOffsets.search(offset) match
+          case Found(foundIndex) => foundIndex
+          case InsertionPoint(insertionPoint) => insertionPoint
+      val colIdx =
+        if lineIdx == 0
+        then offset
+        else offset - 1 - nlOffsets(lineIdx - 1)
+      
+      (lineIdx, colIdx)
 end Source
 
 object Source:

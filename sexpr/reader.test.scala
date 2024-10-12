@@ -47,14 +47,14 @@ class readerTests extends munit.FunSuite:
   test("error: stray list close"):
     assertEquals(
       ")".read,
-      Node.Top(Error("unexpected end of list", SourceMarker()))
+      Node.Top(Error("unexpected end of list", SourceMarker(")")))
     )
 
   test("error: stray list close, recovery"):
     assertEquals(
       ") 3:foo".read,
       Node.Top(
-        Error("unexpected end of list", SourceMarker()),
+        Error("unexpected end of list", SourceMarker(")")),
         Atom("foo")
       )
     )

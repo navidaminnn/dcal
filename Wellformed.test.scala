@@ -1,6 +1,7 @@
 package distcompiler
 
 import wf.*
+import distcompiler.Manip.ops.withTracer
 
 class WellformedTests extends munit.FunSuite:
   import WellformedTests.*
@@ -45,11 +46,15 @@ class WellformedTests extends munit.FunSuite:
   test("back and forth"):
     examples(3).foreach: tree =>
       val orig = tree.clone()
-      wf.serializeTree.perform(tree)
+      wf.serializeTree
+        .withTracer(Manip.LogTracer(os.write.over.outputStream(os.pwd / "serializeLog.log")))
+        .perform(tree)
       if orig.children.nonEmpty
       then assertNotEquals(tree, orig)
 
-      wf.deserializeTree.perform(tree)
+      wf.deserializeTree
+        .withTracer(Manip.LogTracer(os.write.over.outputStream(os.pwd / "deserializeLog.log")))
+        .perform(tree)
       assertEquals(tree, orig)
 
 object WellformedTests:

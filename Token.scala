@@ -1,6 +1,11 @@
 package distcompiler
 
+import scala.collection.mutable
+
 trait Token extends Equals, Named:
+  require(!Token._nameSet.contains(name), s"duplicate name $name")
+  Token._nameSet += name
+
   final def mkNode(childrenInit: IterableOnce[Node.Child] = Nil): Node =
     Node(this)(childrenInit)
 
@@ -21,12 +26,17 @@ trait Token extends Equals, Named:
 
   final def canBeLookedUp: Boolean = !lookedUpBy.isBacktrack
 
-  def symbolTableFor: List[Token] = Nil
-  def lookedUpBy: Pattern[Node] = Pattern.reject
+  def symbolTableFor: Set[Token] = Set.empty
+  def lookedUpBy: Pattern[Set[Node]] = Pattern.reject
   def showSource: Boolean = false
 end Token
 
 object Token:
+  private val _nameSet: mutable.HashSet[String] = mutable.HashSet.empty
+
+  trait ShowSource extends Token:
+    override def showSource: Boolean = true
+
   private var _freshCounter: Long = 0
   private def incFreshCounter(): Long =
     val result = _freshCounter
@@ -35,7 +45,7 @@ object Token:
 
   abstract class Fresh
       extends Token,
-        Named(using Named.OwnName(s"$$${{ incFreshCounter() }}"))
+        Named(using Named.OwnName(List(s"$$${{ incFreshCounter() }}")))
 
   extension (token: Token)
     def apply(children: Node.Child*): Node =

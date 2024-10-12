@@ -45,10 +45,8 @@ object Pattern:
       require(isDefinedAt(node))
       node.asInstanceOf[T]
 
-  case object IsEnd extends NodeTypeTest[Node.RightSiblingSentinel]
   case object IsTop extends NodeTypeTest[Node.Top]
   case object IsParent extends NodeTypeTest[Node.Parent]
-  case object IsSibling extends NodeTypeTest[Node.Sibling]
   case object IsChild extends NodeTypeTest[Node.Child]
   case object IsNode extends NodeTypeTest[Node]
 
@@ -84,14 +82,16 @@ object Pattern:
     def siblingAtOffset[T](using DebugInfo)(offset: Int)(
         pattern: Pattern[T]
     ): Pattern[T] =
-      anySibling.flatMap: sibling =>
-        val idx = sibling.idxInParent + offset
-        val siblings = sibling.parent.children
-        if siblings.isDefinedAt(idx) || siblings.isDefinedAt(idx - 1)
-        then
-          val target = siblings.findSibling(idx)
-          Pattern(atNode(target)(Manip.pure((idx, ())) *> pattern.manip))
-        else Pattern(backtrack)
+      anyChild
+        .filter(_.parent.nonEmpty)
+        .flatMap: sibling =>
+          val idx = sibling.idxInParent + offset
+          val siblings = sibling.parent.get.children
+          if siblings.isDefinedAt(idx)
+          then
+            val target = siblings(idx)
+            Pattern(atNode(target)(Manip.pure((idx, ())) *> pattern.manip))
+          else reject
 
     final class Fields[Tpl <: Tuple] private (
         val pattern: Pattern[Tpl],
@@ -150,6 +150,7 @@ object Pattern:
         Pattern:
           Manip.ops.restrict(lhs.manip):
             case (count, fn(value)) => (count, value)
+      @scala.annotation.targetName("filterPattern")
       def filter(using DebugInfo)(fn: T => Boolean): Pattern[T] =
         lhs.restrict:
           case t if fn(t) => t
@@ -171,24 +172,23 @@ object Pattern:
       Pattern:
         Manip.ThisNode.map: node =>
           node match
-            case sibling: Node.Sibling =>
-              (sibling.idxInParent, node)
+            case child: Node.Child if child.parent.nonEmpty =>
+              (child.idxInParent, node)
+            case child: Node.Child =>
+              (-1, node)
             case _: Node.Root =>
               (-1, node)
 
     def allNode: Pattern[Node.All] = current
 
-    def atEnd(using DebugInfo): Pattern[Node.RightSiblingSentinel] =
-      current.restrict(IsEnd)
+    def atEnd(using DebugInfo): Pattern[Unit] =
+      anyChild.filter(_.rightSibling.isEmpty).void
 
     def anyNode(using DebugInfo): Pattern[Node] =
       current.restrict(IsNode)
 
     def anyParent(using DebugInfo): Pattern[Node.Parent] =
       current.restrict(IsParent)
-
-    def anySibling(using DebugInfo): Pattern[Node.Sibling] =
-      current.restrict(IsSibling)
 
     def theTop(using DebugInfo): Pattern[Node.Top] =
       current.restrict(IsTop)
@@ -222,8 +222,11 @@ object Pattern:
         val head = iter.next()
         current.restrict(NodeHasToken(head, iter.toSeq*))
 
-    def parent[T](pattern: Pattern[T]): Pattern[T] =
-      anyChild.map(_.parent).here(pattern)
+    def parent[T](using DebugInfo)(pattern: Pattern[T]): Pattern[T] =
+      anyChild
+        .map(_.parent)
+        .filter(_.nonEmpty)
+        .map(_.get).here(pattern)
 
     def ancestor[T](pattern: Pattern[T]): Pattern[T] =
       lazy val impl: Pattern[T] =
@@ -240,13 +243,13 @@ object Pattern:
       impl.map(_.toList)
 
     def rightSibling[T](pattern: Pattern[T]): Pattern[T] =
-      anyChild
-        .map(_.rightSibling)
-        .flatMap: node =>
-          Pattern(atNode(node)(pattern.manip))
+      Pattern(Manip.ops.atRightSibling(pattern.manip))
 
     def firstChild[T](pattern: Pattern[T]): Pattern[T] =
-      anyParent.map(_.firstChild).here(pattern)
+      Pattern(Manip.ops.atFirstChild(pattern.dropIdx.manip))
+
+    def anyAtom(using DebugInfo): Pattern[Node] =
+      anyNode.filter(_.children.isEmpty)
 
     // Convenience alias, because it looks better in context.
     // Lets us write children(...) when we mean all children,
@@ -266,7 +269,7 @@ object Pattern:
 
     def onlyChild[T](pattern: Pattern[T]): Pattern[T] =
       firstChild:
-        pattern <* rightSibling(atEnd)
+        pattern <* atEnd
 
     def refersToAny[T]: Pattern[List[Node]] =
       anyNode.map(_.lookup)

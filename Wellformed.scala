@@ -14,78 +14,100 @@ final class Wellformed private (
   import dsl.*
 
   private lazy val shortNameByToken: Map[Token, SourceRange] =
-    val tokenNameSegments = assigns.iterator
-      .map: (token, _) =>
-        token.name.split('.') -> token
-      .toArray
+    val acc = mutable.HashMap[List[String], mutable.ListBuffer[Token]]()
+    acc(Nil) = assigns.iterator.map(_._1).to(mutable.ListBuffer)
 
-    def impl(
-        tokenNameSegments: Array[(Array[String], Token)]
-    ): Map[Token, String] =
-      tokenNameSegments
-        .groupBy(_._1.last)
+    def namesToFix: List[List[String]] =
+      acc
         .iterator
-        .flatMap:
-          case (shortName, Array((_, tok))) =>
-            Iterator.single(tok -> shortName)
-          case (dupName, arr) =>
-            impl:
-              arr.mapInPlace: (segments, tok) =>
-                segments.init -> tok
-            .map: (tok, name) =>
-              tok -> s"$name.$dupName"
-        .toMap
+        .collect:
+          case (name, buf) if buf.size > 1 => name
+        .toList
 
-    impl(tokenNameSegments)
-      .map: (tok, name) =>
-        tok -> SourceRange.entire(Source.fromString(name))
+    @scala.annotation.tailrec
+    def impl(): Unit =
+      val toFix = namesToFix
+      if toFix.nonEmpty
+      then
+        toFix.foreach: nameTooShort =>
+          val toks = acc(nameTooShort)
+          acc.remove(nameTooShort)
+
+          var didntGrowCount = 0
+          toks.foreach: token =>
+            val longerName = token.nameSegments.takeRight(nameTooShort.size + 1)
+            if longerName == nameTooShort
+            then
+              assert(didntGrowCount == 0,
+                s"duplicate name $nameTooShort in group ${toks.iterator.map(_.name).mkString(", ")}")
+              didntGrowCount += 1
+
+            val buf = acc.getOrElseUpdate(longerName, mutable.ListBuffer.empty)
+            buf += token
+
+        impl()
+
+    impl()
+    acc
+      .iterator
+      .map: (parts, unitList) =>
+        unitList.head -> SourceRange.entire(Source.fromString(parts.mkString(".")))
+      .toMap
 
   private lazy val tokenByShortName: Map[SourceRange, Token] =
     shortNameByToken.map(_.reverse)
 
   lazy val markErrors: Manip[Unit] =
-    def shapePattern(shape: Wellformed.Shape): Pattern[Node.Sibling] =
-      shape match
-        case Shape.Atom =>
-          atEnd
-        case Shape.AnyShape =>
-          anySibling
-        case Shape.Choice(choices) =>
-          oneOfToks(choices)
-        case Shape.Repeat(choice) =>
-          shapePattern(choice)
-        case Shape.Fields(fields) =>
-          val expectedEndIdx = fields.size
-          val endPat =
-            atEnd.restrict:
-              case sentinel if sentinel.idxInParent == expectedEndIdx =>
-                sentinel
+    // target shapes differently... 
+    // can't be "at end" anymore; you have to see it "from above"
+    // ... so we assert shapes at parents, with a tiny bit of extra work
+    def shapePattern(shape: Wellformed.Shape): Pattern[Node.Child] =
+      def forChoice(choice: Shape.Choice): Pattern[Node.Child] =
+        oneOfToks(choice.choices)
 
-          fields.iterator.zipWithIndex
-            .map: (field, idx) =>
-              shapePattern(field).restrict:
-                case sibling if sibling.idxInParent == idx => sibling
-            .foldLeft(endPat: Pattern[Node.Sibling])(_ | _)
+      ???
+      // shape match
+      //   case Shape.Atom =>
+      //     atEnd
+      //   case Shape.AnyShape =>
+      //     anySibling
+      //   case choice: Shape.Choice =>
+      //     forChoice(choice).filter(_.idxInParent == 0)
+      //     | atEnd
+      //   case Shape.Repeat(choice, minCount) =>
+      //     forChoice(choice)
+      //     | atEnd.restrict:
+      //       case sentinel if sentinel.idxInParent >= minCount => sentinel
+      //   case Shape.Fields(fields) =>
+      //     val expectedEndIdx = fields.size
+      //     val endPat =
+      //       atEnd.restrict:
+      //         case sentinel if sentinel.idxInParent == expectedEndIdx =>
+      //           sentinel
+
+      //     fields.iterator.zipWithIndex
+      //       .map: (field, idx) =>
+      //         forChoice(field).restrict:
+      //           case sibling if sibling.idxInParent == idx => sibling
+      //       .foldLeft(endPat: Pattern[Node.Sibling])(_ | _)
 
     pass(once = true)
       .rules:
         on(
           tok(Builtin.Error)
-        ).rewrite(_ => SkipMatch)
+        ).rewrite(_ => skipMatch(continuePass))
         | on(
-          anySibling
+          anyChild
           <* not:
             assigns.foldLeft(shapePattern(topShape) <* parent(theTop)):
               case (acc, (token, shape)) =>
                 acc
                   | (shapePattern(shape) <* parent(tok(token)))
         ).rewrite: node =>
-          Splice(
+          splice(
             Error(
               "unexpected shape",
-              node match
-                case _: Node.Sentinel  => Builtin.SourceMarker()
-                case child: Node.Child => child.unparent()
+              node.unparent()
             )
           )
   end markErrors
@@ -107,11 +129,10 @@ final class Wellformed private (
     pass(once = true)
       .rules:
         on(
-          anyNode
+          anyAtom
             .filter(n => !n.token.showSource)
-            <* children(atEnd)
         ).rewrite: node =>
-          Splice(sexpr.tokens.Atom(node.shortName))
+          splice(sexpr.tokens.Atom(node.shortName))
         | on(
           anyNode
         ).rewrite: node =>
@@ -132,8 +153,8 @@ final class Wellformed private (
                   )
           val list = sexpr.tokens.List(toSkip)
           list.children.addAll(node.unparentedChildren)
-          Splice(list)
-            *> Goto(list.children.findSibling(toSkip.length))
+          spliceThen(list):
+            Manip.pure(toSkip.last).here(continuePassAtNext)
 
   lazy val deserializeTree: Manip[Unit] =
     import sexpr.tokens.Atom
@@ -147,14 +168,14 @@ final class Wellformed private (
         ).rewrite: atom =>
           tokenByShortName.get(atom.sourceRange) match
             case None =>
-              Splice(
+              splice(
                 Builtin.Error(
                   s"unknown token \"${atom.sourceRange.decodeString()}\"",
                   atom.unparent()
                 )
               )
             case Some(token) =>
-              Splice(token(atom.sourceRange))
+              splice(token(atom.sourceRange))
         | on(
           tok(sexpr.tokens.List)
           *> children:
@@ -166,7 +187,7 @@ final class Wellformed private (
               .pattern
         ).rewrite: (tok, src, children) =>
           children.foreach(_.unparent())
-          SpliceAndFirstChild(tok(children).at(src))
+          splice(tok(children).at(src))
         | on(
           tok(sexpr.tokens.List)
           *> children:
@@ -194,9 +215,9 @@ final class Wellformed private (
           srcMapRef.get.flatMap: srcMap =>
             val src = srcMap.getOrElseUpdate(path, Source.mapFromFile(path))
             children.foreach(_.unparent())
-            SpliceAndFirstChild(
+            spliceThen(
               tok(children).at(SourceRange(src, offsetInt, lenInt))
-            )
+            )(continuePassAtNext)
         | on(
           tok(sexpr.tokens.List)
           *> children:
@@ -209,7 +230,7 @@ final class Wellformed private (
               .pattern
         ).rewrite: (tok, children) =>
           children.foreach(_.unparent())
-          SpliceAndFirstChild(tok(children))
+          spliceThen(tok(children))(continuePassAtNext)
         | on(
           tok(sexpr.tokens.List)
             *: firstChild(
@@ -218,7 +239,7 @@ final class Wellformed private (
                 .filter(src => !tokenByShortName.contains(src))
             )
         ).rewrite: (node, badSrc) =>
-          Splice(
+          splice(
             Builtin.Error(
               s"could not recognize token name ${badSrc.decodeString()}",
               node.unparent()
@@ -267,7 +288,7 @@ object Wellformed:
   enum Shape:
     case Atom, AnyShape
     case Choice(choices: Set[Token])
-    case Repeat(choice: Shape.Choice)
+    case Repeat(choice: Shape.Choice, minCount: Int)
     case Fields(fields: List[Shape.Choice])
 
   object Shape:
@@ -276,8 +297,8 @@ object Wellformed:
       def |(other: Shape.Choice): Shape.Choice =
         Shape.Choice(choice.choices ++ other.choices)
 
-    def repeated(choice: Shape.Choice): Shape.Repeat =
-      Shape.Repeat(choice)
+    def repeated(choice: Shape.Choice, minCount: Int = 0): Shape.Repeat =
+      Shape.Repeat(choice, minCount)
 
     def fields(fields: Shape.Choice*): Shape.Fields =
       Shape.Fields(fields.toList)

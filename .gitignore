@@ -8,3 +8,4 @@ target/
 .bloop
 **/project/metals.sbt
 /out
+.clones/

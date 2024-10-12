@@ -16,6 +16,7 @@ enum Manip[+T]:
 
   case Effect(fn: () => T)
   case Log(debugInfo: DebugInfo, manip: Manip[T])
+  case Finally(manip: Manip[T], fn: () => Unit)
 
   case KeepLeft(left: Manip[T], right: Manip[?])
   case KeepRight(left: Manip[?], right: Manip[T])
@@ -51,14 +52,17 @@ enum Manip[+T]:
     type Backtrack[+U] = DebugInfo => Eval[U]
     type RefMap = Map[ById[Manip.Ref[?]], Any]
 
-    def emptyBacktrack(ctxInfo: DebugInfo, node: Node.All): Backtrack[Nothing] =
+    def emptyBacktrack(ctxInfo: DebugInfo, node: Node.All, refMap: RefMap): Backtrack[Nothing] =
       posInfo =>
-        val parentPart = node match
-          case sibling: Node.Sibling => s", child of ${sibling.parent}"
-          case _: Node.Root          => ""
+        refMap.get(ById(Manip.tracerRef)) match
+          case None =>
+          case Some(tracer) =>
+            tracer
+              .asInstanceOf[Manip.Tracer]
+              .onFatal(ctxInfo, posInfo, node)
 
         throw RuntimeException(
-          s"unrecovered backtrack at $posInfo, caught at $ctxInfo while looking at $node$parentPart"
+          s"unrecovered backtrack at $posInfo, caught at $ctxInfo while looking at $node"
         )
 
     def impl[T, U](self: Manip[T])(using
@@ -92,14 +96,19 @@ enum Manip[+T]:
           val value = fn()
           Eval.defer(continue(value))
         case Log(debugInfo, manip) =>
-          val parentPart =
-            node match
-              case sibling: Node.Sibling => s", parent ${sibling.parent}"
-              case _: Node.Root          => ""
-          println(s"log: into $debugInfo, looking at node $node$parentPart")
+          println(s"log: into $debugInfo, looking at node $node")
           given Backtrack[U] = debugInfo2 =>
             println(s"log: backtrack $debugInfo because of $debugInfo2")
             Eval.defer(backtrack(debugInfo2))
+          impl(manip)
+        case Finally(manip, fn) =>
+          given Backtrack[U] = info =>
+            fn()
+            Eval.defer(backtrack(info))
+          given Continue[T, U] = value =>
+            fn()
+            Eval.defer(continue(value))
+
           impl(manip)
         case KeepLeft(left, right: Manip[t]) =>
           given Continue[T, U] = value =>
@@ -112,7 +121,14 @@ enum Manip[+T]:
             Eval.defer(impl[T, U](right))
           impl(left)
         case Commit(manip, debugInfo) =>
-          given Backtrack[U] = emptyBacktrack(debugInfo, node)
+          refMap.get(ById(Manip.tracerRef)) match
+            case None =>
+            case Some(ref) =>
+              ref
+                .asInstanceOf[Manip.Tracer]
+                .onCommit(debugInfo, node)
+
+          given Backtrack[U] = emptyBacktrack(debugInfo, node, refMap)
           impl(manip)
         case Negated(manip: Manip[t], debugInfo) =>
           given Backtrack[U] = _ => Eval.defer(continue(()))
@@ -147,8 +163,8 @@ enum Manip[+T]:
         case Deferred(fn) => impl(fn())
 
     given Continue[T, T] = Eval.now
-    given Backtrack[T] = emptyBacktrack(summon[DebugInfo], node)
     given RefMap = Map.empty
+    given Backtrack[T] = emptyBacktrack(summon[DebugInfo], node, summon[RefMap])
     given Node.All = node
     impl[T, T](this).value
   end perform
@@ -166,7 +182,7 @@ object Manip:
         manip: Manip[U]
     ): Manip[U] = Manip.RefUpdated(this, fn, manip, summon[DebugInfo])
 
-  type Rules = Manip[Node.All]
+  type Rules = Manip[Unit]
 
   val unit: Manip[Unit] = ().pure
   export ops.defer
@@ -210,6 +226,42 @@ object Manip:
       def empty[A]: Lookahead[A] =
         Lookahead(Manip.Backtrack(summon[DebugInfo]))
 
+  object tracerRef extends Ref[Tracer]
+
+  trait Tracer extends java.io.Closeable:
+    def beforePass(debugInfo: DebugInfo, tree: Node.All): Unit
+    def afterPass(debugInfo: DebugInfo, tree: Node.All): Unit
+    def onCommit(debugInfo: DebugInfo, tree: Node.All): Unit
+    def onFatal(debugInfo: DebugInfo, from: DebugInfo, tree: Node.All): Unit
+    // def afterRewrite(debugInfo: DebugInfo, tree: Node.All): Unit
+
+  object NopTracer extends Tracer:
+    def beforePass(debugInfo: DebugInfo, tree: Node.All): Unit = ()
+    def afterPass(debugInfo: DebugInfo, tree: Node.All): Unit = ()
+    def onCommit(debugInfo: DebugInfo, tree: Node.All): Unit = ()
+    def onFatal(debugInfo: DebugInfo, from: DebugInfo, tree: Node.All): Unit = ()
+    def close(): Unit = ()
+
+  final class LogTracer(out: java.io.OutputStream) extends Tracer:
+    export out.close
+
+    private def logln(str: String): Unit =
+      out.write(str.getBytes())
+      out.write('\n')
+      out.flush()
+
+    def beforePass(debugInfo: DebugInfo, tree: Node.All): Unit =
+      logln(s"pass init $debugInfo at $tree")
+
+    def afterPass(debugInfo: DebugInfo, tree: Node.All): Unit =
+      logln(s"pass end $debugInfo at $tree")
+
+    def onCommit(debugInfo: DebugInfo, tree: Node.All): Unit =
+      logln(s"commit $debugInfo at $tree")
+
+    def onFatal(debugInfo: DebugInfo, from: DebugInfo, tree: Node.All): Unit =
+      logln(s"fatal $debugInfo from $from at $tree")
+
   object ops:
     def defer[T](manip: => Manip[T]): Manip[T] =
       lazy val impl = manip
@@ -241,26 +293,41 @@ object Manip:
     def atRightSibling[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       Manip.ThisNode.lookahead.flatMap:
         case thisChild: Node.Child =>
-          atNode(thisChild.rightSibling)(manip)
-        case _: (Node.Sentinel | Node.Root) =>
-          Manip.Backtrack(summon[DebugInfo])
+          thisChild.rightSibling match
+            case None => backtrack
+            case Some(sibling) =>
+              atNode(sibling)(manip)
+        case _: Node.Root => backtrack
+
+    def atIdxSibling[T](using DebugInfo)(idx: Int)(manip: Manip[T]): Manip[T] =
+      on:
+        import Pattern.ops.*
+        parent(anyParent.map(_.children.lift(idx)))
+      .value
+      .restrict:
+        case Some(child) => child
+      .here(manip)
 
     def atFirstChild[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       Manip.ThisNode.lookahead.flatMap:
         case thisParent: Node.Parent =>
-          atNode(thisParent.firstChild)(manip)
-        case _: (Node.Sentinel | Node.Leaf) =>
-          Manip.Backtrack(summon[DebugInfo])
+          thisParent.firstChild match
+            case None => backtrack
+            case Some(sibling) =>
+              atNode(sibling)(manip)
+        case _: Node.Embed[?] => backtrack
 
     def atFirstSibling[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       atParent(atFirstChild(manip))
 
     def atParent[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       Manip.ThisNode.lookahead.flatMap:
-        case thisChild: Node.Sibling =>
-          atNode(thisChild.parent)(manip)
-        case _: Node.Root =>
-          Manip.Backtrack(summon[DebugInfo])
+        case thisChild: Node.Child =>
+          thisChild.parent match
+            case None => backtrack
+            case Some(parent) =>
+              atNode(parent)(manip)
+        case _: Node.Root => backtrack
 
     def addChild[T](using DebugInfo)(child: => Node.Child): Manip[Node.Child] =
       Manip.ThisNode.flatMap:
@@ -285,61 +352,62 @@ object Manip:
           action: on.Ctx ?=> T => Rules
       ): Rules =
         raw
-          .product(Manip.ThisNode)
+          .product(Manip.ThisNode.filter(_.parent.nonEmpty))
           .flatMap:
             case ((maxIdx, value), node) =>
               val count =
                 if maxIdx == -1 then 0
-                else maxIdx - node.asSibling.idxInParent + 1
+                else maxIdx - node.idxInParent + 1
               action(using
                 on.Ctx(
                   count,
-                  node.asSibling.parent,
-                  node.asSibling.idxInParent
+                  node.parent.get,
+                  node.idxInParent
                 )
               )(value)
 
     object on:
       final case class Ctx(count: Int, parent: Node.Parent, idxInParent: Int)
 
-    transparent trait SpliceOps:
-      final def apply(using on.Ctx)(nodes: Node.Child*): Rules =
-        rules(nodes)
+    def spliceThen(using onCtx: on.Ctx)(nodes: Iterable[Node.Child])(manip: on.Ctx ?=> Rules): Rules =
+      effect:
+        val parent = onCtx.parent
+        val idx = onCtx.idxInParent
+        parent.children.patchInPlace(idx, nodes, onCtx.count)
+      *> atNode(onCtx.parent):
+        val rec = manip(using onCtx.copy(count = nodes.size))
+        atFirstChild(atIdxSibling(onCtx.idxInParent)(rec))
+        | rec
 
-      final def apply(using on.Ctx)(nodes: IterableOnce[Node.Child]): Rules =
-        rules(nodes.iterator.toArray)
+    def spliceThen(using on.Ctx)(nodes: Node.Child*)(manip: on.Ctx ?=> Rules): Rules =
+      spliceThen(nodes)(manip)
 
-      protected def rules(using ctx: on.Ctx)(
-          nodes: Iterable[Node.Child]
-      ): Rules =
-        effect:
-          val parent = ctx.parent
-          val idx = ctx.idxInParent
-          parent.children.patchInPlace(idx, nodes, ctx.count)
-          parent.children.findSibling(idx + nodes.size)
+    def spliceThen(using on.Ctx)(nodes: IterableOnce[Node.Child])(manip: on.Ctx ?=> Rules): Rules =
+      spliceThen(nodes.iterator.toArray)(manip)
 
-    object Splice extends SpliceOps
+    def splice(using onCtx: on.Ctx, passCtx: pass.Ctx)(nodes: Iterable[Node.Child]): Rules =
+      spliceThen(nodes)(skipMatch(continuePass))
 
-    object SpliceAndRetry extends SpliceOps:
-      override protected def rules(using
-          ctx: on.Ctx
-      )(nodes: Iterable[Node.Child]): Rules =
-        super.rules(nodes)
-          *> effect(ctx.parent.children.findSibling(ctx.idxInParent))
+    def splice(using on.Ctx, pass.Ctx)(nodes: Node.Child*): Rules =
+      splice(nodes)
 
-    object SpliceAndFirstChild extends SpliceOps:
-      override protected def rules(using
-          ctx: on.Ctx
-      )(nodes: Iterable[Node.Child]): Rules =
-        super.rules(nodes)
-        *> effect:
-          ctx.parent.children.findSibling(ctx.idxInParent).asNode.firstChild
+    def splice(using on.Ctx, pass.Ctx)(nodes: IterableOnce[Node.Child]): Rules =
+      splice(nodes.iterator.toArray)
 
-    def SkipMatch(using ctx: on.Ctx): Rules =
-      pure(ctx.parent.children.findSibling(ctx.idxInParent + ctx.count))
+    def continuePass(using passCtx: pass.Ctx): Rules =
+      passCtx.loop
 
-    def Goto(node: Node.All): Rules =
-      pure(node)
+    def continuePassAtNext(using pass.Ctx): Rules =
+      atNextNode(continuePass)
+
+    def atNextNode(using passCtx: pass.Ctx)(manip: Rules): Rules =
+      passCtx.strategy.atNext(manip)
+
+    def skipMatch(using onCtx: on.Ctx)(manip: Rules): Rules =
+      // first rule: if we're on the parent, don't skip anything
+      (ThisNode.filter(_ eq onCtx.parent) *> manip)
+      | atIdxSibling(onCtx.idxInParent + onCtx.count)(manip)
+      | atParent(manip)
 
     extension [T](lhs: Manip[T])
       @scala.annotation.targetName("or")
@@ -351,6 +419,15 @@ object Manip:
         Lookahead(lhs)
       def restrict[U](using DebugInfo)(fn: PartialFunction[T, U]): Manip[U] =
         Manip.Restrict(lhs, fn, summon[DebugInfo])
+      def filter(using DebugInfo)(pred: T => Boolean): Manip[T] =
+        lhs.restrict:
+          case v if pred(v) => v
+      def withFinally(fn: => Unit): Manip[T] =
+        Manip.Finally(lhs, () => fn)
+      def withTracer(tracer: =>Tracer): Manip[T] =
+        tracerRef.init(tracer):
+          tracerRef.get.lookahead.flatMap: tracer =>
+            lhs.withFinally(tracer.close())
 
     extension (lhs: Manip[Node.All])
       def here[U](manip: Manip[U]): Manip[U] =
@@ -369,8 +446,9 @@ object Manip:
         once: Boolean = false,
         wrapFn: Manip[Unit] => Manip[Unit] = identity
     ):
-      def rules(using DebugInfo)(rules: Rules): Manip[Unit] =
-        val tracer = pass.tracerRef.get | pure(pass.NopTracer)
+      require(once)
+      def rules(using DebugInfo)(rules: pass.Ctx ?=> Rules): Manip[Unit] =
+        val tracer = Manip.tracerRef.get | pure(Manip.NopTracer)
         val before = tracer
           .product(Manip.ThisNode)
           .flatMap: (tracer, node) =>
@@ -380,17 +458,17 @@ object Manip:
           .flatMap: (tracer, node) =>
             effect(tracer.afterPass(summon[DebugInfo], node))
 
-        lazy val impl: Manip[Unit] =
-          before
-          *> strategy
-            .traverse(rules)
-            .flatMap: madeChange =>
-              after
-                *> (if madeChange && !once
-                    then impl
-                    else Manip.unit)
+        lazy val loop: Manip[Unit] =
+          commit:
+            rules(using pass.Ctx(strategy, defer(loop)))
+            | strategy.atNext(defer(loop))
 
-        wrapFn(impl)
+        // TODO: add repeat?
+          
+        wrapFn:
+          before
+          *> loop
+          *> after
 
       def withState[T](ref: Ref[T])(init: => T): pass =
         pass(
@@ -401,64 +479,52 @@ object Manip:
     end pass
 
     object pass:
-      object tracerRef extends Ref[Tracer]
-
-      trait Tracer:
-        def beforePass(debugInfo: DebugInfo, tree: Node.All): Unit
-        def afterPass(debugInfo: DebugInfo, tree: Node.All): Unit
-        // def afterRewrite(debugInfo: DebugInfo, tree: Node.All): Unit
-
-      object NopTracer extends Tracer:
-        def beforePass(debugInfo: DebugInfo, tree: Node.All): Unit = ()
-        def afterPass(debugInfo: DebugInfo, tree: Node.All): Unit = ()
+      final case class Ctx(strategy: TraversalStrategy, loop: Manip[Unit]):
+        lazy val loopAtNext: Manip[Unit] =
+          strategy.atNext(loop)
 
       trait TraversalStrategy:
-        def traverse(rules: Rules): Manip[Boolean]
+        def atNext(manip: Manip[Unit]): Manip[Unit]
 
       object topDown extends TraversalStrategy:
-        def traverse(
-            rules: Rules
-        ): Manip[Boolean] =
-          lazy val impl: Manip[Boolean] =
+        def atNext(manip: Manip[Unit]): Manip[Unit] =
+          val next = commit(manip)
+          lazy val upImpl: Manip[Unit] =
             commit:
-              atParent(assertNode(n => !n.isInstanceOf[Node.Floating]))
-              | rules.flatMap: nextNode =>
-                commit:
-                  atNode(nextNode):
-                    impl.as(true)
-              | atFirstChild(defer(impl))
-                | atRightSibling(defer(impl))
-                | atParent(atRightSibling(defer(impl)))
-                | atParent(on(Pattern.ops.theTop).check.as(false))
+              atRightSibling(next)
+              | atParent(defer(upImpl))
+              | on(Pattern.ops.theTop).check
+            
+          commit:
+            atFirstChild(next)
+            | upImpl
 
-          impl
+      // object bottomUp extends TraversalStrategy:
+      //   def traverse(
+      //       rules: Rules
+      //   ): Manip[Boolean] =
+      //     // TODO: fix this code, not tested and probably has similar bug to what topDown had
+      //     def atBottomLeft[T](manip: Manip[T]): Manip[T] =
+      //       lazy val impl: Manip[T] =
+      //         atFirstChild(defer(impl))
+      //           | manip
 
-      object bottomUp extends TraversalStrategy:
-        def traverse(
-            rules: Rules
-        ): Manip[Boolean] =
-          // TODO: fix this code, not tested and probably has similar bug to what topDown had
-          def atBottomLeft[T](manip: Manip[T]): Manip[T] =
-            lazy val impl: Manip[T] =
-              atFirstChild(defer(impl))
-                | manip
+      //       impl
 
-            impl
+      //     lazy val impl: Manip[Boolean] =
+      //       rules.flatMap: nextNode =>
+      //         atNode(nextNode):
+      //           impl.as(true)
+      //       | atRightSibling:
+      //         commit(defer(impl))
+      //       | atParent:
+      //         atRightSibling:
+      //           atFirstChild:
+      //             commit(defer(impl))
+      //         | atFirstSibling:
+      //           commit(defer(impl))
+      //       | atParent(on(Pattern.ops.theTop).check.as(false))
 
-          lazy val impl: Manip[Boolean] =
-            rules.flatMap: nextNode =>
-              atNode(nextNode):
-                impl.as(true)
-            | atRightSibling:
-              commit(defer(impl))
-            | atParent:
-              atRightSibling:
-                atFirstChild:
-                  commit(defer(impl))
-              | atFirstSibling:
-                commit(defer(impl))
-            | atParent(on(Pattern.ops.theTop).check.as(false))
-
-          atBottomLeft(impl)
+      //     atBottomLeft(impl)
   end ops
 end Manip

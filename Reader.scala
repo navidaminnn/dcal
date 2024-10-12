@@ -51,7 +51,7 @@ object Reader:
         matchedRef.updated(_.extendRight):
           manip
 
-    class selecting[T] private (private val cell: selecting.Cell[T])
+    final class selecting[T] private (private val cell: selecting.Cell[T])
         extends AnyVal:
       @targetName("onOneOfChars")
       def onOneOf(chars: IterableOnce[Char])(manip: => Manip[T]): selecting[T] =
@@ -161,6 +161,20 @@ object Reader:
     ): Manip[T] =
       selectManyLike(chars.map(_.toByte))(manip)
 
+    def selectSeq[T](using DebugInfo)(str: String)(manip: Manip[T]): Manip[T] =
+      val bytes = str.getBytes()
+      
+      def impl(idx: Int): Manip[T] =
+        if idx < bytes.length
+        then
+          srcRef.get.lookahead.flatMap: src =>
+            if src.nonEmpty && src.head == bytes(idx)
+            then advancingRefs(impl(idx + 1))
+            else backtrack
+        else manip
+
+      impl(0)
+
     def selectCount[T](using DebugInfo)(count: Int)(manip: Manip[T]): Manip[T] =
       srcRef.get.lookahead.flatMap: src =>
         if count <= src.length
@@ -173,11 +187,8 @@ object Reader:
     def selectOne[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       srcRef.get.lookahead.flatMap: src =>
         if src.nonEmpty
-        then
-          srcRef.updated(_.tail):
-            matchedRef.updated(_.extendRight):
-              manip
-        else Manip.Backtrack(summon[DebugInfo])
+        then advancingRefs(manip)
+        else backtrack
 
     def getSrc: Manip[SourceRange] =
       srcRef.get

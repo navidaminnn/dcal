@@ -99,6 +99,30 @@ final class SourceRange(
       SourceRange(source, startC, endC - startC)
     else this
 
+  def presentationStringShort: String =
+    val builder = StringBuilder()
+    builder ++= source.origin.map(_.toString).getOrElse("<internal>")
+    builder += ':'
+
+    val (lineIdx, colIdx) = source.lines.lineColAtOffset(offset)
+    builder.append(lineIdx + 1)
+    builder += ':'
+    builder.append(colIdx + 1)
+
+    if length > 0
+    then
+      builder += '-'
+      val (lineIdx2, colIdx2) = source.lines.lineColAtOffset(offset + length)
+      if lineIdx == lineIdx2
+      then
+        builder.append(colIdx2 + 1)
+      else
+        builder.append(lineIdx2 + 1)
+        builder += ':'
+        builder.append(colIdx2 + 1)
+
+    builder.result()
+
 object SourceRange:
   def newBuilder: mutable.Builder[Byte, SourceRange] =
     new mutable.Builder[Byte, SourceRange]:

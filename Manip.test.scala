@@ -41,7 +41,8 @@ class ManipTests extends munit.FunSuite:
         on(
           tok(tok2)
         ).rewrite: node =>
-          SpliceAndFirstChild(tok1(node.unparentedChildren))
+          spliceThen(tok1(node.unparentedChildren)):
+            continuePassAtNext
 
   // test sanity condition
   test("all trees are equal".fail):
