@@ -4,7 +4,7 @@ import cats.syntax.all.given
 
 import distcompiler.*
 
-object reader extends Reader:
+object SExprReader extends Reader:
   import distcompiler.dsl.*
   import distcompiler.Builtin.{Error, SourceMarker}
   import Reader.*
@@ -16,7 +16,12 @@ object reader extends Reader:
   private val digit: Set[Char] = ('0' to '9').toSet
   private val whitespace: Set[Char] = Set(' ', '\n', '\r', '\t')
 
-  protected val rules: Manip[SourceRange] =
+  private lazy val unexpectedEOF: Manip[SourceRange] =
+    consumeMatch: m =>
+      addChild(Error("unexpected EOF", SourceMarker().at(m)))
+        *> Manip.pure(m)
+
+  protected lazy val rules: Manip[SourceRange] =
     commit:
       bytes
         .selecting[SourceRange]
@@ -47,11 +52,9 @@ object reader extends Reader:
             // a perfectly normal EOF
             on(theTop).check
               *> Manip.pure(m)
-          | consumeMatch: m =>
-            addChild(Error("unexpected EOF", SourceMarker().at(m)))
-              *> Manip.pure(m)
+          | unexpectedEOF
 
-  private val rawMode: Manip[SourceRange] =
+  private lazy val rawMode: Manip[SourceRange] =
     commit:
       bytes.selectManyLike(digit):
         consumeMatch: m =>
@@ -91,7 +94,7 @@ object reader extends Reader:
                   )
                     *> rules
 
-  private val tokenMode: Manip[SourceRange] =
+  private lazy val tokenMode: Manip[SourceRange] =
     commit:
       bytes
         .selecting[SourceRange]
@@ -103,18 +106,58 @@ object reader extends Reader:
             addChild(tokens.Atom().at(m))
               *> rules
 
-  private val stringMode: Manip[SourceRange] =
+  private lazy val stringMode: Manip[SourceRange] =
+    object builderRef extends Manip.Ref[SourceRange.Builder]
+
+    def addByte(byte: Byte): Manip[SourceRange] =
+      dropMatch:
+        builderRef.doEffect(_.addOne(byte))
+        *> impl
+
+    def addStr(str: String): Manip[SourceRange] =
+      dropMatch:
+        val bytes = str.getBytes()
+        builderRef.doEffect(_.addAll(bytes))
+        *> impl
+
+    def finish(rest: Manip[SourceRange]): Manip[SourceRange] =
+      dropMatch:
+        builderRef.get.flatMap: builder =>
+          val stringContents = builder.result()
+          addChild(tokens.Atom().at(stringContents))
+          *> rest
+
+    lazy val impl: Manip[SourceRange] =
+      commit:
+        bytes
+          .selecting[SourceRange]
+          .on('"')(finish(rules))
+          .onSeq("\\\"")(addByte('"'))
+          .onSeq("\\\\")(addByte('\\'))
+          .onSeq("\\'")(addByte('\''))
+          .onSeq("\\n")(addByte('\n'))
+          .onSeq("\\t")(addByte('\t'))
+          .onSeq("\\r")(addByte('\r'))
+          .onSeq("\\\n\r")(impl)
+          .onSeq("\\\r\n")(impl)
+          .onSeq("\\\n")(impl)
+          .onSeq("\\\r")(impl)
+          .on('\\'):
+            bytes.selectOne:
+              consumeMatch: mark =>
+                addChild(Error(
+                  s"invalid escape sequence ${mark.decodeString()}",
+                  Builtin.SourceMarker(mark),
+                ))
+                *> addByte('?')
+          .fallback:
+            // everything else goes in the literal, except EOF in which case we bail to default rules
+            bytes.selectOne:
+              consumeMatch: m =>
+                assert(m.length == 1)
+                addByte(m.head)
+            | finish(unexpectedEOF)
+
     commit:
-      bytes
-        .selecting[SourceRange]
-        .on('"'):
-          consumeMatch: m =>
-            val stringContents = m.dropRight(1)
-            addChild(tokens.String().at(stringContents))
-              *> rules
-        .onSeq("\\\"")(stringMode) // skip over escaped end quotes
-        .fallback:
-          // everything else goes in the literal, except EOF in which case we bail to default rules
-          bytes.selectOne:
-            stringMode
-          | rules
+      builderRef.init(SourceRange.newBuilder):
+        dropMatch(impl)

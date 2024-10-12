@@ -22,8 +22,8 @@ trait Reader:
 object Reader:
   import dsl.*
 
-  private object srcRef extends Manip.Ref[SourceRange]
-  private object matchedRef extends Manip.Ref[SourceRange]
+  object srcRef extends Manip.Ref[SourceRange]
+  object matchedRef extends Manip.Ref[SourceRange]
 
   // TODO: other ways to access matched ranges
 

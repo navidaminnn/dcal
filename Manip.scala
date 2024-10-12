@@ -181,6 +181,10 @@ object Manip:
     final def updated[U](using DebugInfo)(fn: T => T)(
         manip: Manip[U]
     ): Manip[U] = Manip.RefUpdated(this, fn, manip, summon[DebugInfo])
+    final def doEffect[U](using DebugInfo)(fn: T => U): Manip[U] =
+      import ops.{lookahead, effect}
+      get.lookahead.flatMap: v =>
+        effect(fn(v))
 
   type Rules = Manip[Unit]
 

@@ -124,17 +124,18 @@ final class SourceRange(
     builder.result()
 
 object SourceRange:
-  def newBuilder: mutable.Builder[Byte, SourceRange] =
-    new mutable.Builder[Byte, SourceRange]:
-      private val arrayBuilder = Array.newBuilder[Byte]
-      def addOne(elem: Byte): this.type =
-        arrayBuilder.addOne(elem)
-        this
-      def clear(): Unit = arrayBuilder.clear()
-      def result(): SourceRange =
-        SourceRange.entire(
-          Source.fromByteBuffer(ByteBuffer.wrap(arrayBuilder.result()))
-        )
+  final class Builder extends mutable.Builder[Byte, SourceRange]:
+    private val arrayBuilder = Array.newBuilder[Byte]
+    def addOne(elem: Byte): this.type =
+      arrayBuilder.addOne(elem)
+      this
+    def clear(): Unit = arrayBuilder.clear()
+    def result(): SourceRange =
+      SourceRange.entire(
+        Source.fromByteBuffer(ByteBuffer.wrap(arrayBuilder.result()))
+      )
+
+  def newBuilder: Builder = Builder()
 
   def entire(source: Source): SourceRange =
     SourceRange(source, 0, source.byteBuffer.limit())

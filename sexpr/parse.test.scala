@@ -22,7 +22,109 @@ class parseTests extends munit.FunSuite:
     assertEquals(
       "\"\\^\"".parse,
       Node.Top(
-        Error("invalid string escape", Builtin.SourceMarker("^")),
+        Error("invalid escape sequence \\^", Builtin.SourceMarker("\\^")),
         Atom("?")
       )
     )
+
+  test("empty string"):
+    assertEquals("".parse, Node.Top())
+  test("one space"):
+    assertEquals(" ".parse, Node.Top())
+  test("all misc whitespace"):
+    assertEquals(" \n\n \t\r\n".parse, Node.Top())
+  test("one atom"):
+    assertEquals("8:deadbeef".parse, Node.Top(Atom("deadbeef")))
+  test("two atoms"):
+    assertEquals("3:foo 3:bar".parse, Node.Top(Atom("foo"), Atom("bar")))
+  test("atom with weird chars"):
+    assertEquals("9:(foo bar)".parse, Node.Top(Atom("(foo bar)")))
+
+  test("empty atom"):
+    assertEquals("0:".parse, Node.Top(Atom("")))
+  test("empty list"):
+    assertEquals("()".parse, Node.Top(tokens.List()))
+
+  test("list of two atoms"):
+    assertEquals(
+      "(3:foo 3:bar)".parse,
+      Node.Top(tokens.List(Atom("foo"), Atom("bar")))
+    )
+  test("list of three lists"):
+    assertEquals(
+      "((3:foo) (3:bar) ())".parse,
+      Node.Top(
+        tokens.List(
+          tokens.List(Atom("foo")),
+          tokens.List(Atom("bar")),
+          tokens.List()
+        )
+      )
+    )
+
+  test("error: stray list close"):
+    assertEquals(
+      ")".parse,
+      Node.Top(Error("unexpected end of list", SourceMarker(")")))
+    )
+
+  test("error: stray list close, recovery"):
+    assertEquals(
+      ") 3:foo".parse,
+      Node.Top(
+        Error("unexpected end of list", SourceMarker(")")),
+        Atom("foo")
+      )
+    )
+
+  test("error: missing list terminator"):
+    assertEquals(
+      "(4: foo".parse,
+      Node.Top(
+        tokens.List(Atom(" foo"), Error("unexpected EOF", SourceMarker()))
+      )
+    )
+
+  test("empty string literal"):
+    assertEquals("\"\"".parse, Node.Top(tokens.Atom("")))
+
+  test("3 empty string literals with a list"):
+    assertEquals(
+      "\"\" (\"\" ) \"\"".parse,
+      Node.Top(
+        tokens.Atom(""),
+        tokens.List(tokens.Atom("")),
+        tokens.Atom("")
+      )
+    )
+
+  test("list of 3 string literals"):
+    assertEquals(
+      raw"""("foo" "bar" " ")""".parse,
+      Node.Top(
+        tokens.List(
+          tokens.Atom("foo"),
+          tokens.Atom("bar"),
+          tokens.Atom(" ")
+        )
+      )
+    )
+
+  test("string with escapes"):
+    assertEquals(
+      raw""" "\tfoo\\bar" """.parse,
+      Node.Top(tokens.Atom("\tfoo\\bar"))
+    )
+
+  test("misc token atoms"):
+    assertEquals(
+      "foo bar =ping= :this /42a".parse,
+      Node.Top(
+        Atom("foo"),
+        Atom("bar"),
+        Atom("=ping="),
+        Atom(":this"),
+        Atom("/42a")
+      )
+    )
+
