@@ -1,6 +1,7 @@
 package distcompiler
 
 import cats.syntax.all.given
+import distcompiler.Node.All
 
 enum Manip[+T]:
   case Backtrack(debugInfo: DebugInfo)
@@ -52,18 +53,18 @@ enum Manip[+T]:
     type Backtrack[+U] = DebugInfo => TailRec[U]
     type RefMap = Map[ById[Manip.Ref[?]], Any]
 
+    def tracer(using refMap: RefMap): Manip.Tracer =
+      refMap.get(ById(Manip.tracerRef)) match
+        case None => Manip.NopTracer
+        case Some(tracer) => tracer.asInstanceOf[Manip.Tracer]
+
     def emptyBacktrack(
         ctxInfo: DebugInfo,
         node: Node.All,
         refMap: RefMap
     ): Backtrack[Nothing] =
       posInfo =>
-        refMap.get(ById(Manip.tracerRef)) match
-          case None =>
-          case Some(tracer) =>
-            tracer
-              .asInstanceOf[Manip.Tracer]
-              .onFatal(ctxInfo, posInfo, node)
+        tracer(using refMap).onFatal(ctxInfo, posInfo, node)
 
         throw RuntimeException(
           s"unrecovered backtrack at $posInfo, caught at $ctxInfo while looking at $node"
@@ -76,7 +77,9 @@ enum Manip[+T]:
         node: Node.All
     ): TailRec[U] =
       self match
-        case Backtrack(debugInfo) => tailcall(backtrack(debugInfo))
+        case Backtrack(debugInfo) =>
+          tracer.onBacktrack(debugInfo, node)
+          tailcall(backtrack(debugInfo))
         case Pure(value)          => tailcall(continue(value))
         case ap: Ap[t, u] =>
           given Continue[t => u, U] = ff =>
@@ -92,6 +95,7 @@ enum Manip[+T]:
           given Continue[t, U] = value =>
             restrict.pred.unapply(value) match
               case None =>
+                tracer.onBacktrack(restrict.debugInfo, node)
                 tailcall(backtrack(restrict.debugInfo))
               case Some(value) =>
                 tailcall(continue(value))
@@ -125,29 +129,30 @@ enum Manip[+T]:
             tailcall(impl[T, U](right))
           impl(left)
         case Commit(manip, debugInfo) =>
-          refMap.get(ById(Manip.tracerRef)) match
-            case None =>
-            case Some(ref) =>
-              ref
-                .asInstanceOf[Manip.Tracer]
-                .onCommit(debugInfo, node)
+          tracer.onCommit(debugInfo, node)
 
           given Backtrack[U] = emptyBacktrack(debugInfo, node, refMap)
           impl(manip)
         case Negated(manip: Manip[t], debugInfo) =>
           given Backtrack[U] = _ => tailcall(continue(()))
-          given Continue[t, U] = _ => tailcall(backtrack(debugInfo))
+          given Continue[t, U] = _ =>
+            tracer.onBacktrack(debugInfo, node)
+            tailcall(backtrack(debugInfo))
           impl(manip)
         case RefInit(ref, initFn, manip) =>
           given RefMap = refMap.updated(ById(ref), initFn())
           impl(manip)
         case RefGet(ref, debugInfo) =>
           refMap.get(ById(ref)) match
-            case None        => tailcall(backtrack(debugInfo))
+            case None        =>
+              tracer.onBacktrack(debugInfo, node)
+              tailcall(backtrack(debugInfo))
             case Some(value) => tailcall(continue(value.asInstanceOf[T]))
         case refUpdated: RefUpdated[t, T @unchecked] =>
           refMap.get(ById(refUpdated.ref)) match
-            case None => tailcall(backtrack(refUpdated.debugInfo))
+            case None =>
+              tracer.onBacktrack(refUpdated.debugInfo, node)
+              tailcall(backtrack(refUpdated.debugInfo))
             case Some(value) =>
               given RefMap = refMap.updated(
                 ById(refUpdated.ref),
@@ -240,6 +245,7 @@ object Manip:
     def beforePass(debugInfo: DebugInfo, tree: Node.All): Unit
     def afterPass(debugInfo: DebugInfo, tree: Node.All): Unit
     def onCommit(debugInfo: DebugInfo, tree: Node.All): Unit
+    def onBacktrack(debugInfo: DebugInfo, tree: Node.All): Unit
     def onFatal(debugInfo: DebugInfo, from: DebugInfo, tree: Node.All): Unit
     // def afterRewrite(debugInfo: DebugInfo, tree: Node.All): Unit
 
@@ -247,6 +253,7 @@ object Manip:
     def beforePass(debugInfo: DebugInfo, tree: Node.All): Unit = ()
     def afterPass(debugInfo: DebugInfo, tree: Node.All): Unit = ()
     def onCommit(debugInfo: DebugInfo, tree: Node.All): Unit = ()
+    def onBacktrack(debugInfo: DebugInfo, tree: All): Unit = ()
     def onFatal(debugInfo: DebugInfo, from: DebugInfo, tree: Node.All): Unit =
       ()
     def close(): Unit = ()
@@ -275,6 +282,9 @@ object Manip:
 
     def onCommit(debugInfo: DebugInfo, tree: Node.All): Unit =
       logln(s"commit $debugInfo at $tree")
+
+    def onBacktrack(debugInfo: DebugInfo, tree: All): Unit =
+      logln(s"backtrack $debugInfo at $tree")
 
     def onFatal(debugInfo: DebugInfo, from: DebugInfo, tree: Node.All): Unit =
       logln(s"fatal $debugInfo from $from at $tree")

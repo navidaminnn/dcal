@@ -69,6 +69,8 @@ object TLAReader extends Reader:
   case object `.` extends NonAlpha
   case object `__` extends NonAlpha:
     override def spelling: String = "_"
+  case object `!` extends NonAlpha
+  case object `@` extends NonAlpha
 
   val digits: Set[Char] =
     ('0' to '9').toSet
@@ -84,7 +86,7 @@ object TLAReader extends Reader:
 
   val nonAlphaNonLaTexOperators: IArray[Operators.Operator] =
     allOperators.filter: op =>
-      !op.spelling.startsWith("\\")
+      (!op.spelling.startsWith("\\") || op == Operators.`\\/` || op == Operators.`\\`)
         && !letters(op.spelling.head)
 
   extension (sel: bytes.selecting[SourceRange])
@@ -111,33 +113,96 @@ object TLAReader extends Reader:
       letters.foldLeft(sel): (sel, l) =>
         sel.onSeq(s"\\$l")(impl)
 
+    private def installAlphas(next: =>Manip[SourceRange]): bytes.selecting[SourceRange] =
+      val nxt = defer(next)
+      sel.onOneOf(letters):
+        bytes.selectManyLike(letters ++ digits + '_'):
+            consumeMatch: m =>
+              addChild(Alpha(m))
+                *> nxt
+
     private def installDotNumberLiterals: bytes.selecting[SourceRange] =
       digits.foldLeft(sel): (sel, d) =>
         sel.onSeq(s".$d")(numberLiteralAfterPoint)
 
   override protected lazy val rules: Manip[SourceRange] =
-    moduleSearch
+    moduleSearch.withTracer(Manip.LogTracer(os.write.over.outputStream(os.pwd / "tlaReader.log")))
+
+  lazy val moduleSearchNeverMind: Manip[SourceRange] =
+    on(
+      tok(ModuleGroup) *> parent(theTop)
+    ).value.flatMap: top =>
+        dropMatch:
+          effect(top.children.dropRightInPlace(1))
+          *> atNode(top)(moduleSearch)
 
   private lazy val moduleSearch: Manip[SourceRange] =
     commit:
       bytes
         .selecting[SourceRange]
+        .onOneOf(spaces)(dropMatch(moduleSearch))
         .onSeq("----"):
           bytes.selectManyLike(Set('-')):
-            consumeMatch: m =>
-              addChild(ModuleGroup()).here:
+            commit:
+              (on(theTop).check
+                *> addChild(ModuleGroup())
+                .here:
+                  consumeMatch: m =>
+                    addChild(DashSeq(m))
+                    *> moduleSearch)
+              | (on(
+                tok(ModuleGroup)
+                *> children:
+                  Fields()
+                    .skip(tok(DashSeq))
+                    .skip(tok(Alpha).filterSrc("MODULE"))
+                    .skip(tok(Alpha))
+                    .atEnd
+              ).check *> consumeMatch: m =>
                 addChild(DashSeq(m))
-                  *> tokens
+                *> tokens)
+              | moduleSearchNeverMind
+        .installAlphas:
+          // TODO: this should be one case.
+          // Fields should pass idx along, and have .optional and .repeated elements
+          val validCases =
+            on(
+              tok(ModuleGroup)
+              *> children:
+                Fields()
+                  .skip(tok(DashSeq))
+                  .skip(tok(Alpha).filterSrc("MODULE"))
+                  .atEnd
+            ).check
+            | on(
+              tok(ModuleGroup)
+              *> children:
+                Fields()
+                  .skip(tok(DashSeq))
+                  .skip(tok(Alpha).filterSrc("MODULE"))
+                  .skip(tok(Alpha))
+                  .atEnd
+            ).check
+
+          (validCases *> moduleSearch)
+          | on(theTop).value.flatMap: top =>
+            // Saw an alpha at top level. Delete it.
+            effect(top.children.dropRightInPlace(1))
+            *> moduleSearch
+          | moduleSearchNeverMind // otherwise we failed to parse a module start
         .fallback:
           bytes.selectOne:
-            dropMatch(moduleSearch)
+            commit:
+              (on(theTop).check *> moduleSearch)
+              | moduleSearchNeverMind
           | consumeMatch: m =>
             on(theTop).check *> Manip.pure(m)
+            | moduleSearchNeverMind
 
   private def openGroup(tkn: Token): Manip[SourceRange] =
     consumeMatch: m =>
       addChild(tkn(m))
-        *> tokens
+        .here(tokens)
 
   private def closeGroup(
       tkn: Token,
@@ -222,11 +287,7 @@ object TLAReader extends Reader:
             | invalidGroupClose(TupleGroup, "tuple")
         .onOneOf(digits)(numberLiteral)
         .installDotNumberLiterals
-        .onOneOf(letters):
-          bytes.selectManyLike(letters ++ digits + '_'):
-            consumeMatch: m =>
-              addChild(Alpha(m))
-                *> tokens
+        .installAlphas(tokens)
         .installLatexLikes
         .installNonAlphaNonLatexOperators
         .installNonAlphas

@@ -93,6 +93,21 @@ object Pattern:
             Pattern(atNode(target)(Manip.pure((idx, ())) *> pattern.manip))
           else reject
 
+    // TODO: this part seems broken; it looks at the wrong fields.
+    // plan:
+    // - keep most of the interface. we place Fields().x.y somewhere and that asserts things about fields
+    // - pass "next" idx out of prev pattern
+    // - add repeat and optional parts
+    // - finish with .atEnd or .trailing (option 2 emulates Trieste)
+
+    // - consider adding syntax for tok(X).children(...) so we don't have to type tok(...) *> children(...), which while ok is hard to explain
+    // - similarly, .parent(...)
+
+    // extra thought: being able to be "nowhere" has meaning, even if it overcomplicated Node.
+    //                - model an at-end sentinel that captures where we are.
+    //                - then we don't backtrack just for asking e.g., for first child, we just get a sentinel and we can notice we can't do anything.
+    //                - this will make splice(...) and co much simpler, and I will probably stop being scared of them
+
     final class Fields[Tpl <: Tuple] private (
         val pattern: Pattern[Tpl],
         offset: Int
@@ -167,6 +182,12 @@ object Pattern:
       def here[T](pattern: Pattern[T]): Pattern[T] =
         dest.flatMap: node =>
           Pattern(atNode(node)(pattern.dropIdx.manip))
+
+    extension (nodePat: Pattern[Node])
+      def filterSrc(using DebugInfo)(str: String): Pattern[Node] =
+        nodePat.filterSrc(SourceRange.entire(Source.fromString(str)))
+      def filterSrc(using DebugInfo)(src: SourceRange): Pattern[Node] =
+        nodePat.filter(_.sourceRange == src)
 
     private def current: Pattern[Node.All] =
       Pattern:

@@ -116,16 +116,19 @@ final class Node(val token: Token)(
     this
 
   override def assertErrorRefCounts(): Unit =
-    // may be called during object construction
-    if children ne null
+    // check only if configured; can be very very slow otherwise
+    if Node.assertErrorRefCorrectness
     then
-      val countErrors =
-        children.iterator.filter(_.hasErrors).size
-          + (if token == Builtin.Error then 1 else 0)
-      assert(
-        countErrors == _errorRefCount,
-        s"mismatched error counts, $countErrors != $_errorRefCount"
-      )
+      // may be called during object construction
+      if children ne null
+      then
+        val countErrors =
+          children.iterator.filter(_.hasErrors).size
+            + (if token == Builtin.Error then 1 else 0)
+        assert(
+          countErrors == _errorRefCount,
+          s"mismatched error counts, $countErrors != $_errorRefCount"
+        )
 
   override def hasErrors: Boolean =
     val count1 = _errorRefCount > 0
@@ -143,21 +146,6 @@ final class Node(val token: Token)(
       case _: (Node | Node.Embed[?]) => Node.TraversalAction.Continue
 
     errorsAcc.result()
-
-  // def iteratorDescendants: Iterator[Node.Child] =
-  //   Iterator
-  //     .unfold(firstChild):
-  //       case sentinel: Node.RightSiblingSentinel =>
-  //         sentinel.parent match
-  //           case root: Node.Root => None
-  //           case myself if myself eq thisNode =>
-  //             None // don't climb up beyond where we started
-  //           case parentNode: Node =>
-  //             Some((None, parentNode.rightSibling))
-  //       case node: Node => Some((Some(node), node.firstChild))
-  //       case leaf: (Node.Leaf & Node.Child) =>
-  //         Some((Some(leaf), leaf.rightSibling))
-  //     .flatten
 
   def lookup: List[Node] =
     assert(token.canBeLookedUp)
@@ -180,6 +168,10 @@ object Node:
     def apply(idx: Int): Node.Child = children(idx)
     def drop(n: Int): Seq[Node.Child] = toSeq.drop(n)
     def toSeq: Seq[Node.Child] = children.toSeq
+
+  private val assertErrorRefCorrectness: Boolean =
+    val prop = System.getProperty("distcompiler.Node.assertErrorRefCorrectness")
+    (prop ne null) && prop.nn.toLowerCase() == "yes"
 
   enum TraversalAction:
     case SkipChildren, Continue

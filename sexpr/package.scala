@@ -142,7 +142,7 @@ object serialize:
               for
                 () <- withIndent:
                   list.children.head match
-                    case tokens.Atom(atom) =>
+                    case atom @ tokens.Atom() =>
                       for
                         () <- impl(atom)
                         () <- nl
