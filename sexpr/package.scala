@@ -58,23 +58,27 @@ object serialize:
 
       impl
 
-  def toPrettyString(top: Node.Top): String =
+  def toPrettyString(top: Node.All): String =
     val out = java.io.ByteArrayOutputStream()
     toPrettyWritable(top).writeBytesTo(out)
     out.toString()
 
-  def toCompactWritable(top: Node.Top): geny.Writable =
+  def toCompactWritable(top: Node.All): geny.Writable =
     new geny.Writable:
       override def writeBytesTo(out: java.io.OutputStream): Unit =
-        def impl(node: Node.Child): TailRec[Unit] =
+        def impl(node: Node.All): TailRec[Unit] =
           (node: @unchecked) match
-            case tokens.Atom(atom) =>
+            case top: Node.Top =>
+              top.children.iterator
+                .map(impl)
+                .traverse(identity)
+            case atom @ tokens.Atom() =>
               val sourceRange = atom.sourceRange
               out.write(sourceRange.length.toString().getBytes())
               out.write(':')
               sourceRange.writeBytesTo(out)
               done(())
-            case tokens.List(list) =>
+            case list @ tokens.List(_*) =>
               for
                 () <- done(out.write('('))
                 () <- list.children.iterator
@@ -82,12 +86,9 @@ object serialize:
                 () <- done(out.write(')'))
               yield ()
 
-        top.children.iterator
-          .map(impl)
-          .traverse(identity)
-          .result
+        impl(top).result
 
-  def toPrettyWritable(top: Node.Top): geny.Writable =
+  def toPrettyWritable(top: Node.All): geny.Writable =
     new geny.Writable:
       override def writeBytesTo(out: java.io.OutputStream): Unit =
         var indentLevel = 0
@@ -107,54 +108,52 @@ object serialize:
             () <- done(indentLevel -= 2)
           yield ()
 
-        def impl(node: Node.Child): TailRec[Unit] =
+        def impl(node: Node.All): TailRec[Unit] =
           (node: @unchecked) match
-            case tokens.Atom(atom) =>
+            case top: Node.Top =>
+              top.children.iterator
+                .map(impl)
+                .intercalate(nl)
+                .traverse(identity)
+            case atom @ tokens.Atom() =>
               val sourceRange = atom.sourceRange
               out.write(sourceRange.length.toString().getBytes())
               out.write(':')
               sourceRange.writeBytesTo(out)
               done(())
-            case tokens.List(list) =>
-              if list.children.isEmpty
-              then
-                out.write('(')
-                out.write(')')
-                done(())
-              else if list.children.length == 1
-              then
-                for
-                  () <- done(out.write('('))
-                  () <- impl(list.children.head)
-                  () <- done(out.write(')'))
-                yield ()
-              else
-                def writeChildren(iter: Iterator[Node.Child]): TailRec[Unit] =
-                  iter
-                    .map(impl)
-                    .intercalate(nl)
-                    .traverse(identity)
+            case tokens.List() =>
+              out.write('(')
+              out.write(')')
+              done(())
+            case tokens.List(child) =>
+              for
+                () <- done(out.write('('))
+                () <- impl(child)
+                () <- done(out.write(')'))
+              yield ()
+            case list @ tokens.List(_*) =>
+              def writeChildren(iter: Iterator[Node.Child]): TailRec[Unit] =
+                iter
+                  .map(impl)
+                  .intercalate(nl)
+                  .traverse(identity)
 
-                out.write('(')
-                for
-                  () <- withIndent:
-                    list.children.head match
-                      case tokens.Atom(atom) =>
-                        for
-                          () <- impl(atom)
-                          () <- nl
-                          () <- writeChildren(list.children.iterator.drop(1))
-                        yield ()
-                      case _ =>
-                        for
-                          () <- nl
-                          () <- writeChildren(list.children.iterator)
-                        yield ()
-                  () <- done(out.write(')'))
-                yield ()
+              out.write('(')
+              for
+                () <- withIndent:
+                  list.children.head match
+                    case tokens.Atom(atom) =>
+                      for
+                        () <- impl(atom)
+                        () <- nl
+                        () <- writeChildren(list.children.iterator.drop(1))
+                      yield ()
+                    case _ =>
+                      for
+                        () <- nl
+                        () <- writeChildren(list.children.iterator)
+                      yield ()
+                () <- done(out.write(')'))
+              yield ()
 
-        top.children.iterator
-          .map(impl)
-          .intercalate(nl)
-          .traverse(identity)
-          .result
+        impl(top).result

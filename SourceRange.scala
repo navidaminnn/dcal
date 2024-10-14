@@ -114,8 +114,7 @@ final class SourceRange(
       builder += '-'
       val (lineIdx2, colIdx2) = source.lines.lineColAtOffset(offset + length)
       if lineIdx == lineIdx2
-      then
-        builder.append(colIdx2 + 1)
+      then builder.append(colIdx2 + 1)
       else
         builder.append(lineIdx2 + 1)
         builder += ':'

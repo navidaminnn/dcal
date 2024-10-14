@@ -112,20 +112,20 @@ object SExprReader extends Reader:
     def addByte(byte: Byte): Manip[SourceRange] =
       dropMatch:
         builderRef.doEffect(_.addOne(byte))
-        *> impl
+          *> impl
 
     def addStr(str: String): Manip[SourceRange] =
       dropMatch:
         val bytes = str.getBytes()
         builderRef.doEffect(_.addAll(bytes))
-        *> impl
+          *> impl
 
     def finish(rest: Manip[SourceRange]): Manip[SourceRange] =
       dropMatch:
         builderRef.get.flatMap: builder =>
           val stringContents = builder.result()
           addChild(tokens.Atom().at(stringContents))
-          *> rest
+            *> rest
 
     lazy val impl: Manip[SourceRange] =
       commit:
@@ -145,11 +145,13 @@ object SExprReader extends Reader:
           .on('\\'):
             bytes.selectOne:
               consumeMatch: mark =>
-                addChild(Error(
-                  s"invalid escape sequence ${mark.decodeString()}",
-                  Builtin.SourceMarker(mark),
-                ))
-                *> addByte('?')
+                addChild(
+                  Error(
+                    s"invalid escape sequence ${mark.decodeString()}",
+                    Builtin.SourceMarker(mark)
+                  )
+                )
+                  *> addByte('?')
           .fallback:
             // everything else goes in the literal, except EOF in which case we bail to default rules
             bytes.selectOne:

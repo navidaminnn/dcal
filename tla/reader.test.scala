@@ -10,16 +10,21 @@ class TLAReaderTests extends munit.FunSuite:
   if !os.exists(intoName)
   then
     os.makeDir.all(clonesDir)
-    os.proc("git", "clone", repoURL).call(cwd = os.pwd / ".clones")  
+    os.proc("git", "clone", repoURL).call(cwd = os.pwd / ".clones")
 
-  os.walk.stream(intoName)
+  os.walk
+    .stream(intoName)
     .filter(_.last.endsWith(".tla"))
     .foreach: exampleFile =>
       test(exampleFile.relativeTo(clonesDir).toString):
         val src = Source.mapFromFile(exampleFile)
         val top = TLAReader(SourceRange.entire(src))
 
-        os.write.over(os.pwd / "dbg" / s"${exampleFile.last}.dbg", top.toPrettyWritable(TLAReader.wf), createFolders = true)
+        os.write.over(
+          os.pwd / "dbg" / s"${exampleFile.last}.dbg",
+          top.toPrettyWritable(TLAReader.wf),
+          createFolders = true
+        )
 
         if top.hasErrors
         then

@@ -6,7 +6,8 @@ object Operators:
   sealed trait Operator extends Token, Product:
     def spelling: String = productPrefix
 
-  sealed trait PrefixOperator(val lowPrecedence: Int, val highPrecedence: Int) extends Operator
+  sealed trait PrefixOperator(val lowPrecedence: Int, val highPrecedence: Int)
+      extends Operator
   object PrefixOperator extends util.HasInstanceArray[PrefixOperator]
 
   case object `ENABLED` extends PrefixOperator(4, 15)
@@ -21,7 +22,11 @@ object Operators:
   case object `-_` extends PrefixOperator(12, 12)
   case object `UNCHANGED` extends PrefixOperator(4, 15)
 
-  sealed trait InfixOperator(val lowPrecedence: Int, val highPredecence: Int, val isAssociative: Boolean = false) extends Operator
+  sealed trait InfixOperator(
+      val lowPrecedence: Int,
+      val highPredecence: Int,
+      val isAssociative: Boolean = false
+  ) extends Operator
   object InfixOperator extends util.HasInstanceArray[InfixOperator]
 
   case object `\\cong` extends InfixOperator(5, 5)

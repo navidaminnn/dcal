@@ -46,16 +46,12 @@ class WellformedTests extends munit.FunSuite:
     examples(3).foreach: tree =>
       import dsl.*
       val orig = tree.clone()
-      wf.serializeTree
-        .withTracer(Manip.LogTracer(os.write.over.outputStream(os.pwd / "serializeLog.log")))
-        .perform(tree)
+      val ser = wf.serializeTree(tree)
       if orig.children.nonEmpty
-      then assertNotEquals(tree, orig)
+      then assertNotEquals(ser, orig)
 
-      wf.deserializeTree
-        .withTracer(Manip.LogTracer(os.write.over.outputStream(os.pwd / "deserializeLog.log")))
-        .perform(tree)
-      assertEquals(tree, orig)
+      val deser = wf.deserializeTree(ser)
+      assertEquals(deser, orig)
 
 object WellformedTests:
   object tok1 extends Token:

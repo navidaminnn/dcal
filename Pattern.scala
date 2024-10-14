@@ -226,7 +226,8 @@ object Pattern:
       anyChild
         .map(_.parent)
         .filter(_.nonEmpty)
-        .map(_.get).here(pattern)
+        .map(_.get)
+        .here(pattern)
 
     def ancestor[T](pattern: Pattern[T]): Pattern[T] =
       lazy val impl: Pattern[T] =

@@ -94,7 +94,7 @@ final class Node(val token: Token)(
 
     val prevParent = parent.get
 
-    super.unparent()
+    super.unparent(unsafe)
     this
 
   override def ensureParent(parent: Node.Parent, idxInParent: Int): this.type =
@@ -121,9 +121,11 @@ final class Node(val token: Token)(
     then
       val countErrors =
         children.iterator.filter(_.hasErrors).size
-        + (if token == Builtin.Error then 1 else 0)
-      assert(countErrors == _errorRefCount,
-        s"mismatched error counts, $countErrors != $_errorRefCount")
+          + (if token == Builtin.Error then 1 else 0)
+      assert(
+        countErrors == _errorRefCount,
+        s"mismatched error counts, $countErrors != $_errorRefCount"
+      )
 
   override def hasErrors: Boolean =
     val count1 = _errorRefCount > 0
@@ -137,7 +139,7 @@ final class Node(val token: Token)(
       case thisNode: Node if thisNode.token == Builtin.Error =>
         errorsAcc += thisNode
         Node.TraversalAction.SkipChildren
-      
+
       case _: (Node | Node.Embed[?]) => Node.TraversalAction.Continue
 
     errorsAcc.result()
@@ -170,6 +172,15 @@ final class Node(val token: Token)(
 end Node
 
 object Node:
+  def unapplySeq(node: Node): Some[(Token, childrenAccessor)] =
+    Some((node.token, childrenAccessor((node.children))))
+
+  final class childrenAccessor(val children: Node.Children) extends AnyVal:
+    def length: Int = children.length
+    def apply(idx: Int): Node.Child = children(idx)
+    def drop(n: Int): Seq[Node.Child] = toSeq.drop(n)
+    def toSeq: Seq[Node.Child] = children.toSeq
+
   enum TraversalAction:
     case SkipChildren, Continue
   end TraversalAction
@@ -178,25 +189,24 @@ object Node:
     thisTraversable =>
 
     final def traverse(fn: Node.Child => Node.TraversalAction): Unit =
-      extension (self: Node.Child) def findNextChild: Option[Node.Child] =
-        var curr = self
-        def extraConditions: Boolean =
-          curr.parent.nonEmpty
-          // .rightSibling looks at the parent node. If we're looking at thisTraversable,
-          // then that means we should stop or we'll be traversing our parent's siblings.
-          && (curr ne thisTraversable)
-          && !curr.parent.get.isInstanceOf[Node.Top]
+      extension (self: Node.Child)
+        def findNextChild: Option[Node.Child] =
+          var curr = self
+          def extraConditions: Boolean =
+            curr.parent.nonEmpty
+            // .rightSibling looks at the parent node. If we're looking at thisTraversable,
+            // then that means we should stop or we'll be traversing our parent's siblings.
+              && (curr ne thisTraversable)
+              && !curr.parent.get.isInstanceOf[Node.Top]
 
-        while
-          curr.rightSibling.isEmpty
-          && extraConditions
-        do
-          curr = curr.parent.get.asNode
+          while curr.rightSibling.isEmpty
+            && extraConditions
+          do curr = curr.parent.get.asNode
 
-        if !extraConditions
-        then None
-        else curr.rightSibling
-    
+          if !extraConditions
+          then None
+          else curr.rightSibling
+
       @scala.annotation.tailrec
       def impl(traversable: Node.Child): Unit =
         traversable match
@@ -205,13 +215,13 @@ object Node:
             fn(node) match
               case SkipChildren =>
                 node.findNextChild match
-                  case None =>
+                  case None        =>
                   case Some(child) => impl(child)
               case Continue =>
                 node.firstChild match
                   case None =>
                     node.findNextChild match
-                      case None =>
+                      case None        =>
                       case Some(child) => impl(child)
                   case Some(child) => impl(child)
           case embed: Embed[?] => fn(embed)
@@ -285,17 +295,9 @@ object Node:
         case _ => false
 
     final override def toString(): String =
-      this match
-        case node: Node =>
-          val locPart =
-            if node.token.showSource
-            then s"\"${node.sourceRange.decodeString()}\""
-            else ""
-          s"${node.token.name}@${System.identityHashCode(node)}$locPart(${node.children.mkString(", ")})"
-        case top: Top =>
-          s"Top(${top.children.mkString(", ")})"
-        case Embed(value) =>
-          s"Embed($value)"
+      val dummyWf = Wellformed:
+        Node.Top ::= Wellformed.Shape.AnyShape
+      sexpr.serialize.toPrettyString(dummyWf.serializeTree(this))
 
   sealed trait Root extends All:
     override type This <: Root
@@ -319,16 +321,13 @@ object Node:
 
     override def hasErrors: Boolean = children.exists(_.hasErrors)
     override def errors: List[Node] =
-      children
-        .iterator
+      children.iterator
         .filter(_.hasErrors)
         .flatMap(_.errors)
         .toList
 
-    def serializedBy(wf: Wellformed): Top =
-      val result = clone()
-      wf.serializeTree.perform(result)
-      result
+    def serializedBy(wf: Wellformed): This =
+      wf.serializeTree(this).asInstanceOf[This]
 
     def toPrettyWritable(wf: Wellformed): geny.Writable =
       sexpr.serialize.toPrettyWritable(serializedBy(wf))
@@ -369,9 +368,10 @@ object Node:
         case thisNode: Node =>
           thisNode._scopeRelevance += 1
           if thisNode._scopeRelevance == 1
-          then thisNode.parent match
-            case None =>
-            case Some(parent) => parent.incScopeRelevance()
+          then
+            thisNode.parent match
+              case None         =>
+              case Some(parent) => parent.incScopeRelevance()
 
     @scala.annotation.tailrec
     private[Node] final def decScopeRelevance(): Unit =
@@ -381,33 +381,36 @@ object Node:
           assert(thisNode._scopeRelevance > 0)
           thisNode._scopeRelevance -= 1
           if thisNode._scopeRelevance == 0
-          then thisNode.parent match
-            case None =>
-            case Some(parent) => parent.decScopeRelevance()
+          then
+            thisNode.parent match
+              case None         =>
+              case Some(parent) => parent.decScopeRelevance()
 
     @scala.annotation.tailrec
-    private [Node] final def incErrorRefCount(): Unit =
+    private[Node] final def incErrorRefCount(): Unit =
       this match
         case root: Node.Root => // nothing to do here
         case thisNode: Node =>
           thisNode._errorRefCount += 1
           if thisNode._errorRefCount == 1
-          then thisNode.parent match
-            case None =>
-            case Some(parent) => parent.incErrorRefCount()
+          then
+            thisNode.parent match
+              case None         =>
+              case Some(parent) => parent.incErrorRefCount()
 
     @scala.annotation.tailrec
     private[Node] final def decErrorRefCount(): Unit =
       this match
         case root: Node.Root => // nothing to do here
-        case thisNode: Node =>
+        case thisNode: Node  =>
           // assert(thisNode._errorRefCount > 0,
           //   "???")
           thisNode._errorRefCount -= 1
           if thisNode._errorRefCount == 0
-          then thisNode.parent match
-            case None =>
-            case Some(parent) => parent.decErrorRefCount()
+          then
+            thisNode.parent match
+              case None         =>
+              case Some(parent) => parent.decErrorRefCount()
 
     @scala.annotation.tailrec
     private[Node] final def findNodeByKey(key: Node): List[Node] =
@@ -435,7 +438,7 @@ object Node:
           resultsList.result()
         case thisNode: Node =>
           thisNode.parent match
-            case None => Nil
+            case None         => Nil
             case Some(parent) => parent.findNodeByKey(key)
 
     final def traverseChildren(fn: Node.Child => TraversalAction): Unit =
@@ -472,14 +475,12 @@ object Node:
         // so don't make a fuss if it happens. The seq ops on Children might do this.
         _idxInParent = idxInParent
         this
-      else
-        if _parent eq null
-        then
-          _parent = parent
-          _idxInParent = idxInParent
-          this
-        else
-          throw NodeError("node already has a parent")
+      else if _parent eq null
+      then
+        _parent = parent
+        _idxInParent = idxInParent
+        this
+      else throw NodeError("node already has a parent")
 
       if oldParent ne null
       then oldParent.nn.assertErrorRefCounts()
@@ -490,22 +491,23 @@ object Node:
 
     def unparent(unsafe: Boolean = false): this.type =
       assert(_parent ne null, "tried to unparent floating node")
+      val safe = !unsafe
       val oldParent = _parent
-      
-      // TODO: skip if unsafe
-      _parent.nn.children.makeHole(_idxInParent)
+
+      if safe
+      then _parent.nn.children.makeHole(_idxInParent)
 
       _parent = null
       _idxInParent = -1
 
-      if oldParent ne null
+      if safe && (oldParent ne null)
       then oldParent.nn.assertErrorRefCounts()
 
       this
 
     override def parent: Option[Parent] =
       _parent match
-        case null => None
+        case null            => None
         case _parent: Parent => Some(_parent)
 
     override def idxInParent: Int =
@@ -610,12 +612,13 @@ object Node:
       parent.assertErrorRefCounts()
 
     override def clear(): Unit =
-      _children.foreach(_.unparent())
+      _children.foreach(_.unparent(unsafe = true))
       _children.clear()
       parent.assertErrorRefCounts()
 
     override def addOne(elem: Child): this.type =
-      _children.addOne(elem.ensureParent(parent, length))
+      _children.addOne(elem)
+      elem.ensureParent(parent, length)
       parent.assertErrorRefCounts()
       this
 

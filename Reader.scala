@@ -163,7 +163,7 @@ object Reader:
 
     def selectSeq[T](using DebugInfo)(str: String)(manip: Manip[T]): Manip[T] =
       val bytes = str.getBytes()
-      
+
       def impl(idx: Int): Manip[T] =
         if idx < bytes.length
         then

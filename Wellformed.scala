@@ -18,8 +18,7 @@ final class Wellformed private (
     acc(Nil) = assigns.iterator.map(_._1).to(mutable.ListBuffer)
 
     def namesToFix: List[List[String]] =
-      acc
-        .iterator
+      acc.iterator
         .collect:
           case (name, buf) if buf.size > 1 => name
         .toList
@@ -38,8 +37,10 @@ final class Wellformed private (
             val longerName = token.nameSegments.takeRight(nameTooShort.size + 1)
             if longerName == nameTooShort
             then
-              assert(didntGrowCount == 0,
-                s"duplicate name $nameTooShort in group ${toks.iterator.map(_.name).mkString(", ")}")
+              assert(
+                didntGrowCount == 0,
+                s"duplicate name $nameTooShort in group ${toks.iterator.map(_.name).mkString(", ")}"
+              )
               didntGrowCount += 1
 
             val buf = acc.getOrElseUpdate(longerName, mutable.ListBuffer.empty)
@@ -48,17 +49,24 @@ final class Wellformed private (
         impl()
 
     impl()
-    acc
-      .iterator
+    acc.iterator
+      .filter: (parts, unitList) =>
+        if unitList.isEmpty
+        then
+          assert(parts == Nil)
+          false
+        else true
       .map: (parts, unitList) =>
-        unitList.head -> SourceRange.entire(Source.fromString(parts.mkString(".")))
+        unitList.head -> SourceRange.entire(
+          Source.fromString(parts.mkString("."))
+        )
       .toMap
 
   private lazy val tokenByShortName: Map[SourceRange, Token] =
     shortNameByToken.map(_.reverse)
 
   lazy val markErrors: Manip[Unit] =
-    // target shapes differently... 
+    // target shapes differently...
     // can't be "at end" anymore; you have to see it "from above"
     // ... so we assert shapes at parents, with a tiny bit of extra work
     def shapePattern(shape: Wellformed.Shape): Pattern[Node.Child] =
@@ -118,133 +126,144 @@ final class Wellformed private (
     fn(using builder)
     builder.build()
 
-  lazy val serializeTree: Manip[Unit] =
-    extension (node: Node)
+  import scala.util.control.TailCalls.*
+
+  extension [T](self: IterableOnce[T])
+    private def flatForEach(fn: T => TailRec[Unit]): TailRec[Unit] =
+      val iter = self.iterator
+      def impl(): TailRec[Unit] =
+        if iter.hasNext
+        then tailcall(fn(iter.next())).flatMap(_ => impl())
+        else done(())
+
+      impl()
+
+  def serializeTree(tree: Node.All): tree.This =
+    import sexpr.tokens.{Atom, List as SList}
+
+    val src = SourceRange.entire(Source.fromString("::src"))
+
+    extension [P <: Node.Parent](parent: P)
+      def addSerializedChildren(
+          children: IterableOnce[Node.Child]
+      ): TailRec[P] =
+        children
+          .flatForEach: child =>
+            tailcall(impl(child)).map(parent.children.addOne)
+          .map(_ => parent)
+
+    extension (token: Token)
       def shortName =
         shortNameByToken.getOrElse(
-          node.token,
-          SourceRange.entire(Source.fromString(node.token.name))
+          token,
+          SourceRange.entire(Source.fromString(token.name))
         )
 
-    pass(once = true)
-      .rules:
-        on(
-          anyAtom
-            .filter(n => !n.token.showSource)
-        ).rewrite: node =>
-          splice(sexpr.tokens.Atom(node.shortName))
-        | on(
-          anyNode
-        ).rewrite: node =>
-          val toSkip = mutable.ListBuffer(sexpr.tokens.Atom(node.shortName))
-          if node.token.showSource
-          then
-            toSkip.addOne(sexpr.tokens.Atom("::src"))
-            toSkip.addOne:
-              val src = node.sourceRange
-              src.source.origin match
-                case None =>
-                  sexpr.tokens.Atom(src)
-                case Some(origin) =>
-                  sexpr.tokens.List(
-                    sexpr.tokens.Atom(origin.toString),
-                    sexpr.tokens.Atom(src.offset.toString()),
-                    sexpr.tokens.Atom(src.length.toString())
-                  )
-          val list = sexpr.tokens.List(toSkip)
-          list.children.addAll(node.unparentedChildren)
-          spliceThen(list):
-            Manip.pure(toSkip.last).here(continuePassAtNext)
+    def impl(tree: Node.All): TailRec[tree.This] =
+      val result: TailRec[Node.All] =
+        tree match
+          case top: Node.Top =>
+            val result = Node.Top()
+            result.addSerializedChildren(top.children)
+          case nd @ Node(token) if !token.showSource =>
+            done(Atom(token.shortName))
+          case node: Node =>
+            val result = SList(Atom(node.token.shortName))
+            if node.token.showSource
+            then
+              result.children.addOne(Atom(src))
+              val srcRange = node.sourceRange
+              result.children.addOne:
+                srcRange.source.origin match
+                  case None =>
+                    Atom(srcRange)
+                  case Some(origin) =>
+                    SList(
+                      Atom(origin.toString),
+                      Atom(srcRange.offset.toString()),
+                      Atom(srcRange.length.toString())
+                    )
 
-  lazy val deserializeTree: Manip[Unit] =
-    import sexpr.tokens.Atom
+            result.addSerializedChildren(node.children)
+          case _: Node.Embed[?] =>
+            ???
+
+      result.asInstanceOf[TailRec[tree.This]]
+
+    impl(tree).result
+  end serializeTree
+
+  def deserializeTree(tree: Node.All): Node.All =
+    import sexpr.tokens.{Atom, List as SList}
+
     val src = SourceRange.entire(Source.fromString("::src"))
-    object srcMapRef extends Manip.Ref[mutable.HashMap[os.Path, Source]]
-    pass(once = true)
-      .withState(srcMapRef)(mutable.HashMap.empty)
-      .rules:
-        on(
-          tok(Atom)
-        ).rewrite: atom =>
-          tokenByShortName.get(atom.sourceRange) match
-            case None =>
-              splice(
-                Builtin.Error(
-                  s"unknown token \"${atom.sourceRange.decodeString()}\"",
-                  atom.unparent()
+    val srcMap = mutable.HashMap.empty[os.Path, Source]
+
+    extension [P <: Node.Parent](parent: P)
+      def addDeserializedChildren(
+          children: IterableOnce[Node.Child]
+      ): TailRec[P] =
+        children
+          .flatForEach: child =>
+            tailcall(impl(child)).map(parent.children.addOne)
+          .map(_ => parent)
+
+    def impl[N <: Node.All](tree: N): TailRec[N] =
+      def nodeOrError(name: SourceRange, ast: N & Node)(
+          fn: Token => TailRec[Node]
+      ): TailRec[N] =
+        tokenByShortName.get(name) match
+          case None =>
+            done:
+              Builtin
+                .Error(
+                  s"unknown token \"${name.decodeString()}\"",
+                  ast.clone()
                 )
-              )
-            case Some(token) =>
-              splice(token(atom.sourceRange))
-        | on(
-          tok(sexpr.tokens.List)
-          *> children:
-            Fields()
-              .field(tok(Atom).map(_.sourceRange).restrict(tokenByShortName))
-              .skip(tok(Atom).filter(_.sourceRange == src))
-              .field(tok(Atom).map(_.sourceRange))
-              .field(repeated(anyChild))
-              .pattern
-        ).rewrite: (tok, src, children) =>
-          children.foreach(_.unparent())
-          splice(tok(children).at(src))
-        | on(
-          tok(sexpr.tokens.List)
-          *> children:
-            Fields()
-              .field:
-                tok(Atom)
-                  .map(_.sourceRange)
-                  .restrict(tokenByShortName)
-              .skip(tok(Atom).filter(_.sourceRange == src))
-              .field:
-                tok(sexpr.tokens.List)
-                *> children:
-                  Fields()
-                    .field(tok(Atom))
-                    .field(tok(Atom))
-                    .field(tok(Atom))
-                    .atEnd
-              .field(repeated(anyChild))
-              .pattern
-        ).rewrite: (tok, bounds, children) =>
-          val (orig, offset, len) = bounds
-          val path = os.Path(orig.sourceRange.decodeString())
-          val offsetInt = offset.sourceRange.decodeString().toInt
-          val lenInt = len.sourceRange.decodeString().toInt
-          srcMapRef.get.flatMap: srcMap =>
-            val src = srcMap.getOrElseUpdate(path, Source.mapFromFile(path))
-            children.foreach(_.unparent())
-            spliceThen(
-              tok(children).at(SourceRange(src, offsetInt, lenInt))
-            )(continuePassAtNext)
-        | on(
-          tok(sexpr.tokens.List)
-          *> children:
-            Fields()
-              .field:
-                tok(Atom)
-                  .map(_.sourceRange)
-                  .restrict(tokenByShortName)
-              .field(repeated(anyChild))
-              .pattern
-        ).rewrite: (tok, children) =>
-          children.foreach(_.unparent())
-          spliceThen(tok(children))(continuePassAtNext)
-        | on(
-          tok(sexpr.tokens.List)
-            *: firstChild(
-              tok(Atom)
-                .map(_.sourceRange)
-                .filter(src => !tokenByShortName.contains(src))
-            )
-        ).rewrite: (node, badSrc) =>
-          splice(
-            Builtin.Error(
-              s"could not recognize token name ${badSrc.decodeString()}",
-              node.unparent()
-            )
-          )
+                .asInstanceOf[N]
+          case Some(token) =>
+            fn(token).asInstanceOf[TailRec[N]]
+
+      (tree: @unchecked) match
+        case top: Node.Top =>
+          val result: Node.Top = Node.Top()
+          result
+            .addDeserializedChildren(top.children)
+            .map(_ => result.asInstanceOf[N])
+        case atom @ Atom() =>
+          nodeOrError(atom.sourceRange, atom): token =>
+            done(token())
+        case list @ SList(
+              tokAtom @ Atom(),
+              srcId @ Atom(),
+              srcAtom @ Atom(),
+              _*
+            ) if srcId.sourceRange == src =>
+          nodeOrError(tokAtom.sourceRange, list): token =>
+            val result = token().at(srcAtom.sourceRange)
+            result.addDeserializedChildren(list.children.view.drop(3))
+        case list @ SList(
+              tokAtom @ Atom(),
+              srcId @ Atom(),
+              SList(path @ Atom(), offset @ Atom(), len @ Atom()),
+              _*
+            ) if srcId.sourceRange == src =>
+          nodeOrError(tokAtom.sourceRange, list): token =>
+            val result = token()
+            val pathVal = os.Path(path.sourceRange.decodeString())
+            val offsetVal = offset.sourceRange.decodeString().toInt
+            val lenVal = len.sourceRange.decodeString().toInt
+
+            val src =
+              srcMap.getOrElseUpdate(pathVal, Source.mapFromFile(pathVal))
+            result.at(SourceRange(src, offsetVal, lenVal))
+            result.addDeserializedChildren(list.children.view.drop(3))
+        case list @ SList(tokAtom @ Atom(), _*) =>
+          nodeOrError(tokAtom.sourceRange, list): token =>
+            token().addDeserializedChildren(list.children.view.drop(1))
+
+    impl(tree).result
+  end deserializeTree
 end Wellformed
 
 object Wellformed:

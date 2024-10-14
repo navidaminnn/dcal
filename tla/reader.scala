@@ -18,10 +18,10 @@ object TLAReader extends Reader:
         TupleGroup,
         Alpha,
         LaTexLike,
-        Comment,
+        Comment
       )
-      | Choice(NonAlpha.instances.toSet)
-      | Choice(allOperators.toSet)
+        | Choice(NonAlpha.instances.toSet)
+        | Choice(allOperators.toSet)
 
     ModuleGroup ::= allToks
 
@@ -34,7 +34,7 @@ object TLAReader extends Reader:
     NumberLiteral ::= Atom
     Alpha ::= Atom
     LaTexLike ::= Atom
-    
+
     Comment ::= Atom
     DashSeq ::= Atom
 
@@ -93,24 +93,24 @@ object TLAReader extends Reader:
         sel.onSeq(op.spelling):
           consumeMatch: m =>
             addChild(op(m))
-            *> tokens
+              *> tokens
 
     private def installNonAlphas: bytes.selecting[SourceRange] =
       NonAlpha.instances.foldLeft(sel): (sel, nonAlpha) =>
         sel.onSeq(nonAlpha.spelling):
           consumeMatch: m =>
             addChild(nonAlpha(m))
-            *> tokens
+              *> tokens
 
     private def installLatexLikes: bytes.selecting[SourceRange] =
       lazy val impl =
         bytes.selectManyLike(letters):
           consumeMatch: m =>
             addChild(LaTexLike(m))
-            *> tokens
+              *> tokens
       letters.foldLeft(sel): (sel, l) =>
         sel.onSeq(s"\\$l")(impl)
-    
+
     private def installDotNumberLiterals: bytes.selecting[SourceRange] =
       digits.foldLeft(sel): (sel, d) =>
         sel.onSeq(s".$d")(numberLiteralAfterPoint)
@@ -120,13 +120,14 @@ object TLAReader extends Reader:
 
   private lazy val moduleSearch: Manip[SourceRange] =
     commit:
-      bytes.selecting[SourceRange]
+      bytes
+        .selecting[SourceRange]
         .onSeq("----"):
           bytes.selectManyLike(Set('-')):
             consumeMatch: m =>
               addChild(ModuleGroup()).here:
                 addChild(DashSeq(m))
-                *> tokens
+                  *> tokens
         .fallback:
           bytes.selectOne:
             dropMatch(moduleSearch)
@@ -136,15 +137,21 @@ object TLAReader extends Reader:
   private def openGroup(tkn: Token): Manip[SourceRange] =
     consumeMatch: m =>
       addChild(tkn(m))
-      *> tokens
+        *> tokens
 
-  private def closeGroup(tkn: Token, reinterpretTok: Token): Manip[SourceRange] =
+  private def closeGroup(
+      tkn: Token,
+      reinterpretTok: Token
+  ): Manip[SourceRange] =
     val rest: Manip[SourceRange] =
       if tkn == reinterpretTok
       then on(tok(tkn)).check *> extendThisNodeWithMatch(atParent(tokens))
-      else on(tok(tkn)).value.flatMap: node =>
-        effect(node.replaceThis(reinterpretTok(node.unparentedChildren).like(node)))
-        *> tokens
+      else
+        on(tok(tkn)).value.flatMap: node =>
+          effect(
+            node.replaceThis(reinterpretTok(node.unparentedChildren).like(node))
+          )
+            *> tokens
 
     on(tok(tkn)).check *> rest
 
@@ -154,86 +161,96 @@ object TLAReader extends Reader:
   private def invalidGroupClose(tkn: Token, name: String): Manip[SourceRange] =
     // TODO: close a parent group if you can
     consumeMatch: m =>
-      addChild(Builtin.Error(
-        s"unexpected end of $name group",
-        Builtin.SourceMarker(m),
-      ))
-      *> tokens
+      addChild(
+        Builtin.Error(
+          s"unexpected end of $name group",
+          Builtin.SourceMarker(m)
+        )
+      )
+        *> tokens
 
   private lazy val unexpectedEOF: Manip[SourceRange] =
     consumeMatch: m =>
-      addChild(Builtin.Error(
-        "unexpected EOF",
-        Builtin.SourceMarker(m),
-      ))
+      addChild(
+        Builtin.Error(
+          "unexpected EOF",
+          Builtin.SourceMarker(m)
+        )
+      )
         *> Manip.pure(m)
 
   private lazy val tokens: Manip[SourceRange] =
     commit:
-      bytes.selecting[SourceRange]
+      bytes
+        .selecting[SourceRange]
         .onOneOf(spaces)(dropMatch(tokens))
         .onSeq("===="):
           bytes.selectManyLike(Set('=')):
             on(tok(ModuleGroup)).check
               *> extendThisNodeWithMatch(atParent(moduleSearch))
-            | consumeMatch: m =>
-              addChild(Builtin.Error(
-                "unexpected end of module",
-                Builtin.SourceMarker(m),
-              ))
-              *> on(ancestor(theTop)).value.here(moduleSearch)
+              | consumeMatch: m =>
+                addChild(
+                  Builtin.Error(
+                    "unexpected end of module",
+                    Builtin.SourceMarker(m)
+                  )
+                )
+                  *> on(ancestor(theTop)).value.here(moduleSearch)
         .onSeq("----"):
           bytes.selectManyLike(Set('-')):
             consumeMatch: m =>
               addChild(DashSeq(m))
-              *> tokens
+                *> tokens
         .on('"')(stringLiteral)
         .onSeq("(*")(multiComment)
         .onSeq("\\*")(lineComment)
         .on('(')(openGroup(ParenthesesGroup))
         .on(')'):
           closeGroup(ParenthesesGroup)
-          | invalidGroupClose(ParenthesesGroup, "parentheses")
+            | invalidGroupClose(ParenthesesGroup, "parentheses")
         .on('[')(openGroup(SqBracketsGroup))
         .on(']'):
           closeGroup(SqBracketsGroup)
-          | invalidGroupClose(SqBracketsGroup, "square brackets")
+            | invalidGroupClose(SqBracketsGroup, "square brackets")
         .on('{')(openGroup(BracesGroup))
         .on('}'):
           closeGroup(BracesGroup)
-          | invalidGroupClose(BracesGroup, "braces")
+            | invalidGroupClose(BracesGroup, "braces")
         .onSeq("<<")(openGroup(TupleGroup))
         .onSeq(">>"):
           closeGroup(TupleGroup)
-          | invalidGroupClose(TupleGroup, "tuple")
+            | invalidGroupClose(TupleGroup, "tuple")
         .onOneOf(digits)(numberLiteral)
         .installDotNumberLiterals
         .onOneOf(letters):
           bytes.selectManyLike(letters ++ digits + '_'):
             consumeMatch: m =>
               addChild(Alpha(m))
-              *> tokens
+                *> tokens
         .installLatexLikes
         .installNonAlphaNonLatexOperators
         .installNonAlphas
         .fallback:
           bytes.selectOne:
             consumeMatch: m =>
-              addChild(Builtin.Error(
-                "invalid character",
-                Builtin.SourceMarker(m),
-              ))
-              *> tokens
+              addChild(
+                Builtin.Error(
+                  "invalid character",
+                  Builtin.SourceMarker(m)
+                )
+              )
+                *> tokens
           | unexpectedEOF
 
   private lazy val lineComment: Manip[SourceRange] =
     val endComment: Manip[SourceRange] =
       consumeMatch: m =>
         addChild(Comment(m))
-        *> tokens
+          *> tokens
 
     commit:
-      bytes.selecting[SourceRange]
+      bytes
+        .selecting[SourceRange]
         .on('\n')(endComment)
         .onSeq("\r\n")(endComment)
         .fallback:
@@ -243,27 +260,29 @@ object TLAReader extends Reader:
     multiCommentRec:
       consumeMatch: m =>
         addChild(Comment(m))
-        *> tokens
+          *> tokens
 
   private def multiCommentRec(outer: Manip[SourceRange]): Manip[SourceRange] =
     lazy val impl: Manip[SourceRange] =
       commit:
-        bytes.selecting[SourceRange]
+        bytes
+          .selecting[SourceRange]
           .onSeq("*)")(outer)
           .onSeq("(*")(multiCommentRec(impl))
           .fallback:
             bytes.selectOne:
               impl
-    
+
     impl
 
   private lazy val stringLiteral: Manip[SourceRange] =
     commit:
-      bytes.selecting[SourceRange]
+      bytes
+        .selecting[SourceRange]
         .on('"'):
           consumeMatch: m =>
             addChild(StringLiteral(m))
-            *> tokens
+              *> tokens
         .onSeq("\\\"")(stringLiteral)
         .fallback:
           bytes.selectOne:
@@ -273,17 +292,19 @@ object TLAReader extends Reader:
   lazy val endNumberLiteral: Manip[SourceRange] =
     consumeMatch: m =>
       addChild(NumberLiteral(m))
-      *> tokens
+        *> tokens
 
   private lazy val numberLiteralAfterPoint: Manip[SourceRange] =
     commit:
-      bytes.selecting[SourceRange]
+      bytes
+        .selecting[SourceRange]
         .onOneOf(digits)(numberLiteralAfterPoint)
         .fallback(endNumberLiteral)
 
   private lazy val numberLiteral: Manip[SourceRange] =
     commit:
-      bytes.selecting[SourceRange]
+      bytes
+        .selecting[SourceRange]
         .onOneOf(digits)(numberLiteral)
         .installDotNumberLiterals
         .fallback(endNumberLiteral)

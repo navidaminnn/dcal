@@ -14,23 +14,24 @@ trait Source:
   object lines:
     val nlOffsets: IArray[Int] =
       IArray.from:
-        SourceRange.entire(Source.this)
+        SourceRange
+          .entire(Source.this)
           .iterator
           .zipWithIndex
           .collect:
             case ('\n', idx) => idx
-    
+
     def lineColAtOffset(offset: Int): (Int, Int) =
       import scala.collection.Searching.*
       val lineIdx =
         nlOffsets.search(offset) match
-          case Found(foundIndex) => foundIndex
+          case Found(foundIndex)              => foundIndex
           case InsertionPoint(insertionPoint) => insertionPoint
       val colIdx =
         if lineIdx == 0
         then offset
         else offset - 1 - nlOffsets(lineIdx - 1)
-      
+
       (lineIdx, colIdx)
 end Source
 

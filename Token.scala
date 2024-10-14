@@ -57,13 +57,8 @@ object Token:
     def apply(sourceRange: SourceRange): Node =
       Node(token)().at(sourceRange)
 
-    def unapply(node: Node.All): unapplyImpl =
-      node match
-        case node: Node if node.token == token =>
-          unapplyImpl(node)
-        case _ => unapplyImpl(null)
-
-  final class unapplyImpl(val nodeOpt: Node | Null) extends AnyVal:
-    def isEmpty: Boolean = nodeOpt eq null
-    def get: Node = nodeOpt.nn
+    def unapplySeq(node: Node): Option[Node.childrenAccessor] =
+      if node.token == token
+      then Some(Node.childrenAccessor(node.children))
+      else None
 end Token

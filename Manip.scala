@@ -46,13 +46,17 @@ enum Manip[+T]:
       case _            => false
 
   def perform(using DebugInfo)(node: Node.All): T =
-    import cats.Eval
+    import scala.util.control.TailCalls.*
 
-    type Continue[-T, +U] = T => Eval[U]
-    type Backtrack[+U] = DebugInfo => Eval[U]
+    type Continue[-T, +U] = T => TailRec[U]
+    type Backtrack[+U] = DebugInfo => TailRec[U]
     type RefMap = Map[ById[Manip.Ref[?]], Any]
 
-    def emptyBacktrack(ctxInfo: DebugInfo, node: Node.All, refMap: RefMap): Backtrack[Nothing] =
+    def emptyBacktrack(
+        ctxInfo: DebugInfo,
+        node: Node.All,
+        refMap: RefMap
+    ): Backtrack[Nothing] =
       posInfo =>
         refMap.get(ById(Manip.tracerRef)) match
           case None =>
@@ -70,55 +74,55 @@ enum Manip[+T]:
         backtrack: Backtrack[U],
         refMap: RefMap,
         node: Node.All
-    ): Eval[U] =
+    ): TailRec[U] =
       self match
-        case Backtrack(debugInfo) => Eval.defer(backtrack(debugInfo))
-        case Pure(value)          => Eval.defer(continue(value))
+        case Backtrack(debugInfo) => tailcall(backtrack(debugInfo))
+        case Pure(value)          => tailcall(continue(value))
         case ap: Ap[t, u] =>
           given Continue[t => u, U] = ff =>
-            given Continue[t, U] = fa => Eval.defer(continue(ff(fa)))
-            Eval.defer(impl(ap.fa))
+            given Continue[t, U] = fa => tailcall(continue(ff(fa)))
+            tailcall(impl(ap.fa))
           impl(ap.ff)
         case flatMap: FlatMap[t, u] =>
           given Continue[t, U] = value =>
             given Continue[u, U] = continue
-            Eval.defer(impl(flatMap.fn(value)))
+            tailcall(impl(flatMap.fn(value)))
           impl(flatMap.manip)
         case restrict: Restrict[t, u] =>
           given Continue[t, U] = value =>
             restrict.pred.unapply(value) match
               case None =>
-                Eval.defer(backtrack(restrict.debugInfo))
+                tailcall(backtrack(restrict.debugInfo))
               case Some(value) =>
-                Eval.defer(continue(value))
+                tailcall(continue(value))
           impl(restrict.manip)
         case Effect(fn) =>
           val value = fn()
-          Eval.defer(continue(value))
+          tailcall(continue(value))
         case Log(debugInfo, manip) =>
           println(s"log: into $debugInfo, looking at node $node")
           given Backtrack[U] = debugInfo2 =>
             println(s"log: backtrack $debugInfo because of $debugInfo2")
-            Eval.defer(backtrack(debugInfo2))
+            tailcall(backtrack(debugInfo2))
           impl(manip)
         case Finally(manip, fn) =>
           given Backtrack[U] = info =>
             fn()
-            Eval.defer(backtrack(info))
+            tailcall(backtrack(info))
           given Continue[T, U] = value =>
             fn()
-            Eval.defer(continue(value))
+            tailcall(continue(value))
 
           impl(manip)
         case KeepLeft(left, right: Manip[t]) =>
           given Continue[T, U] = value =>
-            given Continue[t, U] = _ => Eval.defer(continue(value))
-            Eval.defer(impl(right))
+            given Continue[t, U] = _ => tailcall(continue(value))
+            tailcall(impl(right))
           impl(left)
         case KeepRight(left: Manip[t], right) =>
           given Continue[t, U] = _ =>
             given Continue[T, U] = continue
-            Eval.defer(impl[T, U](right))
+            tailcall(impl[T, U](right))
           impl(left)
         case Commit(manip, debugInfo) =>
           refMap.get(ById(Manip.tracerRef)) match
@@ -131,42 +135,42 @@ enum Manip[+T]:
           given Backtrack[U] = emptyBacktrack(debugInfo, node, refMap)
           impl(manip)
         case Negated(manip: Manip[t], debugInfo) =>
-          given Backtrack[U] = _ => Eval.defer(continue(()))
-          given Continue[t, U] = _ => Eval.defer(backtrack(debugInfo))
+          given Backtrack[U] = _ => tailcall(continue(()))
+          given Continue[t, U] = _ => tailcall(backtrack(debugInfo))
           impl(manip)
         case RefInit(ref, initFn, manip) =>
           given RefMap = refMap.updated(ById(ref), initFn())
           impl(manip)
         case RefGet(ref, debugInfo) =>
           refMap.get(ById(ref)) match
-            case None        => Eval.defer(backtrack(debugInfo))
-            case Some(value) => Eval.defer(continue(value.asInstanceOf[T]))
+            case None        => tailcall(backtrack(debugInfo))
+            case Some(value) => tailcall(continue(value.asInstanceOf[T]))
         case refUpdated: RefUpdated[t, T @unchecked] =>
           refMap.get(ById(refUpdated.ref)) match
-            case None => Eval.defer(backtrack(refUpdated.debugInfo))
+            case None => tailcall(backtrack(refUpdated.debugInfo))
             case Some(value) =>
               given RefMap = refMap.updated(
                 ById(refUpdated.ref),
                 refUpdated.fn(value.asInstanceOf[t])
               )
               impl(refUpdated.manip)
-        case ThisNode => Eval.defer(continue(node))
+        case ThisNode => tailcall(continue(node))
         case AtNode(manip, node) =>
           given Node.All = node
           impl(manip)
         case Disjunction(first, second) =>
           given Backtrack[U] = debugInfo1 =>
             given Backtrack[U] = debugInfo2 =>
-              Eval.defer(backtrack(debugInfo1 ++ debugInfo2))
-            Eval.defer(impl(second))
+              tailcall(backtrack(debugInfo1 ++ debugInfo2))
+            tailcall(impl(second))
           impl(first)
         case Deferred(fn) => impl(fn())
 
-    given Continue[T, T] = Eval.now
+    given Continue[T, T] = done
     given RefMap = Map.empty
     given Backtrack[T] = emptyBacktrack(summon[DebugInfo], node, summon[RefMap])
     given Node.All = node
-    impl[T, T](this).value
+    impl[T, T](this).result
   end perform
 
   // TODO: optimize disjunctions to decision tries
@@ -243,16 +247,25 @@ object Manip:
     def beforePass(debugInfo: DebugInfo, tree: Node.All): Unit = ()
     def afterPass(debugInfo: DebugInfo, tree: Node.All): Unit = ()
     def onCommit(debugInfo: DebugInfo, tree: Node.All): Unit = ()
-    def onFatal(debugInfo: DebugInfo, from: DebugInfo, tree: Node.All): Unit = ()
+    def onFatal(debugInfo: DebugInfo, from: DebugInfo, tree: Node.All): Unit =
+      ()
     def close(): Unit = ()
 
-  final class LogTracer(out: java.io.OutputStream) extends Tracer:
+  final class LogTracer(out: java.io.OutputStream, limit: Int = -1)
+      extends Tracer:
     export out.close
+
+    private var lineCount: Int = 0
 
     private def logln(str: String): Unit =
       out.write(str.getBytes())
       out.write('\n')
       out.flush()
+
+      lineCount += 1
+
+      if limit != -1 && lineCount >= limit
+      then throw RuntimeException(s"logged $lineCount lines")
 
     def beforePass(debugInfo: DebugInfo, tree: Node.All): Unit =
       logln(s"pass init $debugInfo at $tree")
@@ -308,9 +321,9 @@ object Manip:
         import Pattern.ops.*
         parent(anyParent.map(_.children.lift(idx)))
       .value
-      .restrict:
-        case Some(child) => child
-      .here(manip)
+        .restrict:
+          case Some(child) => child
+        .here(manip)
 
     def atFirstChild[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       Manip.ThisNode.lookahead.flatMap:
@@ -373,7 +386,9 @@ object Manip:
     object on:
       final case class Ctx(count: Int, parent: Node.Parent, idxInParent: Int)
 
-    def spliceThen(using onCtx: on.Ctx)(nodes: Iterable[Node.Child])(manip: on.Ctx ?=> Rules): Rules =
+    def spliceThen(using onCtx: on.Ctx)(nodes: Iterable[Node.Child])(
+        manip: on.Ctx ?=> Rules
+    ): Rules =
       effect:
         val parent = onCtx.parent
         val idx = onCtx.idxInParent
@@ -381,15 +396,21 @@ object Manip:
       *> atNode(onCtx.parent):
         val rec = manip(using onCtx.copy(count = nodes.size))
         atFirstChild(atIdxSibling(onCtx.idxInParent)(rec))
-        | rec
+          | rec
 
-    def spliceThen(using on.Ctx)(nodes: Node.Child*)(manip: on.Ctx ?=> Rules): Rules =
+    def spliceThen(using on.Ctx)(nodes: Node.Child*)(
+        manip: on.Ctx ?=> Rules
+    ): Rules =
       spliceThen(nodes)(manip)
 
-    def spliceThen(using on.Ctx)(nodes: IterableOnce[Node.Child])(manip: on.Ctx ?=> Rules): Rules =
+    def spliceThen(using on.Ctx)(nodes: IterableOnce[Node.Child])(
+        manip: on.Ctx ?=> Rules
+    ): Rules =
       spliceThen(nodes.iterator.toArray)(manip)
 
-    def splice(using onCtx: on.Ctx, passCtx: pass.Ctx)(nodes: Iterable[Node.Child]): Rules =
+    def splice(using onCtx: on.Ctx, passCtx: pass.Ctx)(
+        nodes: Iterable[Node.Child]
+    ): Rules =
       spliceThen(nodes)(skipMatch(continuePass))
 
     def splice(using on.Ctx, pass.Ctx)(nodes: Node.Child*): Rules =
@@ -408,10 +429,11 @@ object Manip:
       passCtx.strategy.atNext(manip)
 
     def skipMatch(using onCtx: on.Ctx)(manip: Rules): Rules =
+      require(onCtx.count > 0, "tried to skip 0 nodes")
       // first rule: if we're on the parent, don't skip anything
       (ThisNode.filter(_ eq onCtx.parent) *> manip)
-      | atIdxSibling(onCtx.idxInParent + onCtx.count)(manip)
-      | atParent(manip)
+        | atIdxSibling(onCtx.idxInParent + onCtx.count)(manip)
+        | atParent(manip)
 
     extension [T](lhs: Manip[T])
       @scala.annotation.targetName("or")
@@ -428,7 +450,7 @@ object Manip:
           case v if pred(v) => v
       def withFinally(fn: => Unit): Manip[T] =
         Manip.Finally(lhs, () => fn)
-      def withTracer(tracer: =>Tracer): Manip[T] =
+      def withTracer(tracer: => Tracer): Manip[T] =
         tracerRef.init(tracer):
           tracerRef.get.lookahead.flatMap: tracer =>
             lhs.withFinally(tracer.close())
@@ -465,14 +487,14 @@ object Manip:
         lazy val loop: Manip[Unit] =
           commit:
             rules(using pass.Ctx(strategy, defer(loop)))
-            | strategy.atNext(defer(loop))
+              | strategy.atNext(defer(loop))
 
         // TODO: add repeat?
-          
+
         wrapFn:
           before
-          *> loop
-          *> after
+            *> loop
+            *> after
 
       def withState[T](ref: Ref[T])(init: => T): pass =
         pass(
@@ -496,12 +518,12 @@ object Manip:
           lazy val upImpl: Manip[Unit] =
             commit:
               atRightSibling(next)
-              | atParent(defer(upImpl))
-              | on(Pattern.ops.theTop).check
-            
+                | atParent(defer(upImpl))
+                | on(Pattern.ops.theTop).check
+
           commit:
             atFirstChild(next)
-            | upImpl
+              | upImpl
 
       // object bottomUp extends TraversalStrategy:
       //   def traverse(
