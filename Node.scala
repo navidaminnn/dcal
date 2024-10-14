@@ -12,15 +12,28 @@ final case class NodeError(msg: String) extends RuntimeException(msg)
 final class Node(val token: Token)(
     childrenInit: IterableOnce[Node.Child] @constructorOnly = Nil
 ) extends Node.Child,
-      Node.Parent(childrenInit),
+      Node.Parent,
       Node.Traversable:
   thisNode =>
+
+  // !! important !!
+  // these vars must init _before_ we make Children, otherwise
+  // Children's constructor will see the default 0 value even if it
+  // was supposed to start at 1
+
+  private var _scopeRelevance: Int =
+    if token.canBeLookedUp then 1 else 0
+
+  private var _errorRefCount: Int =
+    if token == Builtin.Error
+    then 1
+    else 0
+
+  val children: Node.Children = Node.Children(this, childrenInit)
 
   assertErrorRefCounts()
 
   override def asNode: Node = this
-
-  override def asNonFloatingParent: Node | Node.Top = this
 
   override type This = Node
   override def cloneEval(): Eval[Node] =
@@ -72,40 +85,45 @@ final class Node(val token: Token)(
     then rangeAcc.nn
     else SourceRange.entire(Source.empty)
 
-  private var _scopeRelevance: Int =
-    if token.canBeLookedUp then 1 else 0
-
-  private var _errorRefCount: Int =
-    if token == Builtin.Error
-    then 1
-    else 0
-
-  override def unparent(): this.type =
+  override def unparent(unsafe: Boolean = false): this.type =
     require(parent.nonEmpty)
     if _scopeRelevance > 0
     then parent.get.decScopeRelevance()
     if _errorRefCount > 0
     then parent.get.decErrorRefCount()
 
+    val prevParent = parent.get
+
     super.unparent()
+    this
 
   override def ensureParent(parent: Node.Parent, idxInParent: Int): this.type =
     val prevParent = this.parent
-    super.ensureParent(parent, idxInParent)
 
     // We can ensureParent without unparent() if only the idx changes.
     // In that case, don't inc twice.
-    if _scopeRelevance > 0 && (prevParent ne parent)
+    val prevParentPtr = prevParent.getOrElse(null)
+    if _scopeRelevance > 0 && (prevParentPtr ne parent)
     then parent.incScopeRelevance()
-    if _errorRefCount > 0 && (prevParent ne parent)
+    if _errorRefCount > 0 && (prevParentPtr ne parent)
     then parent.incErrorRefCount()
+
+    super.ensureParent(parent, idxInParent)
+
+    prevParent.foreach(_.assertErrorRefCounts())
+    parent.assertErrorRefCounts()
 
     this
 
-  def assertErrorRefCounts(): Unit =
-    val countErrors = children.iterator.filter(_.hasErrors).size
-    assert(countErrors == _errorRefCount,
-      s"mismatched error counts, $countErrors != $_errorRefCount")
+  override def assertErrorRefCounts(): Unit =
+    // may be called during object construction
+    if children ne null
+    then
+      val countErrors =
+        children.iterator.filter(_.hasErrors).size
+        + (if token == Builtin.Error then 1 else 0)
+      assert(countErrors == _errorRefCount,
+        s"mismatched error counts, $countErrors != $_errorRefCount")
 
   override def hasErrors: Boolean =
     val count1 = _errorRefCount > 0
@@ -205,9 +223,14 @@ object Node:
             .foreach(impl)
   end Traversable
 
+  object Hole extends Token
+
   sealed trait All extends Cloneable:
     type This <: All
     def cloneEval(): Eval[This]
+
+    // TODO: delete this?
+    def assertErrorRefCounts(): Unit = ()
 
     final override def clone(): This =
       cloneEval().value
@@ -279,13 +302,13 @@ object Node:
 
   final class Top(childrenInit: IterableOnce[Node.Child] @constructorOnly)
       extends Root,
-        Parent(childrenInit),
+        Parent,
         Traversable:
     def this(childrenInit: Node.Child*) = this(childrenInit)
 
-    override def asTop: Top = this
+    val children: Children = Node.Children(this, childrenInit)
 
-    override def asNonFloatingParent: Node | Top = this
+    override def asTop: Top = this
 
     override type This = Top
     override def cloneEval(): Eval[Top] =
@@ -319,17 +342,12 @@ object Node:
 
   object Top
 
-  sealed trait Parent(
-      childrenInit: IterableOnce[Node.Child] @constructorOnly
-  ) extends All:
+  sealed trait Parent extends All:
     thisParent =>
-
-    def asNonFloatingParent: Node | Top
 
     override type This <: Parent
 
-    val children: Node.Children =
-      Node.Children(thisParent, childrenInit)
+    val children: Node.Children
 
     final def apply(tok: Token): Node =
       val results = children.iterator
@@ -447,6 +465,7 @@ object Node:
     private var _idxInParent: Int = -1
 
     def ensureParent(parent: Parent, idxInParent: Int): this.type =
+      val oldParent = _parent
       if _parent eq parent
       then
         // reparenting within the same parent shouldn't really do anything,
@@ -462,10 +481,26 @@ object Node:
         else
           throw NodeError("node already has a parent")
 
-    def unparent(): this.type =
+      if oldParent ne null
+      then oldParent.nn.assertErrorRefCounts()
+      if parent ne null
+      then parent.nn.assertErrorRefCounts()
+
+      this
+
+    def unparent(unsafe: Boolean = false): this.type =
       assert(_parent ne null, "tried to unparent floating node")
+      val oldParent = _parent
+      
+      // TODO: skip if unsafe
+      _parent.nn.children.makeHole(_idxInParent)
+
       _parent = null
       _idxInParent = -1
+
+      if oldParent ne null
+      then oldParent.nn.assertErrorRefCounts()
+
       this
 
     override def parent: Option[Parent] =
@@ -512,12 +547,6 @@ object Node:
       child.ensureParent(parent, idx)
     export _children.{length, apply}
 
-    // TODO: assert error refcounts every time something changes
-    private def assertErrorRefCounts(): Unit =
-      parent match
-        case thisNode: Node => thisNode.assertErrorRefCounts()
-        case _ =>
-
     private def reIdxFromIdx(idx: Int): this.type =
       var curr = idx
       while curr < length
@@ -525,6 +554,11 @@ object Node:
         _children(curr).ensureParent(parent, curr)
         curr += 1
       this
+
+    private[Node] def makeHole(idx: Int): Unit =
+      val hole = Hole()
+      _children(idx) = hole
+      hole.ensureParent(parent, idx)
 
     // can't export due to redef rules
     override def knownSize: Int = _children.knownSize
@@ -538,15 +572,16 @@ object Node:
     override def prepend(elem: Node.Child): this.type =
       _children.prepend(elem.ensureParent(parent, 0))
       reIdxFromIdx(1)
-      assertErrorRefCounts()
+      parent.assertErrorRefCounts()
       this
 
     override def insert(idx: Int, elem: Node.Child): Unit =
-      _children.insert(idx, elem.ensureParent(parent, idx))
+      _children.insert(idx, elem)
+      elem.ensureParent(parent, idx)
       reIdxFromIdx(idx + 1)
-      assertErrorRefCounts()
+      parent.assertErrorRefCounts()
 
-    //@scala.annotation.tailrec
+    @scala.annotation.tailrec
     override def insertAll(idx: Int, elems: IterableOnce[Node.Child]): Unit =
       elems match
         case elems: Iterable[Node.Child] =>
@@ -557,41 +592,41 @@ object Node:
 
           _children.insertAll(idx, elems)
           reIdxFromIdx(idx + elems.size)
+          parent.assertErrorRefCounts()
         case elems => insertAll(idx, mutable.ArrayBuffer.from(elems))
 
-      assertErrorRefCounts()
-
     override def remove(idx: Int): Node.Child =
-      val child = _children.remove(idx).unparent()
+      _children(idx).unparent(unsafe = true)
+      val child = _children.remove(idx)
       reIdxFromIdx(idx)
-      assertErrorRefCounts()
+      parent.assertErrorRefCounts()
       child
 
     override def remove(idx: Int, count: Int): Unit =
       (idx until idx + count).foreach: childIdx =>
-        _children(childIdx).unparent()
+        _children(childIdx).unparent(unsafe = true)
       _children.remove(idx, count)
       reIdxFromIdx(idx)
-      assertErrorRefCounts()
+      parent.assertErrorRefCounts()
 
     override def clear(): Unit =
       _children.foreach(_.unparent())
       _children.clear()
-      assertErrorRefCounts()
+      parent.assertErrorRefCounts()
 
     override def addOne(elem: Child): this.type =
       _children.addOne(elem.ensureParent(parent, length))
-      assertErrorRefCounts()
+      parent.assertErrorRefCounts()
       this
 
     override def update(idx: Int, child: Node.Child): Unit =
       val existingChild = _children(idx)
       if existingChild ne child
       then
-        child.ensureParent(parent, idx)
-        existingChild.unparent()
+        existingChild.unparent(unsafe = true)
         _children(idx) = child
-      assertErrorRefCounts()
+        child.ensureParent(parent, idx)
+      parent.assertErrorRefCounts()
 
     override def iterator: Iterator[Node.Child] =
       (0 until length).iterator.map(this)

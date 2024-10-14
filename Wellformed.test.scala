@@ -1,7 +1,6 @@
 package distcompiler
 
 import wf.*
-import distcompiler.Manip.ops.withTracer
 
 class WellformedTests extends munit.FunSuite:
   import WellformedTests.*
@@ -45,6 +44,7 @@ class WellformedTests extends munit.FunSuite:
 
   test("back and forth"):
     examples(3).foreach: tree =>
+      import dsl.*
       val orig = tree.clone()
       wf.serializeTree
         .withTracer(Manip.LogTracer(os.write.over.outputStream(os.pwd / "serializeLog.log")))
