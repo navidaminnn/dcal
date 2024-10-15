@@ -213,7 +213,10 @@ object Manip:
   object RefMap:
     def empty: RefMap = RefMap(Map.empty)
 
-  type Rules = Manip[Unit]
+  type Rules = Manip[RulesResult]
+
+  enum RulesResult:
+    case Progress, NoProgress
 
   val unit: Manip[Unit] = ().pure
   export ops.defer
@@ -578,7 +581,11 @@ object Manip:
           tracer.onRewriteComplete(summon[DebugInfo], parent, idx, nodes.size)(
             using refMap
           )
-      *> keepHandleIdx(manip(using on.Ctx(nodes.size)))
+      *> keepHandleIdx(
+        pass.resultRef.updated(_ => RulesResult.Progress)(
+          manip(using on.Ctx(nodes.size))
+        )
+      )
 
     def spliceThen(using DebugInfo, on.Ctx)(nodes: Node.Child*)(
         manip: on.Ctx ?=> Rules
@@ -661,7 +668,6 @@ object Manip:
         once: Boolean = false,
         wrapFn: Manip[Unit] => Manip[Unit] = identity
     ):
-      require(once)
       def rules(using DebugInfo)(rules: pass.Ctx ?=> Rules): Manip[Unit] =
         val before = getTracer
           .product(Manip.GetRefMap)
@@ -672,17 +678,21 @@ object Manip:
           .flatMap: (tracer, refMap) =>
             effect(tracer.afterPass(summon[DebugInfo])(using refMap))
 
-        lazy val loop: Manip[Unit] =
+        lazy val loop: Manip[RulesResult] =
           commit:
             rules(using pass.Ctx(strategy, defer(loop)))
               | strategy.atNext(defer(loop))
 
-        // TODO: add repeat?
-
         wrapFn:
-          before
-            *> loop
-            *> after
+          lazy val bigLoop: Manip[Unit] =
+            pass.resultRef.init(RulesResult.NoProgress):
+              (before *> loop <* after).flatMap:
+                case RulesResult.Progress if !once =>
+                  bigLoop
+                case RulesResult.Progress | RulesResult.NoProgress =>
+                  pure(())
+
+          bigLoop
 
       def withState[T](ref: Ref[T])(init: => T): pass =
         pass(
@@ -693,26 +703,31 @@ object Manip:
     end pass
 
     object pass:
-      final case class Ctx(strategy: TraversalStrategy, loop: Manip[Unit]):
-        lazy val loopAtNext: Manip[Unit] =
+      object resultRef extends Ref[RulesResult]
+
+      final case class Ctx(
+          strategy: TraversalStrategy,
+          loop: Manip[RulesResult]
+      ):
+        lazy val loopAtNext: Manip[RulesResult] =
           strategy.atNext(loop)
 
       trait TraversalStrategy:
-        def atNext(manip: Manip[Unit]): Manip[Unit]
+        def atNext(manip: Manip[RulesResult]): Manip[RulesResult]
 
       object topDown extends TraversalStrategy:
         private inline given DebugInfo = DebugInfo.notPoison
 
-        def atNext(manip: Manip[Unit]): Manip[Unit] =
+        def atNext(manip: Manip[RulesResult]): Manip[RulesResult] =
           val next = commit(manip)
           commit:
             atFirstChild(next)
               | atRightSibling(next)
-              | on(Pattern.ops.atEnd).check
+              | (on(Pattern.ops.atEnd).check *> resultRef.get)
               *> atParent:
                 commit:
                   atRightSibling(next)
-                    | on(Pattern.ops.theTop).check
+                    | on(Pattern.ops.theTop).check *> resultRef.get
 
       // object bottomUp extends TraversalStrategy:
       //   def traverse(
