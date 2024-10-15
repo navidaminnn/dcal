@@ -90,9 +90,10 @@ object Reader:
         val fallbackImpl = defer(manip)
         srcRef.get.lookahead.flatMap: src =>
           val (matched, manip) = cell.lookup(src, fallbackImpl)
-          srcRef.updated(_.drop(matched.length)):
-            matchedRef.updated(_ <+> matched):
-              manip
+          commit:
+            srcRef.updated(_.drop(matched.length)):
+              matchedRef.updated(_ <+> matched):
+                manip
 
     object selecting:
       def apply[T]: selecting[T] =

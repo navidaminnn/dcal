@@ -12,14 +12,20 @@ object TLAReader extends Reader:
 
     val allToks =
       tok(
+        StringLiteral,
+        NumberLiteral,
+        // ---
         ModuleGroup,
         ParenthesesGroup,
         SqBracketsGroup,
         BracesGroup,
         TupleGroup,
+        // ---
         Alpha,
         LaTexLike,
-        Comment
+        // ---
+        Comment,
+        DashSeq
       )
         | Choice(NonAlpha.instances.toSet)
         | Choice(allOperators.toSet)
@@ -32,7 +38,6 @@ object TLAReader extends Reader:
     TupleGroup ::= allToks
 
     StringLiteral ::= Atom
-    NumberLiteral ::= Atom
     Alpha ::= Atom
     LaTexLike ::= Atom
 
@@ -71,11 +76,12 @@ object TLAReader extends Reader:
   case object `|->` extends NonAlpha
   case object `,` extends NonAlpha
   case object `.` extends NonAlpha
-  case object `__` extends NonAlpha:
-    override def spelling: String = "_"
   case object `!` extends NonAlpha
   case object `@` extends NonAlpha
   case object `==` extends NonAlpha
+
+  case object `WF_` extends NonAlpha
+  case object `SF_` extends NonAlpha
 
   val digits: Set[Char] =
     ('0' to '9').toSet
@@ -124,7 +130,7 @@ object TLAReader extends Reader:
         next: => Manip[SourceRange]
     ): bytes.selecting[SourceRange] =
       val nxt = defer(next)
-      sel.onOneOf(letters):
+      sel.onOneOf(letters + '_'):
         bytes.selectManyLike(letters ++ digits + '_'):
           consumeMatch: m =>
             addChild(Alpha(m))
@@ -146,6 +152,25 @@ object TLAReader extends Reader:
           *> atNode(top)(moduleSearch)
 
   private lazy val moduleSearch: Manip[SourceRange] =
+    lazy val onAlpha: Manip[SourceRange] =
+      val validCases =
+        on(
+          tok(ModuleGroup)
+          *> children:
+            Fields()
+              .skip(tok(DashSeq))
+              .skip(tok(Alpha).filterSrc("MODULE"))
+              .optionalSkip(tok(Alpha))
+              .atEnd
+        ).check
+
+      (validCases *> moduleSearch)
+      | on(theTop).value.flatMap: top =>
+        // Saw an alpha at top level. Delete it.
+        effect(top.children.dropRightInPlace(1))
+          *> moduleSearch
+      | moduleSearchNeverMind // otherwise we failed to parse a module start
+
     commit:
       bytes
         .selecting[SourceRange]
@@ -172,24 +197,20 @@ object TLAReader extends Reader:
                   addChild(DashSeq(m))
                     *> tokens)
                 | moduleSearchNeverMind
-        .installAlphas:
-          val validCases =
-            on(
-              tok(ModuleGroup)
-              *> children:
-                Fields()
-                  .skip(tok(DashSeq))
-                  .skip(tok(Alpha).filterSrc("MODULE"))
-                  .optionalSkip(tok(Alpha))
-                  .atEnd
-            ).check
-
-          (validCases *> moduleSearch)
-          | on(theTop).value.flatMap: top =>
-            // Saw an alpha at top level. Delete it.
-            effect(top.children.dropRightInPlace(1))
-              *> moduleSearch
-          | moduleSearchNeverMind // otherwise we failed to parse a module start
+        .installAlphas(onAlpha)
+        .onOneOf(digits):
+          // This case handles enough of the number -> alpha promotion that we can parse
+          // the module name if it starts with one or more digits.
+          bytes.selectManyLike(digits):
+            bytes
+              .selecting[SourceRange]
+              .installAlphas(onAlpha)
+              .fallback:
+                on(theTop).check
+                // Saw digits (?) at top level. We didn't even make a node, so just drop the match and go back to
+                // business as usual.
+                  *> dropMatch(moduleSearch)
+                  | moduleSearchNeverMind // Or we saw an integer in the middle of module pattern, in which case drop this match.
         .fallback:
           bytes.selectOne:
             commit:
@@ -337,18 +358,39 @@ object TLAReader extends Reader:
     impl
 
   private lazy val stringLiteral: Manip[SourceRange] =
-    commit:
-      bytes
-        .selecting[SourceRange]
-        .on('"'):
-          consumeMatch: m =>
-            addChild(StringLiteral(m))
-              *> tokens
-        .onSeq("\\\"")(stringLiteral)
-        .fallback:
-          bytes.selectOne:
-            stringLiteral
-          | unexpectedEOF
+    object builderRef extends Manip.Ref[SourceRange.Builder]
+
+    def addByte(b: Byte): Manip[SourceRange] =
+      dropMatch:
+        builderRef.get
+          .tapEffect(_.addOne(b))
+          *> stringLiteralLoop
+
+    def finishStringLiteral(rest: Manip[SourceRange]): Manip[SourceRange] =
+      dropMatch:
+        builderRef.get.flatMap: builder =>
+          addChild(StringLiteral(builder.result()))
+            *> rest
+
+    lazy val stringLiteralLoop: Manip[SourceRange] =
+      commit:
+        bytes
+          .selecting[SourceRange]
+          .on('"')(finishStringLiteral(tokens))
+          .onSeq("\\\"")(addByte('"'))
+          .onSeq("\\\\")(addByte('\\'))
+          .onSeq("\\t")(addByte('\t'))
+          .onSeq("\\n")(addByte('\n'))
+          .onSeq("\\f")(addByte('\f'))
+          .onSeq("\\r")(addByte('\r'))
+          .fallback:
+            bytes.selectOne:
+              consumeMatch: m =>
+                assert(m.length == 1)
+                addByte(m.head)
+            | finishStringLiteral(unexpectedEOF)
+
+    builderRef.init(SourceRange.newBuilder)(dropMatch(stringLiteralLoop))
 
   lazy val endNumberLiteral: Manip[SourceRange] =
     consumeMatch: m =>
@@ -367,5 +409,8 @@ object TLAReader extends Reader:
       bytes
         .selecting[SourceRange]
         .onOneOf(digits)(numberLiteral)
+        // If we find a letter, then we're not in a num literal.
+        // Act like we were processing an Alpha all along.
+        .installAlphas(tokens)
         .installDotNumberLiterals
         .fallback(endNumberLiteral)
