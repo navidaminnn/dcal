@@ -21,6 +21,13 @@ object SExprReader extends Reader:
       addChild(Error("unexpected EOF", SourceMarker(m)))
         *> Manip.pure(m)
 
+  def canBeEncodedAsToken(src: SourceRange): Boolean =
+    src.nonEmpty
+      && (alpha(src.head.toChar) || pseudoAlpha(src.head.toChar))
+      && src.tail.forall(b =>
+        alpha(b.toChar) || pseudoAlpha(b.toChar) || digit(b.toChar)
+      )
+
   protected lazy val rules: Manip[SourceRange] =
     commit:
       bytes

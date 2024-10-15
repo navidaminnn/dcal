@@ -25,8 +25,8 @@ class serializeTests extends munit.FunSuite:
   test("eg1 pretty"):
     assertEquals(
       eg1.serializePretty,
-      """(3:foo
-        |  3:bar)""".stripMargin
+      """(foo
+        |  bar)""".stripMargin
     )
 
   val eg2 = Node.Top(

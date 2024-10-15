@@ -42,7 +42,7 @@ class WellformedTests extends munit.FunSuite:
       children <- joinN(breadth, () => exampleNodes(depth - 1))
     yield Node.Top(children)
 
-  test("back and forth"):
+  test("serialization back and forth"):
     examples(3).foreach: tree =>
       import dsl.*
       val orig = tree.clone()

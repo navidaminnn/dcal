@@ -291,7 +291,11 @@ object Node:
     final override def toString(): String =
       val dummyWf = Wellformed:
         Node.Top ::= Wellformed.Shape.AnyShape
-      sexpr.serialize.toPrettyString(dummyWf.serializeTree(this))
+      val str = sexpr.serialize.toPrettyString(dummyWf.serializeTree(this))
+
+      if this.isInstanceOf[Top]
+      then s"[top] $str"
+      else str
 
   sealed trait Root extends All:
     override type This <: Root

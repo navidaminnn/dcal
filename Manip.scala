@@ -3,6 +3,8 @@ package distcompiler
 import cats.syntax.all.given
 
 enum Manip[+T]:
+  private inline given DebugInfo = DebugInfo.poison
+
   case Backtrack(debugInfo: DebugInfo)
   case Pure(value: T)
   case Ap[T, U](ff: Manip[T => U], fa: Manip[T]) extends Manip[U]
@@ -33,6 +35,7 @@ enum Manip[+T]:
       debugInfo: DebugInfo
   ) extends Manip[U]
   case GetRefMap extends Manip[Manip.RefMap]
+  case GetTracer extends Manip[Manip.Tracer]
 
   case Disjunction(first: Manip[T], second: Manip[T])
   case Deferred(fn: () => Manip[T])
@@ -151,6 +154,8 @@ enum Manip[+T]:
               impl(refUpdated.manip)
         case GetRefMap =>
           tailcall(continue(refMap))
+        case GetTracer =>
+          tailcall(continue(tracer))
         case Disjunction(first, second) =>
           given Backtrack[U] = debugInfo1 =>
             given Backtrack[U] = debugInfo2 =>
@@ -169,6 +174,8 @@ enum Manip[+T]:
 end Manip
 
 object Manip:
+  private inline given DebugInfo = DebugInfo.poison
+
   trait Ref[T]:
     final def init[U](init: => T)(manip: Manip[U]): Manip[U] =
       Manip.RefInit(this, () => init, manip)
@@ -228,9 +235,9 @@ object Manip:
     def combineK[A](x: Manip[A], y: Manip[A]): Manip[A] =
       Manip.Disjunction(x, y)
 
-  given monoidK(using DebugInfo): cats.MonoidK[Manip] with
-    export semigroupK.combineK
-    def empty[A]: Manip[A] = Manip.Backtrack(summon[DebugInfo])
+  // given monoidK(using DebugInfo): cats.MonoidK[Manip] with
+  //   export semigroupK.combineK
+  //   def empty[A]: Manip[A] = Manip.Backtrack(summon[DebugInfo])
 
   class Lookahead[T](val manip: Manip[T]) extends AnyVal:
     def flatMap[U](fn: T => Manip[U]): Manip[U] =
@@ -264,7 +271,12 @@ object Manip:
         idx: Int,
         matchedCount: Int
     )(using RefMap): Unit
-    // def afterRewrite(debugInfo: DebugInfo, tree: Node.All): Unit
+    def onRewriteComplete(
+        debugInfo: DebugInfo,
+        parent: Node.Parent,
+        idx: Int,
+        resultCount: Int
+    )(using RefMap): Unit
 
   object NopTracer extends Tracer:
     def beforePass(debugInfo: DebugInfo)(using RefMap): Unit = ()
@@ -277,6 +289,12 @@ object Manip:
         parent: Node.Parent,
         idx: Int,
         matchedCount: Int
+    )(using RefMap): Unit = ()
+    def onRewriteComplete(
+        debugInfo: DebugInfo,
+        parent: Node.Parent,
+        idx: Int,
+        resultCount: Int
     )(using RefMap): Unit = ()
     def close(): Unit = ()
 
@@ -326,7 +344,17 @@ object Manip:
         matchedCount: Int
     )(using RefMap): Unit =
       logln(
-        s"rw match $debugInfo, from $idx @ $matchedCount nodes in parent $parent"
+        s"rw match $debugInfo, from $idx, $matchedCount nodes in parent $parent"
+      )
+
+    def onRewriteComplete(
+        debugInfo: DebugInfo,
+        parent: Node.Parent,
+        idx: Int,
+        resultCount: Int
+    )(using RefMap): Unit =
+      logln(
+        s"rw done $debugInfo, from $idx, $resultCount nodes in parent $parent"
       )
 
   enum Handle:
@@ -436,6 +464,9 @@ object Manip:
     def getHandle(using DebugInfo): Manip[Manip.Handle] =
       Manip.Handle.ref.get
 
+    def getTracer: Manip[Manip.Tracer] =
+      Manip.GetTracer
+
     def keepHandleIdx[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       getHandle.lookahead.flatMap: handle =>
         handle.keepIdx match
@@ -494,16 +525,16 @@ object Manip:
       def raw: Manip[(Int, T)] =
         pattern.manip
 
-      def value(using DebugInfo): Manip[T] =
+      def value: Manip[T] =
         raw.map(_._2)
 
-      def check(using DebugInfo): Manip[Unit] =
+      def check: Manip[Unit] =
         raw.as(())
 
       def rewrite(using DebugInfo)(
           action: on.Ctx ?=> T => Rules
       ): Rules =
-        (raw, getHandle, Manip.tracerRef.get, Manip.GetRefMap).tupled
+        (raw, getHandle, getTracer, Manip.GetRefMap).tupled
           .flatMap:
             case ((maxIdx, value), handle, tracer, refMap) =>
               handle.assertCoherence()
@@ -529,11 +560,13 @@ object Manip:
     object on:
       final case class Ctx(matchedCount: Int) extends AnyVal
 
-    def spliceThen(using onCtx: on.Ctx)(nodes: Iterable[Node.Child])(
+    def spliceThen(using DebugInfo)(using onCtx: on.Ctx)(
+        nodes: Iterable[Node.Child]
+    )(
         manip: on.Ctx ?=> Rules
     ): Rules =
-      getHandle
-        .tapEffect: handle =>
+      (getHandle, getTracer, Manip.GetRefMap).tupled
+        .tapEffect: (handle, tracer, refMap) =>
           handle.assertCoherence()
           val (parent, idx) =
             handle match
@@ -542,27 +575,32 @@ object Manip:
               case Handle.AtChild(parent, idx, _) => (parent, idx)
               case Handle.Sentinel(parent, idx)   => (parent, idx)
           parent.children.patchInPlace(idx, nodes, onCtx.matchedCount)
+          tracer.onRewriteComplete(summon[DebugInfo], parent, idx, nodes.size)(
+            using refMap
+          )
       *> keepHandleIdx(manip(using on.Ctx(nodes.size)))
 
-    def spliceThen(using on.Ctx)(nodes: Node.Child*)(
+    def spliceThen(using DebugInfo, on.Ctx)(nodes: Node.Child*)(
         manip: on.Ctx ?=> Rules
     ): Rules =
       spliceThen(nodes)(manip)
 
-    def spliceThen(using on.Ctx)(nodes: IterableOnce[Node.Child])(
+    def spliceThen(using DebugInfo, on.Ctx)(nodes: IterableOnce[Node.Child])(
         manip: on.Ctx ?=> Rules
     ): Rules =
       spliceThen(nodes.iterator.toArray)(manip)
 
-    def splice(using onCtx: on.Ctx, passCtx: pass.Ctx)(
+    def splice(using DebugInfo)(using onCtx: on.Ctx, passCtx: pass.Ctx)(
         nodes: Iterable[Node.Child]
     ): Rules =
       spliceThen(nodes)(skipMatch)
 
-    def splice(using on.Ctx, pass.Ctx)(nodes: Node.Child*): Rules =
+    def splice(using DebugInfo, on.Ctx, pass.Ctx)(nodes: Node.Child*): Rules =
       splice(nodes)
 
-    def splice(using on.Ctx, pass.Ctx)(nodes: IterableOnce[Node.Child]): Rules =
+    def splice(using DebugInfo, on.Ctx, pass.Ctx)(
+        nodes: IterableOnce[Node.Child]
+    ): Rules =
       splice(nodes.iterator.toArray)
 
     def continuePass(using passCtx: pass.Ctx): Rules =
@@ -574,7 +612,9 @@ object Manip:
     def atNextNode(using passCtx: pass.Ctx)(manip: Rules): Rules =
       passCtx.strategy.atNext(manip)
 
-    def skipMatch(using onCtx: on.Ctx, passCtx: pass.Ctx): Rules =
+    def skipMatch(using
+        DebugInfo
+    )(using onCtx: on.Ctx, passCtx: pass.Ctx): Rules =
       getHandle.lookahead.flatMap: handle =>
         handle.assertCoherence()
         val idx =
@@ -601,9 +641,9 @@ object Manip:
           case v if pred(v) => v
       def withFinally(fn: => Unit): Manip[T] =
         Manip.Finally(lhs, () => fn)
-      def withTracer(tracer: => Tracer): Manip[T] =
+      def withTracer(using DebugInfo)(tracer: => Tracer): Manip[T] =
         tracerRef.init(tracer):
-          tracerRef.get.lookahead.flatMap: tracer =>
+          getTracer.lookahead.flatMap: tracer =>
             lhs.withFinally(tracer.close())
       def tapEffect(fn: T => Unit): Manip[T] =
         lookahead.flatMap: value =>
@@ -616,13 +656,6 @@ object Manip:
         lhs.lookahead.flatMap: node =>
           atNode(node)(manip)
 
-    // TODO: debug info as implicit param.
-    // - optionally print AST after pass
-    // - for initial AST, give direct option to print that in reader
-    // - include link to file + line num in printed info
-    // - option to print after every edit?
-    // - don't discount ability to make debug adapter for this later...
-
     final class pass(
         strategy: pass.TraversalStrategy = pass.topDown,
         once: Boolean = false,
@@ -630,12 +663,11 @@ object Manip:
     ):
       require(once)
       def rules(using DebugInfo)(rules: pass.Ctx ?=> Rules): Manip[Unit] =
-        val tracer = Manip.tracerRef.get | pure(Manip.NopTracer)
-        val before = tracer
+        val before = getTracer
           .product(Manip.GetRefMap)
           .flatMap: (tracer, refMap) =>
             effect(tracer.beforePass(summon[DebugInfo])(using refMap))
-        val after = tracer
+        val after = getTracer
           .product(Manip.GetRefMap)
           .flatMap: (tracer, refMap) =>
             effect(tracer.afterPass(summon[DebugInfo])(using refMap))
@@ -669,17 +701,18 @@ object Manip:
         def atNext(manip: Manip[Unit]): Manip[Unit]
 
       object topDown extends TraversalStrategy:
+        private inline given DebugInfo = DebugInfo.notPoison
+
         def atNext(manip: Manip[Unit]): Manip[Unit] =
           val next = commit(manip)
-          lazy val upImpl: Manip[Unit] =
-            commit:
-              atRightSibling(next)
-                | atParent(defer(upImpl))
-                | on(Pattern.ops.theTop).check
-
           commit:
             atFirstChild(next)
-              | upImpl
+              | atRightSibling(next)
+              | on(Pattern.ops.atEnd).check
+              *> atParent:
+                commit:
+                  atRightSibling(next)
+                    | on(Pattern.ops.theTop).check
 
       // object bottomUp extends TraversalStrategy:
       //   def traverse(

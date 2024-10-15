@@ -141,7 +141,8 @@ final class Wellformed private (
   def serializeTree(tree: Node.All): tree.This =
     import sexpr.tokens.{Atom, List as SList}
 
-    val src = SourceRange.entire(Source.fromString("::src"))
+    val src = SourceRange.entire(Source.fromString(":src"))
+    val txt = SourceRange.entire(Source.fromString(":txt"))
 
     extension [P <: Node.Parent](parent: P)
       def addSerializedChildren(
@@ -171,14 +172,18 @@ final class Wellformed private (
             val result = SList(Atom(node.token.shortName))
             if node.token.showSource
             then
-              result.children.addOne(Atom(src))
               val srcRange = node.sourceRange
               result.children.addOne:
-                srcRange.source.origin match
-                  case None =>
-                    Atom(srcRange)
-                  case Some(origin) =>
+                SList(
+                  Atom(txt),
+                  Atom(srcRange)
+                )
+              srcRange.source.origin match
+                case None =>
+                case Some(origin) =>
+                  result.children.addOne:
                     SList(
+                      Atom(src),
                       Atom(origin.toString),
                       Atom(srcRange.offset.toString()),
                       Atom(srcRange.length.toString())
@@ -196,8 +201,76 @@ final class Wellformed private (
   def deserializeTree(tree: Node.All): Node.All =
     import sexpr.tokens.{Atom, List as SList}
 
-    val src = SourceRange.entire(Source.fromString("::src"))
+    val src = SourceRange.entire(Source.fromString(":src"))
+    val txt = SourceRange.entire(Source.fromString(":txt"))
     val srcMap = mutable.HashMap.empty[os.Path, Source]
+
+    lazy val nodeManip: Manip[TailRec[Node.All]] =
+      on(
+        tok(Atom)
+          .map(_.sourceRange)
+          .restrict(tokenByShortName)
+          <* children(atEnd)
+      ).value.map: token =>
+        done(token())
+      | on(
+        anyNode *:
+          tok(SList).withChildren:
+            Fields()
+              .field:
+                tok(Atom)
+                  .map(_.sourceRange)
+                  .restrict(tokenByShortName)
+              .optional:
+                tok(SList).withChildren:
+                  Fields()
+                    .skip(tok(Atom).filterSrc(txt))
+                    .field(tok(Atom).map(_.sourceRange))
+                    .atEnd
+                    .map(_._1)
+              .optional:
+                tok(SList).withChildren:
+                  Fields()
+                    .skip(tok(Atom).filterSrc(src))
+                    .field(tok(Atom))
+                    .field(tok(Atom))
+                    .field(tok(Atom))
+                    .atEnd
+              .trailing
+      ).value.map: (node, token, txtOpt, srcOpt) =>
+        val result = token()
+        srcOpt match
+          case None =>
+          case Some((path, offset, len)) =>
+            val pathVal = os.Path(path.sourceRange.decodeString())
+            val offsetVal = offset.sourceRange.decodeString().toInt
+            val lenVal = len.sourceRange.decodeString().toInt
+            val loc =
+              srcMap.getOrElseUpdate(pathVal, Source.mapFromFile(pathVal))
+            result.at(SourceRange(loc, offsetVal, lenVal))
+        txtOpt match
+          case None =>
+          case Some(text) if srcOpt.nonEmpty =>
+            assert(text == result.sourceRange)
+          case Some(text) =>
+            result.at(text)
+
+        val skipCount =
+          1 + (if srcOpt.nonEmpty then 1 else 0) + (if txtOpt.nonEmpty then 1
+                                                    else 0)
+        tailcall:
+          result
+            .addDeserializedChildren(node.children.iterator.drop(skipCount))
+            .map(_ => result)
+      | on(
+        anyNode
+      ).value.map: badNode =>
+        done(
+          Builtin.Error(
+            "could not parse node",
+            badNode.clone()
+          )
+        )
 
     extension [P <: Node.Parent](parent: P)
       def addDeserializedChildren(
@@ -209,58 +282,16 @@ final class Wellformed private (
           .map(_ => parent)
 
     def impl[N <: Node.All](tree: N): TailRec[N] =
-      def nodeOrError(name: SourceRange, ast: N & Node)(
-          fn: Token => TailRec[Node]
-      ): TailRec[N] =
-        tokenByShortName.get(name) match
-          case None =>
-            done:
-              Builtin
-                .Error(
-                  s"unknown token \"${name.decodeString()}\"",
-                  ast.clone()
-                )
-                .asInstanceOf[N]
-          case Some(token) =>
-            fn(token).asInstanceOf[TailRec[N]]
-
       (tree: @unchecked) match
         case top: Node.Top =>
           val result: Node.Top = Node.Top()
           result
             .addDeserializedChildren(top.children)
             .map(_ => result.asInstanceOf[N])
-        case atom @ Atom() =>
-          nodeOrError(atom.sourceRange, atom): token =>
-            done(token())
-        case list @ SList(
-              tokAtom @ Atom(),
-              srcId @ Atom(),
-              srcAtom @ Atom(),
-              _*
-            ) if srcId.sourceRange == src =>
-          nodeOrError(tokAtom.sourceRange, list): token =>
-            val result = token().at(srcAtom.sourceRange)
-            result.addDeserializedChildren(list.children.view.drop(3))
-        case list @ SList(
-              tokAtom @ Atom(),
-              srcId @ Atom(),
-              SList(path @ Atom(), offset @ Atom(), len @ Atom()),
-              _*
-            ) if srcId.sourceRange == src =>
-          nodeOrError(tokAtom.sourceRange, list): token =>
-            val result = token()
-            val pathVal = os.Path(path.sourceRange.decodeString())
-            val offsetVal = offset.sourceRange.decodeString().toInt
-            val lenVal = len.sourceRange.decodeString().toInt
-
-            val src =
-              srcMap.getOrElseUpdate(pathVal, Source.mapFromFile(pathVal))
-            result.at(SourceRange(src, offsetVal, lenVal))
-            result.addDeserializedChildren(list.children.view.drop(3))
-        case list @ SList(tokAtom @ Atom(), _*) =>
-          nodeOrError(tokAtom.sourceRange, list): token =>
-            token().addDeserializedChildren(list.children.view.drop(1))
+        case node: Node =>
+          atNode(node)(nodeManip)
+            .perform()
+            .asInstanceOf[TailRec[N]]
 
     impl(tree).result
   end deserializeTree

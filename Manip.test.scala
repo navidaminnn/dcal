@@ -54,6 +54,12 @@ class ManipTests extends munit.FunSuite:
       atNode(bi)(unifyColors1).perform()
       assertEquals(bi, mono)
 
+  test("unifyColors1 on a single node"):
+    val bi = Node.Top(tok2())
+    val mono = Node.Top(tok1())
+    atNode(bi)(unifyColors1).perform()
+    assertEquals(bi, mono)
+
 object ManipTests:
   object tok1 extends Token
   object tok2 extends Token

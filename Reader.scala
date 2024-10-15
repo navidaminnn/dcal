@@ -7,6 +7,7 @@ import java.nio.CharBuffer
 
 trait Reader:
   protected def tracePathOpt: Option[os.Path] = None
+  protected def traceLimit: Int = -1
   protected def rules: Manip[SourceRange]
 
   final def apply(sourceRange: SourceRange): Node.Top =
@@ -22,7 +23,9 @@ trait Reader:
       case None => manip.perform()
       case Some(tracePath) =>
         println(s"!! logging behavior to $tracePath")
-        Manip.ops.withTracer(manip)(Manip.LogTracer(tracePath)).perform()
+        Manip.ops
+          .withTracer(manip)(Manip.LogTracer(tracePath, limit = traceLimit))
+          .perform()
 
     top
 

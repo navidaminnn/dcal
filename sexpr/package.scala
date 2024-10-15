@@ -115,6 +115,10 @@ object serialize:
                 .map(impl)
                 .intercalate(nl)
                 .traverse(identity)
+            case atom @ tokens.Atom()
+                if SExprReader.canBeEncodedAsToken(atom.sourceRange) =>
+              atom.sourceRange.writeBytesTo(out)
+              done(())
             case atom @ tokens.Atom() =>
               val sourceRange = atom.sourceRange
               out.write(sourceRange.length.toString().getBytes())

@@ -3,6 +3,7 @@ package distcompiler.tla
 import cats.syntax.all.given
 
 import distcompiler.*
+import os.Path
 
 object TLAReader extends Reader:
   lazy val wf = Wellformed:
@@ -44,6 +45,9 @@ object TLAReader extends Reader:
   import dsl.*
   import Reader.*
 
+  // override protected def tracePathOpt: Option[Path] = Some(os.pwd / "tlareader.log")
+  // override protected def traceLimit: Int = 1000
+
   object StringLiteral extends Token.ShowSource
   object NumberLiteral extends Token.ShowSource
 
@@ -71,6 +75,7 @@ object TLAReader extends Reader:
     override def spelling: String = "_"
   case object `!` extends NonAlpha
   case object `@` extends NonAlpha
+  case object `==` extends NonAlpha
 
   val digits: Set[Char] =
     ('0' to '9').toSet
@@ -130,9 +135,7 @@ object TLAReader extends Reader:
         sel.onSeq(s".$d")(numberLiteralAfterPoint)
 
   override protected lazy val rules: Manip[SourceRange] =
-    moduleSearch.withTracer(
-      Manip.LogTracer(os.write.over.outputStream(os.pwd / "tlaReader.log"))
-    )
+    moduleSearch
 
   lazy val moduleSearchNeverMind: Manip[SourceRange] =
     on(
@@ -170,8 +173,6 @@ object TLAReader extends Reader:
                     *> tokens)
                 | moduleSearchNeverMind
         .installAlphas:
-          // TODO: this should be one case.
-          // Fields should pass idx along, and have .optional and .repeated elements
           val validCases =
             on(
               tok(ModuleGroup)
@@ -179,17 +180,9 @@ object TLAReader extends Reader:
                 Fields()
                   .skip(tok(DashSeq))
                   .skip(tok(Alpha).filterSrc("MODULE"))
+                  .optionalSkip(tok(Alpha))
                   .atEnd
             ).check
-              | on(
-                tok(ModuleGroup)
-                *> children:
-                  Fields()
-                    .skip(tok(DashSeq))
-                    .skip(tok(Alpha).filterSrc("MODULE"))
-                    .skip(tok(Alpha))
-                    .atEnd
-              ).check
 
           (validCases *> moduleSearch)
           | on(theTop).value.flatMap: top =>
