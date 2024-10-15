@@ -18,7 +18,7 @@ object SExprReader extends Reader:
 
   private lazy val unexpectedEOF: Manip[SourceRange] =
     consumeMatch: m =>
-      addChild(Error("unexpected EOF", SourceMarker().at(m)))
+      addChild(Error("unexpected EOF", SourceMarker(m)))
         *> Manip.pure(m)
 
   protected lazy val rules: Manip[SourceRange] =
@@ -35,7 +35,7 @@ object SExprReader extends Reader:
             atParent:
               rules
           | consumeMatch: m =>
-            addChild(Error("unexpected end of list", SourceMarker().at(m)))
+            addChild(Error("unexpected end of list", SourceMarker(m)))
               *> rules
         .onOneOf(digit):
           rawMode
@@ -46,7 +46,7 @@ object SExprReader extends Reader:
         .fallback:
           bytes.selectCount(1):
             consumeMatch: m =>
-              addChild(Error("invalid byte", SourceMarker().at(m)))
+              addChild(Error("invalid byte", SourceMarker(m)))
                 *> rules
           | consumeMatch: m =>
             // a perfectly normal EOF
@@ -63,7 +63,7 @@ object SExprReader extends Reader:
               addChild(
                 Error(
                   "length doesn't fit in a machine int",
-                  SourceMarker().at(m)
+                  SourceMarker(m)
                 )
               )
                 *> rules
@@ -74,14 +74,14 @@ object SExprReader extends Reader:
                   dropMatch:
                     bytes.selectCount(lengthPrefix):
                       consumeMatch: m =>
-                        addChild(tokens.Atom().at(m))
+                        addChild(tokens.Atom(m))
                           *> rules
                   | bytes.getSrc.flatMap: src =>
                     val srcEnd = src.drop(src.length)
                     addChild(
                       Error(
                         "unexpected EOF before end of raw atom",
-                        SourceMarker().at(srcEnd)
+                        SourceMarker(srcEnd)
                       )
                     )
                       *> Manip.pure(srcEnd)
@@ -89,7 +89,7 @@ object SExprReader extends Reader:
                   addChild(
                     Error(
                       "expected : after length prefix",
-                      SourceMarker().at(m)
+                      SourceMarker(m)
                     )
                   )
                     *> rules
@@ -103,7 +103,7 @@ object SExprReader extends Reader:
         .onOneOf(digit)(tokenMode)
         .fallback:
           consumeMatch: m =>
-            addChild(tokens.Atom().at(m))
+            addChild(tokens.Atom(m))
               *> rules
 
   private lazy val stringMode: Manip[SourceRange] =
@@ -124,7 +124,7 @@ object SExprReader extends Reader:
       dropMatch:
         builderRef.get.flatMap: builder =>
           val stringContents = builder.result()
-          addChild(tokens.Atom().at(stringContents))
+          addChild(tokens.Atom(stringContents))
             *> rest
 
     lazy val impl: Manip[SourceRange] =

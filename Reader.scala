@@ -6,17 +6,24 @@ import java.nio.charset.{StandardCharsets, Charset}
 import java.nio.CharBuffer
 
 trait Reader:
+  protected def tracePathOpt: Option[os.Path] = None
   protected def rules: Manip[SourceRange]
 
   final def apply(sourceRange: SourceRange): Node.Top =
     val top = Node.Top()
 
     val manip =
-      Reader.srcRef.init(sourceRange):
-        Reader.matchedRef.init(sourceRange.take(0)):
-          rules
+      Manip.ops.atNode(top):
+        Reader.srcRef.init(sourceRange):
+          Reader.matchedRef.init(sourceRange.take(0)):
+            rules
 
-    manip.perform(top)
+    tracePathOpt match
+      case None => manip.perform()
+      case Some(tracePath) =>
+        println(s"!! logging behavior to $tracePath")
+        Manip.ops.withTracer(manip)(Manip.LogTracer(tracePath)).perform()
+
     top
 
 object Reader:
@@ -36,7 +43,7 @@ object Reader:
 
   def extendThisNodeWithMatch[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
     consumeMatch: m =>
-      Manip.ThisNode.lookahead.flatMap:
+      getNode.lookahead.flatMap:
         case node: Node =>
           effect(node.extendLocation(m))
             *> manip

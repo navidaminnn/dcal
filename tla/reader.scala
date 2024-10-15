@@ -86,7 +86,9 @@ object TLAReader extends Reader:
 
   val nonAlphaNonLaTexOperators: IArray[Operators.Operator] =
     allOperators.filter: op =>
-      (!op.spelling.startsWith("\\") || op == Operators.`\\/` || op == Operators.`\\`)
+      (!op.spelling.startsWith(
+        "\\"
+      ) || op == Operators.`\\/` || op == Operators.`\\`)
         && !letters(op.spelling.head)
 
   extension (sel: bytes.selecting[SourceRange])
@@ -113,27 +115,31 @@ object TLAReader extends Reader:
       letters.foldLeft(sel): (sel, l) =>
         sel.onSeq(s"\\$l")(impl)
 
-    private def installAlphas(next: =>Manip[SourceRange]): bytes.selecting[SourceRange] =
+    private def installAlphas(
+        next: => Manip[SourceRange]
+    ): bytes.selecting[SourceRange] =
       val nxt = defer(next)
       sel.onOneOf(letters):
         bytes.selectManyLike(letters ++ digits + '_'):
-            consumeMatch: m =>
-              addChild(Alpha(m))
-                *> nxt
+          consumeMatch: m =>
+            addChild(Alpha(m))
+              *> nxt
 
     private def installDotNumberLiterals: bytes.selecting[SourceRange] =
       digits.foldLeft(sel): (sel, d) =>
         sel.onSeq(s".$d")(numberLiteralAfterPoint)
 
   override protected lazy val rules: Manip[SourceRange] =
-    moduleSearch.withTracer(Manip.LogTracer(os.write.over.outputStream(os.pwd / "tlaReader.log")))
+    moduleSearch.withTracer(
+      Manip.LogTracer(os.write.over.outputStream(os.pwd / "tlaReader.log"))
+    )
 
   lazy val moduleSearchNeverMind: Manip[SourceRange] =
     on(
       tok(ModuleGroup) *> parent(theTop)
     ).value.flatMap: top =>
-        dropMatch:
-          effect(top.children.dropRightInPlace(1))
+      dropMatch:
+        effect(top.children.dropRightInPlace(1))
           *> atNode(top)(moduleSearch)
 
   private lazy val moduleSearch: Manip[SourceRange] =
@@ -145,23 +151,24 @@ object TLAReader extends Reader:
           bytes.selectManyLike(Set('-')):
             commit:
               (on(theTop).check
-                *> addChild(ModuleGroup())
+              *> addChild(ModuleGroup())
                 .here:
                   consumeMatch: m =>
                     addChild(DashSeq(m))
-                    *> moduleSearch)
-              | (on(
-                tok(ModuleGroup)
-                *> children:
-                  Fields()
-                    .skip(tok(DashSeq))
-                    .skip(tok(Alpha).filterSrc("MODULE"))
-                    .skip(tok(Alpha))
-                    .atEnd
-              ).check *> consumeMatch: m =>
-                addChild(DashSeq(m))
-                *> tokens)
-              | moduleSearchNeverMind
+                      *> moduleSearch
+              )
+                | (on(
+                  tok(ModuleGroup)
+                  *> children:
+                    Fields()
+                      .skip(tok(DashSeq))
+                      .skip(tok(Alpha).filterSrc("MODULE"))
+                      .skip(tok(Alpha))
+                      .atEnd
+                ).check *> consumeMatch: m =>
+                  addChild(DashSeq(m))
+                    *> tokens)
+                | moduleSearchNeverMind
         .installAlphas:
           // TODO: this should be one case.
           // Fields should pass idx along, and have .optional and .repeated elements
@@ -174,30 +181,30 @@ object TLAReader extends Reader:
                   .skip(tok(Alpha).filterSrc("MODULE"))
                   .atEnd
             ).check
-            | on(
-              tok(ModuleGroup)
-              *> children:
-                Fields()
-                  .skip(tok(DashSeq))
-                  .skip(tok(Alpha).filterSrc("MODULE"))
-                  .skip(tok(Alpha))
-                  .atEnd
-            ).check
+              | on(
+                tok(ModuleGroup)
+                *> children:
+                  Fields()
+                    .skip(tok(DashSeq))
+                    .skip(tok(Alpha).filterSrc("MODULE"))
+                    .skip(tok(Alpha))
+                    .atEnd
+              ).check
 
           (validCases *> moduleSearch)
           | on(theTop).value.flatMap: top =>
             // Saw an alpha at top level. Delete it.
             effect(top.children.dropRightInPlace(1))
-            *> moduleSearch
+              *> moduleSearch
           | moduleSearchNeverMind // otherwise we failed to parse a module start
         .fallback:
           bytes.selectOne:
             commit:
               (on(theTop).check *> moduleSearch)
-              | moduleSearchNeverMind
+                | moduleSearchNeverMind
           | consumeMatch: m =>
             on(theTop).check *> Manip.pure(m)
-            | moduleSearchNeverMind
+              | moduleSearchNeverMind
 
   private def openGroup(tkn: Token): Manip[SourceRange] =
     consumeMatch: m =>

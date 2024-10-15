@@ -21,6 +21,7 @@ final class Node(val token: Token)(
   // Children's constructor will see the default 0 value even if it
   // was supposed to start at 1
 
+  // maybe refactor this logic into some kind of Node.Counted interface?
   private var _scopeRelevance: Int =
     if token.canBeLookedUp then 1 else 0
 
@@ -239,7 +240,8 @@ object Node:
 
     final def inspect[T](pattern: Pattern[T]): Option[T] =
       import dsl.*
-      (pattern.map(Some(_)) | Pattern.pure(None)).manip.perform(this)._2
+      val pat = (pattern.map(Some(_)) | Pattern.pure(None))
+      atNode(this)(pat.manip).perform()._2
 
     def asNode: Node =
       throw NodeError("not a node")
@@ -394,9 +396,7 @@ object Node:
     private[Node] final def decErrorRefCount(): Unit =
       this match
         case root: Node.Root => // nothing to do here
-        case thisNode: Node  =>
-          // assert(thisNode._errorRefCount > 0,
-          //   "???")
+        case thisNode: Node =>
           thisNode._errorRefCount -= 1
           if thisNode._errorRefCount == 0
           then
@@ -609,8 +609,9 @@ object Node:
       parent.assertErrorRefCounts()
 
     override def addOne(elem: Child): this.type =
+      val idx = length
       _children.addOne(elem)
-      elem.ensureParent(parent, length)
+      elem.ensureParent(parent, idx)
       parent.assertErrorRefCounts()
       this
 

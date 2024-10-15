@@ -75,9 +75,13 @@ object Pattern:
     def reject(using DebugInfo): Pattern[Nothing] =
       Pattern(Manip.Backtrack(summon[DebugInfo]))
 
-    @scala.annotation.targetName("logPattern")
-    def log[T](using DebugInfo)(pattern: Pattern[T]): Pattern[T] =
-      Pattern(Manip.ops.log(pattern.manip))
+    @scala.annotation.targetName("atHandlePattern")
+    def atHandle[T](handle: Manip.Handle)(pattern: Pattern[T]): Pattern[T] =
+      Pattern(Manip.ops.atHandle(handle)(pattern.manip))
+
+    @scala.annotation.targetName("getHandlePattern")
+    def getHandle(using DebugInfo): Pattern[Manip.Handle] =
+      Pattern(Manip.ops.getHandle.map((-1, _)))
 
     def siblingAtOffset[T](using DebugInfo)(offset: Int)(
         pattern: Pattern[T]
@@ -93,43 +97,48 @@ object Pattern:
             Pattern(atNode(target)(Manip.pure((idx, ())) *> pattern.manip))
           else reject
 
-    // TODO: this part seems broken; it looks at the wrong fields.
-    // plan:
-    // - keep most of the interface. we place Fields().x.y somewhere and that asserts things about fields
-    // - pass "next" idx out of prev pattern
-    // - add repeat and optional parts
-    // - finish with .atEnd or .trailing (option 2 emulates Trieste)
-
-    // - consider adding syntax for tok(X).children(...) so we don't have to type tok(...) *> children(...), which while ok is hard to explain
-    // - similarly, .parent(...)
-
-    // extra thought: being able to be "nowhere" has meaning, even if it overcomplicated Node.
-    //                - model an at-end sentinel that captures where we are.
-    //                - then we don't backtrack just for asking e.g., for first child, we just get a sentinel and we can notice we can't do anything.
-    //                - this will make splice(...) and co much simpler, and I will probably stop being scared of them
-
     final class Fields[Tpl <: Tuple] private (
-        val pattern: Pattern[Tpl],
-        offset: Int
+        private val pattern: Pattern[(Tpl, Manip.Handle)]
     ):
       def field[T](using
           DebugInfo
       )(pattern: Pattern[T]): Fields[Tuple.Append[Tpl, T]] =
         new Fields(
-          (this.pattern, siblingAtOffset(offset)(pattern)).mapN(_ :* _),
-          offset + 1
+          this.pattern.flatMap: (tpl, handle) =>
+            atHandle(handle)(
+              pattern.map(tpl :* _).product(rightSibling(getHandle))
+            )
         )
 
       def skip[T](using DebugInfo)(pattern: Pattern[T]): Fields[Tpl] =
-        new Fields(this.pattern <* siblingAtOffset(offset)(pattern), offset + 1)
+        new Fields(
+          this.pattern.flatMap: (tpl, handle) =>
+            atHandle(handle)(pattern *> rightSibling(getHandle)).map((tpl, _))
+        )
+
+      def optional[T](using
+          DebugInfo
+      )(pattern: Pattern[T]): Fields[Tuple.Append[Tpl, Option[T]]] =
+        new Fields(
+          this.pattern.flatMap: (tpl, handle) =>
+            atHandle(handle):
+              pattern.map(v => tpl :* Some(v)).product(rightSibling(getHandle))
+                | pure((tpl :* None, handle))
+        )
 
       def atEnd(using DebugInfo): Pattern[Tpl] =
-        skip(ops.atEnd).pattern
+        pattern.flatMap: (tpl, handle) =>
+          atHandle(handle)(atEnd) *> pure(tpl)
+
+      def trailing: Pattern[Tpl] =
+        pattern.map(_._1)
 
       // TODO: repeat
 
     object Fields:
-      def apply(): Fields[EmptyTuple] = new Fields(pure(EmptyTuple), 0)
+      def apply(): Fields[EmptyTuple] = new Fields(
+        getHandle.map((EmptyTuple, _))
+      )
 
     extension [T](lhs: Pattern[T])
       @scala.annotation.targetName("tupleCons")
@@ -182,6 +191,10 @@ object Pattern:
       def here[T](pattern: Pattern[T]): Pattern[T] =
         dest.flatMap: node =>
           Pattern(atNode(node)(pattern.dropIdx.manip))
+      def withChildren[T](pattern: Pattern[T]): Pattern[T] =
+        here(children(pattern))
+      def withParent[T](pattern: Pattern[T]): Pattern[T] =
+        here(parent(pattern))
 
     extension (nodePat: Pattern[Node])
       def filterSrc(using DebugInfo)(str: String): Pattern[Node] =
@@ -189,39 +202,45 @@ object Pattern:
       def filterSrc(using DebugInfo)(src: SourceRange): Pattern[Node] =
         nodePat.filter(_.sourceRange == src)
 
-    private def current: Pattern[Node.All] =
+    private def current: Pattern[Manip.Handle] =
       Pattern:
-        Manip.ThisNode.map: node =>
-          node match
-            case child: Node.Child if child.parent.nonEmpty =>
-              (child.idxInParent, node)
-            case child: Node.Child =>
-              (-1, node)
-            case _: Node.Root =>
-              (-1, node)
+        import Manip.Handle
+        Manip.ops.getHandle.map: handle =>
+          handle.assertCoherence()
+          handle match
+            case Handle.AtTop(top)         => (-1, handle)
+            case Handle.AtChild(_, idx, _) => (idx, handle)
+            case Handle.Sentinel(_, idx)   => (idx, handle)
 
-    def allNode: Pattern[Node.All] = current
+    def allNode(using DebugInfo): Pattern[Node.All] =
+      import Manip.Handle
+      current.flatMap:
+        case Handle.AtTop(top)           => pure(top)
+        case Handle.AtChild(_, _, child) => pure(child)
+        case Handle.Sentinel(_, _)       => reject
 
     def atEnd(using DebugInfo): Pattern[Unit] =
-      anyChild.filter(_.rightSibling.isEmpty).void
+      import Manip.Handle
+      current.restrict:
+        case Handle.Sentinel(_, _) => ()
 
     def anyNode(using DebugInfo): Pattern[Node] =
-      current.restrict(IsNode)
+      allNode.restrict(IsNode)
 
     def anyParent(using DebugInfo): Pattern[Node.Parent] =
-      current.restrict(IsParent)
+      allNode.restrict(IsParent)
 
     def theTop(using DebugInfo): Pattern[Node.Top] =
-      current.restrict(IsTop)
+      allNode.restrict(IsTop)
 
     def anyChild(using DebugInfo): Pattern[Node.Child] =
-      current.restrict(IsChild)
+      allNode.restrict(IsChild)
 
     def embed[T](using
         tag: Tag[T],
         debugInfo: DebugInfo
     ): Pattern[Node.Embed[T]] =
-      current.restrict(IsEmbed(tag))
+      allNode.restrict(IsEmbed(tag))
 
     def embedValue[T: Tag]: Pattern[T] =
       embed[T].map(_.value)
@@ -233,7 +252,7 @@ object Pattern:
           .map(_ => (0, ()))
 
     def tok(using DebugInfo)(token: Token, tokens: Token*): Pattern[Node] =
-      current.restrict(NodeHasToken(token, tokens*))
+      allNode.restrict(NodeHasToken(token, tokens*))
 
     def oneOfToks(using DebugInfo)(tokens: Iterable[Token]): Pattern[Node] =
       val iter = tokens.iterator
@@ -241,7 +260,7 @@ object Pattern:
       then reject
       else
         val head = iter.next()
-        current.restrict(NodeHasToken(head, iter.toSeq*))
+        allNode.restrict(NodeHasToken(head, iter.toSeq*))
 
     def parent[T](using DebugInfo)(pattern: Pattern[T]): Pattern[T] =
       anyChild

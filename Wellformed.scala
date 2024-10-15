@@ -103,7 +103,7 @@ final class Wellformed private (
       .rules:
         on(
           tok(Builtin.Error)
-        ).rewrite(_ => skipMatch(continuePass))
+        ).rewrite(_ => skipMatch)
         | on(
           anyChild
           <* not:

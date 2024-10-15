@@ -42,7 +42,7 @@ class ManipTests extends munit.FunSuite:
           tok(tok2)
         ).rewrite: node =>
           spliceThen(tok1(node.unparentedChildren)):
-            continuePassAtNext
+            continuePassAtNextNode
 
   // test sanity condition
   test("all trees are equal".fail):
@@ -51,7 +51,7 @@ class ManipTests extends munit.FunSuite:
 
   test("treePairs unifyColors1"):
     treePairs.foreach: (bi, mono) =>
-      unifyColors1.perform(bi)
+      atNode(bi)(unifyColors1).perform()
       assertEquals(bi, mono)
 
 object ManipTests:
