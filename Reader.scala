@@ -6,6 +6,8 @@ import java.nio.charset.{StandardCharsets, Charset}
 import java.nio.CharBuffer
 
 trait Reader:
+  def wellformed: Wellformed
+
   protected def tracePathOpt: Option[os.Path] = None
   protected def traceLimit: Int = -1
   protected def rules: Manip[SourceRange]
@@ -46,14 +48,17 @@ object Reader:
 
   def extendThisNodeWithMatch[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
     consumeMatch: m =>
-      getNode.lookahead.flatMap:
-        case node: Node =>
-          effect(node.extendLocation(m))
-            *> manip
-        case top: Node.Top =>
-          // if top is an extend target, ignore it.
-          manip
-        case _ => Manip.Backtrack(summon[DebugInfo])
+      extendThisNode(m)
+        *> manip
+
+  def extendThisNode(using DebugInfo)(m: SourceRange): Manip[Unit] =
+    getNode.lookahead.flatMap:
+      case node: Node =>
+        effect(node.extendLocation(m))
+      case top: Node.Top =>
+        // if top is an extend target, ignore it.
+        Manip.pure(())
+      case _ => backtrack
 
   object bytes:
     private def advancingRefs[T](manip: Manip[T]): Manip[T] =

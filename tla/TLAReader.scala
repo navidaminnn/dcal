@@ -3,10 +3,9 @@ package distcompiler.tla
 import cats.syntax.all.given
 
 import distcompiler.*
-import os.Path
 
 object TLAReader extends Reader:
-  lazy val wf = Wellformed:
+  lazy val wellformed = Wellformed:
     import distcompiler.wf.*
     Node.Top ::= repeated(tok(ModuleGroup))
 
@@ -20,6 +19,7 @@ object TLAReader extends Reader:
         SqBracketsGroup,
         BracesGroup,
         TupleGroup,
+        LetGroup,
         // ---
         Alpha,
         LaTexLike,
@@ -36,6 +36,7 @@ object TLAReader extends Reader:
     SqBracketsGroup ::= allToks
     BracesGroup ::= allToks
     TupleGroup ::= allToks
+    LetGroup ::= allToks
 
     StringLiteral ::= Atom
     Alpha ::= Atom
@@ -50,8 +51,8 @@ object TLAReader extends Reader:
   import dsl.*
   import Reader.*
 
-  // override protected def tracePathOpt: Option[Path] = Some(os.pwd / "tlareader.log")
-  // override protected def traceLimit: Int = 1000
+  // override protected def tracePathOpt: Option[os.Path] = Some(os.pwd / "tlareader.log")
+  // override protected def traceLimit: Int = 200
 
   object StringLiteral extends Token.ShowSource
   object NumberLiteral extends Token.ShowSource
@@ -61,6 +62,7 @@ object TLAReader extends Reader:
   object SqBracketsGroup extends Token
   object BracesGroup extends Token
   object TupleGroup extends Token
+  object LetGroup extends Token
 
   object Alpha extends Token.ShowSource
   object LaTexLike extends Token.ShowSource
@@ -265,6 +267,34 @@ object TLAReader extends Reader:
       )
         *> Manip.pure(m)
 
+  private lazy val letGroupSemantics: Manip[SourceRange] =
+    commit:
+      on(
+        lastChild(tok(Alpha).filterSrc("LET"))
+      ).value.flatMap: node =>
+        effect(node.replaceThis(LetGroup(node.sourceRange)))
+          .here(tokens)
+      | on(
+        tok(LetGroup) *> lastChild(tok(Alpha).filterSrc("IN"))
+      ).value.flatMap: node =>
+        effect(node.removeThis().sourceRange)
+          .flatMap: m =>
+            extendThisNode(m)
+            atParent(tokens)
+      | on(
+        lastChild(tok(Alpha).filterSrc("IN"))
+      ).value.flatMap: node =>
+        effect(node.removeThis().sourceRange)
+          .flatMap: m =>
+            addChild(
+              Builtin.Error(
+                s"unexpected end of LET group",
+                Builtin.SourceMarker(m)
+              )
+            )
+              *> tokens
+      | on(not(lastChild(tok(Alpha).filterSrc("IN")))).check *> tokens
+
   private lazy val tokens: Manip[SourceRange] =
     commit:
       bytes
@@ -308,7 +338,7 @@ object TLAReader extends Reader:
             | invalidGroupClose(TupleGroup, "tuple")
         .onOneOf(digits)(numberLiteral)
         .installDotNumberLiterals
-        .installAlphas(tokens)
+        .installAlphas(letGroupSemantics)
         .installLatexLikes
         .installNonAlphaNonLatexOperators
         .installNonAlphas
@@ -411,6 +441,6 @@ object TLAReader extends Reader:
         .onOneOf(digits)(numberLiteral)
         // If we find a letter, then we're not in a num literal.
         // Act like we were processing an Alpha all along.
-        .installAlphas(tokens)
+        .installAlphas(letGroupSemantics)
         .installDotNumberLiterals
         .fallback(endNumberLiteral)

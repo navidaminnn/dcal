@@ -22,7 +22,7 @@ class TLAReaderTests extends munit.FunSuite:
 
         os.write.over(
           os.pwd / "dbg" / s"${exampleFile.last}.dbg",
-          top.toPrettyWritable(TLAReader.wf),
+          top.toPrettyWritable(TLAReader.wellformed),
           createFolders = true
         )
 
@@ -34,7 +34,7 @@ class TLAReaderTests extends munit.FunSuite:
                 val msg = err(Builtin.Error.Message)
                 val ast = err(Builtin.Error.AST)
 
-                s"${msg.sourceRange.decodeString()} at ${ast.sourceRange.presentationStringShort}:\n${ast.sourceRange.decodeString()}"
+                s"${msg.sourceRange.decodeString()} at ${ast.sourceRange.presentationStringLong}"
               .mkString("\n")
 
           fail(bigMsg)

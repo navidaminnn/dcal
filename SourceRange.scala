@@ -55,7 +55,10 @@ final class SourceRange(
     extendRightBy(1)
 
   override def slice(from: Int, until: Int): SourceRange =
-    require(0 <= from && from <= until && until <= length)
+    require(
+      0 <= from && from <= until && until <= length,
+      s"[$from, $until) is outside the range [$offset,${offset + length})"
+    )
     SourceRange(source, offset + from, until - from)
 
   override def take(n: Int): SourceRange =
@@ -119,6 +122,58 @@ final class SourceRange(
         builder.append(lineIdx2 + 1)
         builder += ':'
         builder.append(colIdx2 + 1)
+
+    builder.result()
+
+  def presentationStringLong: String =
+    s"$presentationStringShort:\n$showInSource"
+
+  def showInSource: String =
+    extension (rng: SourceRange)
+      def trimNl: SourceRange =
+        if rng.endsWith(List('\r', '\n'))
+        then rng.dropRight(2)
+        else if rng.lastOption.contains('\n')
+        then rng.dropRight(1)
+        else rng
+
+    val entireSource = SourceRange.entire(source)
+    val builder = StringBuilder()
+    val (line1Idx, startCol) = source.lines.lineColAtOffset(offset)
+    val (line2Idx, endCol) = source.lines.lineColAtOffset(offset + length)
+
+    val line1Start = source.lines.lineStartOffset(line1Idx)
+    val line1AfterEnd = source.lines.lineStartOffset(line1Idx + 1)
+
+    if line1Idx == line2Idx
+    then
+      builder.addAll(
+        entireSource.slice(line1Start, line1AfterEnd).trimNl.decodeString()
+      )
+      builder += '\n'
+      (0 until startCol).foreach(_ => builder += ' ')
+      if startCol == endCol
+      then builder += '^'
+      else (startCol until endCol).foreach(_ => builder += '^')
+    else
+      (0 until startCol).foreach(_ => builder += ' ')
+      (startCol until line1AfterEnd).foreach(_ => builder += 'v')
+      builder += '\n'
+      builder.addAll(
+        entireSource.slice(line1Start, line1AfterEnd).trimNl.decodeString()
+      )
+
+      if line2Idx - line1Idx > 1
+      then builder.addAll("\n...\n")
+      else builder += '\n'
+
+      val line2Start = source.lines.lineStartOffset(line2Idx)
+      val line2AfterEnd = source.lines.lineStartOffset(line2Idx + 1)
+      builder.addAll(
+        entireSource.slice(line2Start, line2AfterEnd).trimNl.decodeString()
+      )
+      builder += '\n'
+      (0 until endCol).foreach(_ => builder += '^')
 
     builder.result()
 

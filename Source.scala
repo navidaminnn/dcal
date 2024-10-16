@@ -33,6 +33,13 @@ trait Source:
         else offset - 1 - nlOffsets(lineIdx - 1)
 
       (lineIdx, colIdx)
+
+    def lineStartOffset(lineIdx: Int): Int =
+      if lineIdx == 0
+      then 0
+      else if lineIdx - 1 == nlOffsets.length
+      then SourceRange.entire(Source.this).length
+      else nlOffsets(lineIdx - 1) + 1
 end Source
 
 object Source:

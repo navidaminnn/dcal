@@ -402,6 +402,9 @@ object Pattern:
     def firstChild[T](using DebugInfo)(pattern: Pattern[T]): Pattern[T] =
       Pattern(Manip.ops.atFirstChild(pattern.dropIdx.manip))
 
+    def lastChild[T](using DebugInfo)(pattern: Pattern[T]): Pattern[T] =
+      Pattern(Manip.ops.atLastChild(pattern.dropIdx.manip))
+
     def anyAtom(using DebugInfo): Pattern[Node] =
       anyNode.filter(_.children.isEmpty)
 
@@ -423,7 +426,7 @@ object Pattern:
 
     def onlyChild[T](using DebugInfo)(pattern: Pattern[T]): Pattern[T] =
       firstChild:
-        pattern <* atEnd
+        pattern <* rightSibling(atEnd)
 
     def refersToAny[T](using DebugInfo): Pattern[List[Node]] =
       anyNode.map(_.lookup)

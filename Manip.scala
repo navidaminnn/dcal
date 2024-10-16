@@ -533,6 +533,20 @@ object Manip:
             case _: Node.Embed[?]   => None
         case Sentinel(_, _) => None
 
+    def findLastChild: Option[Handle] =
+      assertCoherence()
+      def forParent(parent: Node.Parent): Option[Handle] =
+        parent.children.indices.lastOption
+          .flatMap(Handle.idxIntoParent(parent, _))
+
+      this match
+        case AtTop(top) => forParent(top)
+        case AtChild(_, _, child) =>
+          child match
+            case child: Node.Parent => forParent(child)
+            case _: Node.Embed[?]   => None
+        case Sentinel(_, _) => None
+
     def findParent: Option[Handle] =
       assertCoherence()
       this match
@@ -643,8 +657,17 @@ object Manip:
           case None         => backtrack
           case Some(handle) => Manip.Handle.ref.updated(_ => handle)(manip)
 
+    def atLastChild[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
+      getHandle.lookahead.flatMap: handle =>
+        handle.findLastChild match
+          case None         => backtrack
+          case Some(handle) => Manip.Handle.ref.updated(_ => handle)(manip)
+
     def atFirstSibling[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       atParent(atFirstChild(manip))
+
+    def atLastSibling[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
+      atParent(atLastChild(manip))
 
     def atParent[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       getHandle.lookahead.flatMap: handle =>

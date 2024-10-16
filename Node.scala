@@ -514,12 +514,19 @@ object Node:
 
     def lookupKeys: Set[Node] = Set.empty
 
-    final def replaceThis(replacement: => Node.Child): Node.Child =
+    final def replaceThis[R <: Node.Child](replacement: => R): R =
+      require(parent.nonEmpty)
       val parentTmp = parent.get
       val idxInParentTmp = idxInParent
       val computedReplacement = replacement
       parentTmp.children(idxInParentTmp) = computedReplacement
       computedReplacement
+
+    final def removeThis(): this.type =
+      require(parent.nonEmpty)
+      val parentTmp = parent.get
+      val idxInParentTmp = idxInParent
+      parentTmp.children.remove(idxInParentTmp).asInstanceOf[this.type]
 
     final def rightSibling: Option[Node.Child] =
       parent.flatMap: parent =>
