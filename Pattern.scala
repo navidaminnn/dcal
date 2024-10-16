@@ -35,21 +35,17 @@ object Pattern:
   //   def empty[A]: Pattern[A] =
   //     Pattern(Manip.monoidK.empty)
 
-  protected transparent trait NodeTypeTest[T <: Node.All](using
+  private transparent trait NodeTypeTest[T <: Node.All](using
       typeTest: TypeTest[Node.All, T]
-  ) extends PartialFunction[Node.All, T]:
-    def isDefinedAt(node: Node.All): Boolean =
-      node match
-        case typeTest(_) => true
-        case _           => false
-    def apply(node: Node.All): T =
-      require(isDefinedAt(node))
-      node.asInstanceOf[T]
+  ) extends Manip.Restriction[Node.All, T]:
+    protected val impl = { case typeTest(value) =>
+      value
+    }
 
-  case object IsTop extends NodeTypeTest[Node.Top]
-  case object IsParent extends NodeTypeTest[Node.Parent]
-  case object IsChild extends NodeTypeTest[Node.Child]
-  case object IsNode extends NodeTypeTest[Node]
+  private case object IsTop extends NodeTypeTest[Node.Top]
+  private case object IsParent extends NodeTypeTest[Node.Parent]
+  private case object IsChild extends NodeTypeTest[Node.Child]
+  private case object IsNode extends NodeTypeTest[Node]
 
   final case class NodeHasToken(token: Token, tokens: Token*)
       extends PartialFunction[Node.All, Node]:
@@ -74,15 +70,19 @@ object Pattern:
 
   object ops:
     def reject(using DebugInfo): Pattern[Nothing] =
-      Pattern(Manip.Backtrack(summon[DebugInfo]))
+      Pattern(Manip.ops.backtrack)
 
     @scala.annotation.targetName("atHandlePattern")
     def atHandle[T](handle: Manip.Handle)(pattern: Pattern[T]): Pattern[T] =
       Pattern(Manip.ops.atHandle(handle)(pattern.manip))
 
+    private case object RestrictGetHandle
+        extends Manip.Restriction[Manip.Handle, (Int, Manip.Handle)]:
+      protected val impl = (-1, _)
+
     @scala.annotation.targetName("getHandlePattern")
     def getHandle(using DebugInfo): Pattern[Manip.Handle] =
-      Pattern(Manip.ops.getHandle.map((-1, _)))
+      Pattern(Manip.ops.restrict(Manip.ops.getHandle)(RestrictGetHandle))
 
     def siblingAtOffset[T](using DebugInfo)(offset: Int)(
         pattern: Pattern[T]
@@ -257,6 +257,12 @@ object Pattern:
       infix def ++:[U <: Tuple](rhs: Pattern[U]): Pattern[Tuple.Concat[T, U]] =
         (lhs, rhs).mapN(_ ++ _)
 
+    private case class PatternRestriction[T, U](restr: Manip.Restriction[T, U])
+        extends Manip.Restriction[(Int, T), (Int, U)]:
+      protected val impl = { case (count, restr(value)) =>
+        (count, value)
+      }
+
     extension [T](lhs: Pattern[T])
       @scala.annotation.targetName("orPattern")
       infix def |(rhs: Pattern[T]): Pattern[T] =
@@ -264,8 +270,9 @@ object Pattern:
       @scala.annotation.targetName("restrictPattern")
       def restrict[U](using DebugInfo)(fn: PartialFunction[T, U]): Pattern[U] =
         Pattern:
-          Manip.ops.restrict(lhs.manip):
-            case (count, fn(value)) => (count, value)
+          Manip.ops.restrict(lhs.manip)(
+            PatternRestriction(Manip.Restriction(fn))
+          )
       @scala.annotation.targetName("filterPattern")
       def filter(using DebugInfo)(fn: T => Boolean): Pattern[T] =
         lhs.restrict:
@@ -304,12 +311,16 @@ object Pattern:
             case Handle.AtChild(_, idx, _) => (idx, handle)
             case Handle.Sentinel(_, idx)   => (idx, handle)
 
-    def allNode(using DebugInfo): Pattern[Node.All] =
+    private case object RestrictAllNode
+        extends Manip.Restriction[Manip.Handle, Node.All]:
       import Manip.Handle
-      current.flatMap:
-        case Handle.AtTop(top)           => pure(top)
-        case Handle.AtChild(_, _, child) => pure(child)
-        case Handle.Sentinel(_, _)       => reject
+      protected val impl = {
+        case Handle.AtTop(top)           => top
+        case Handle.AtChild(_, _, child) => child
+      }
+
+    def allNode(using DebugInfo): Pattern[Node.All] =
+      current.restrict(RestrictAllNode)
 
     def atEnd(using DebugInfo): Pattern[Unit] =
       import Manip.Handle
@@ -343,8 +354,18 @@ object Pattern:
           .Negated(pattern.manip, summon[DebugInfo])
           .map(_ => (0, ()))
 
+    private case object GetNodeToken extends Manip.Restriction[Node.All, Token]:
+      protected val impl = { case node: Node =>
+        node.token
+      }
+
     def tok(using DebugInfo)(token: Token, tokens: Token*): Pattern[Node] =
-      allNode.restrict(NodeHasToken(token, tokens*))
+      Pattern:
+        import Manip.ops.mkTable
+        val table = Manip.ops
+          .restrict(Manip.ops.getNode)(GetNodeToken)
+          .mkTable(tokens.toSet.incl(token))
+        Manip.ops.flatMap(table)(_ => anyNode.manip)
 
     def oneOfToks(using DebugInfo)(tokens: Iterable[Token]): Pattern[Node] =
       val iter = tokens.iterator
@@ -352,7 +373,7 @@ object Pattern:
       then reject
       else
         val head = iter.next()
-        allNode.restrict(NodeHasToken(head, iter.toSeq*))
+        tok(head, iter.toSeq*)
 
     def parent[T](using DebugInfo)(pattern: Pattern[T]): Pattern[T] =
       anyChild

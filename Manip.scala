@@ -1,6 +1,7 @@
 package distcompiler
 
 import cats.syntax.all.given
+import distcompiler.Node.All
 
 enum Manip[+T]:
   private inline given DebugInfo = DebugInfo.poison
@@ -10,11 +11,19 @@ enum Manip[+T]:
   case Ap[T, U](ff: Manip[T => U], fa: Manip[T]) extends Manip[U]
   case FlatMap[T, U](manip: Manip[T], fn: T => Manip[U]) extends Manip[U]
 
+  case Anchor[T]() extends Manip[T]
   case Restrict[T, U](
       manip: Manip[T],
-      pred: PartialFunction[T, U],
-      debugInfo: DebugInfo
+      restriction: Manip.Restriction[T, U],
+      debugInfo: DebugInfo,
+      continuation: Manip[U]
   ) extends Manip[U]
+  case Table[T, U, V](
+      ref: Manip.Ref[T],
+      restriction: Manip.Restriction[T, U],
+      debugInfo: DebugInfo,
+      map: Map[U, Manip[V]]
+  ) extends Manip[V]
 
   case Effect(fn: () => T)
   case Finally(manip: Manip[T], fn: () => Unit)
@@ -48,6 +57,7 @@ enum Manip[+T]:
   def perform(using DebugInfo)(): T =
     import scala.util.control.TailCalls.*
 
+    import Manip.AnchorVal
     type Continue[-T, +U] = T => TailRec[U]
     type Backtrack[+U] = DebugInfo => TailRec[U]
     type RefMap = Manip.RefMap
@@ -74,7 +84,8 @@ enum Manip[+T]:
     def impl[T, U](self: Manip[T])(using
         continue: Continue[T, U],
         backtrack: Backtrack[U],
-        refMap: RefMap
+        refMap: RefMap,
+        anchorVal: AnchorVal
     ): TailRec[U] =
       self match
         case Backtrack(debugInfo) =>
@@ -91,15 +102,30 @@ enum Manip[+T]:
             given Continue[u, U] = continue
             tailcall(impl(flatMap.fn(value)))
           impl(flatMap.manip)
+        case Anchor() => tailcall(continue(anchorVal.value.asInstanceOf[T]))
         case restrict: Restrict[t, u] =>
           given Continue[t, U] = value =>
-            restrict.pred.unapply(value) match
+            restrict.restriction.unapply(value) match
               case None =>
                 tracer.onBacktrack(restrict.debugInfo)
                 tailcall(backtrack(restrict.debugInfo))
               case Some(value) =>
-                tailcall(continue(value))
+                given AnchorVal = AnchorVal(value)
+                given Continue[T, U] = continue
+                tailcall(impl(restrict.continuation))
           impl(restrict.manip)
+        case table: Table[t, u, v] =>
+          refMap.get(table.ref) match
+            case None => tailcall(backtrack(table.debugInfo))
+            case Some(value) =>
+              table.restriction.unapply(value) match
+                case None => tailcall(backtrack(table.debugInfo))
+                case Some(value) =>
+                  table.map.get(value) match
+                    case None => tailcall(backtrack(table.debugInfo))
+                    case Some(followUp) =>
+                      given AnchorVal = AnchorVal(value)
+                      impl(followUp)
         case Effect(fn) =>
           val value = fn()
           tailcall(continue(value))
@@ -167,16 +193,15 @@ enum Manip[+T]:
     given Continue[T, T] = done
     given RefMap = Manip.RefMap.empty
     given Backtrack[T] = emptyBacktrack(summon[DebugInfo], summon[RefMap])
+    given AnchorVal = AnchorVal(())
     impl[T, T](this).result
   end perform
-
-  // TODO: optimize disjunctions to decision tries
 end Manip
 
 object Manip:
   private inline given DebugInfo = DebugInfo.poison
 
-  trait Ref[T]:
+  abstract class Ref[T]:
     final def init[U](init: => T)(manip: Manip[U]): Manip[U] =
       Manip.RefInit(this, () => init, manip)
     final def get(using DebugInfo): Manip[T] =
@@ -189,13 +214,15 @@ object Manip:
       get.lookahead.flatMap: v =>
         effect(fn(v))
 
-  final class RefMap(private val map: Map[ById[Manip.Ref[?]], Any])
-      extends AnyVal:
+    override def equals(that: Any): Boolean = this eq that.asInstanceOf[AnyRef]
+    override def hashCode(): Int = System.identityHashCode(this)
+
+  final class RefMap(private val map: Map[Manip.Ref[?], Any]) extends AnyVal:
     def get[T](ref: Ref[T]): Option[T] =
-      map.get(ById(ref)).asInstanceOf[Option[T]]
+      map.get(ref).asInstanceOf[Option[T]]
 
     def updated[T](ref: Ref[T], value: T): RefMap =
-      RefMap(map.updated(ById(ref), value))
+      RefMap(map.updated(ref, value))
 
     def treeDescr: String =
       get(Handle.ref) match
@@ -222,21 +249,126 @@ object Manip:
   export ops.defer
   export applicative.pure
 
+  private final class AnchorVal(val value: Any) extends AnyVal
+
+  abstract class Restriction[-T, +U] extends PartialFunction[T, U]:
+    def combineRestrictions[UU >: U, V](
+        restriction: Restriction[UU, V]
+    ): Restriction[T, V] =
+      Restriction.Combination(this, restriction)
+
+    protected val impl: PartialFunction[T, U]
+
+    export impl.{apply, isDefinedAt}
+    override def applyOrElse[A1 <: T, B1 >: U](x: A1, default: A1 => B1): B1 =
+      impl.applyOrElse(x, default)
+
+  object Restriction:
+    def apply[T, U](fn: PartialFunction[T, U]): Restriction[T, U] =
+      fn match
+        case fn: Restriction[T, U] => fn
+        case _                     => Wrapper(fn)
+
+    final class Identity[T] extends Restriction[T, T]:
+      protected val impl: PartialFunction[T, T] = identity(_)
+
+      override def equals(that: Any): Boolean =
+        that.isInstanceOf[Identity[?]]
+      override def hashCode(): Int =
+        getClass().hashCode()
+
+    final case class Combination[T, U, V](
+        lhs: Restriction[T, U],
+        rhs: Restriction[U, V]
+    ) extends Restriction[T, V]:
+      protected val impl: PartialFunction[T, V] = rhs.impl.compose(lhs.impl)
+
+    final class Wrapper[T, U](fn: PartialFunction[T, U])
+        extends Restriction[T, U]:
+      protected val impl = fn
+      override def equals(that: Any): Boolean =
+        that match
+          case that: Wrapper[?, ?] => impl eq that.impl
+          case _                   => false
+      override def hashCode(): Int = impl.hashCode()
+
+  private def pushRight[T, U](lhs: Manip[T])(
+      fn: Manip[T] => Manip[U]
+  ): Manip[U] =
+    lhs match
+      case table @ Manip.Table(_, _, _, map) =>
+        table.copy(map = map.view.mapValues(fn).toMap)
+      case _ => fn(lhs)
+
+  private def pushRight2[T1, T2, U](lhs1: Manip[T1], lhs2: Manip[T2])(
+      fn: (Manip[T1], Manip[T2]) => Manip[U]
+  ): Manip[U] =
+    pushRight(lhs1): lhs1 =>
+      pushRight(lhs2): lhs2 =>
+        fn(lhs1, lhs2)
+
   given applicative: cats.Applicative[Manip] with
     override def unit: Manip[Unit] = Manip.unit
     def ap[A, B](ff: Manip[A => B])(fa: Manip[A]): Manip[B] =
-      Manip.Ap(ff, fa)
+      pushRight2(ff, fa): (ff, fa) =>
+        Manip.Ap(ff, fa)
     def pure[A](x: A): Manip[A] = Manip.Pure(x)
     override def as[A, B](fa: Manip[A], b: B): Manip[B] =
       productR(fa)(pure(b))
     override def productL[A, B](fa: Manip[A])(fb: Manip[B]): Manip[A] =
-      Manip.KeepLeft(fa, fb)
+      pushRight2(fa, fb): (fa, fb) =>
+        Manip.KeepLeft(fa, fb)
     override def productR[A, B](fa: Manip[A])(fb: Manip[B]): Manip[B] =
-      Manip.KeepRight(fa, fb)
+      pushRight2(fa, fb): (fa, fb) =>
+        Manip.KeepRight(fa, fb)
 
   given semigroupK: cats.SemigroupK[Manip] with
     def combineK[A](x: Manip[A], y: Manip[A]): Manip[A] =
-      Manip.Disjunction(x, y)
+      (x, y) match
+        case (Manip.Backtrack(_), right)             => right
+        case (left, Manip.Backtrack(_))              => left
+        case (left @ Manip.Anchor(), Manip.Anchor()) => left
+        case (
+              Manip.Restrict(
+                Manip.RefGet(ref1, debugInfo1),
+                restrict1,
+                debugInfo11,
+                continuation1
+              ),
+              Manip.Restrict(
+                Manip.RefGet(ref2, debugInfo2),
+                restrict2,
+                debugInfo22,
+                continuation2
+              )
+            ) if ref1 == ref2 && restrict1 == restrict2 =>
+          Manip.Restrict(
+            Manip.RefGet(ref1, debugInfo1 ++ debugInfo2),
+            restrict1,
+            debugInfo11 ++ debugInfo22,
+            combineK(continuation1, continuation2)
+          )
+        // a =:= a2 =:= A
+        case (table1: Manip.Table[t, u, a], table2: Manip.Table[t2, u2, a2])
+            if table1.ref == table2.ref && table1.restriction == table2.restriction =>
+          val table2Adapt = table2.asInstanceOf[Manip.Table[t, u, a]]
+          val combinedMap =
+            (table1.map.keysIterator ++ table2Adapt.map.keysIterator)
+              .map: key =>
+                (table1.map.get(key), table2Adapt.map.get(key)) match
+                  case (Some(m1), Some(m2)) => key -> combineK(m1, m2)
+                  case (Some(m1), _)        => key -> m1
+                  case (_, Some(m2))        => key -> m2
+                  case _                    => ??? // unreachable
+              .toMap
+          Manip.Table(
+            table1.ref,
+            table1.restriction,
+            table1.debugInfo ++ table2Adapt.debugInfo,
+            combinedMap
+          )
+        case _ =>
+          Manip.Disjunction(x, y)
 
   // given monoidK(using DebugInfo): cats.MonoidK[Manip] with
   //   export semigroupK.combineK
@@ -244,21 +376,22 @@ object Manip:
 
   class Lookahead[T](val manip: Manip[T]) extends AnyVal:
     def flatMap[U](fn: T => Manip[U]): Manip[U] =
-      Manip.FlatMap(manip, fn)
+      pushRight(manip): manip =>
+        Manip.FlatMap(manip, fn)
 
   object Lookahead:
     given applicative: cats.Applicative[Lookahead] with
       def ap[A, B](ff: Lookahead[A => B])(fa: Lookahead[A]): Lookahead[B] =
         Lookahead(ff.manip.ap(fa.manip))
       def pure[A](x: A): Lookahead[A] =
-        Lookahead(Manip.Pure(x))
+        Lookahead(Manip.pure(x))
     given semigroupK: cats.SemigroupK[Lookahead] with
       def combineK[A](x: Lookahead[A], y: Lookahead[A]): Lookahead[A] =
         Lookahead(x.manip.combineK(y.manip))
-    given monoidK(using DebugInfo): cats.MonoidK[Lookahead] with
-      export semigroupK.combineK
-      def empty[A]: Lookahead[A] =
-        Lookahead(Manip.Backtrack(summon[DebugInfo]))
+    // given monoidK(using DebugInfo): cats.MonoidK[Lookahead] with
+    //   export semigroupK.combineK
+    //   def empty[A]: Lookahead[A] =
+    //     Lookahead(backtrack)
 
   object tracerRef extends Ref[Tracer]
 
@@ -480,12 +613,16 @@ object Manip:
       getHandle.lookahead.flatMap: handle =>
         Manip.Handle.ref.updated(_ => handle.keepPtr)(manip)
 
+    private case object RestrictNode extends Restriction[Handle, Node.All]:
+      protected val impl: PartialFunction[Handle, All] = {
+        case Handle.AtTop(top)           => top
+        case Handle.AtChild(_, _, child) => child
+      }
+
     def getNode(using DebugInfo): Manip[Node.All] =
       getHandle
-        .tapEffect(_.assertCoherence())
-        .restrict:
-          case Handle.AtTop(top)           => top
-          case Handle.AtChild(_, _, child) => child
+        // .tapEffect(_.assertCoherence()) // removed because it gets in the way of tabling
+        .restrict(RestrictNode)
 
     def atRightSibling[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       getHandle.lookahead.flatMap: handle =>
@@ -636,13 +773,41 @@ object Manip:
     extension [T](lhs: Manip[T])
       @scala.annotation.targetName("or")
       def |(rhs: Manip[T]): Manip[T] =
-        Manip.Disjunction(lhs, rhs)
+        semigroupK.combineK(lhs, rhs)
       def flatMap[U](using DebugInfo)(fn: T => Manip[U]): Manip[U] =
-        Manip.FlatMap(lhs, t => commit(fn(t)))
+        pushRight(lhs): lhs =>
+          Manip.FlatMap(lhs, t => commit(fn(t)))
       def lookahead: Lookahead[T] =
         Lookahead(lhs)
+      def mkTable(elemsInit: Set[T]): Manip[T] =
+        lhs match
+          case Manip.Restrict(
+                Manip.RefGet(ref, debugInfo),
+                restriction,
+                debugInfo2,
+                continuation
+              ) =>
+            Manip.Table(
+              ref,
+              restriction,
+              debugInfo ++ debugInfo2,
+              elemsInit.iterator.map(_ -> continuation).toMap
+            )
+          case _ =>
+            throw IllegalArgumentException(s"can't table $lhs")
       def restrict[U](using DebugInfo)(fn: PartialFunction[T, U]): Manip[U] =
-        Manip.Restrict(lhs, fn, summon[DebugInfo])
+        val fnRes = Restriction(fn)
+        lhs match
+          case Manip.Restrict(manip, restriction, debugInfo, Manip.Anchor()) =>
+            Manip.Restrict(
+              manip,
+              restriction.combineRestrictions(fnRes),
+              debugInfo ++ summon[DebugInfo],
+              Manip.Anchor()
+            )
+          case _ =>
+            pushRight(lhs): lhs =>
+              Manip.Restrict(lhs, fnRes, summon[DebugInfo], Manip.Anchor())
       def filter(using DebugInfo)(pred: T => Boolean): Manip[T] =
         lhs.restrict:
           case v if pred(v) => v
