@@ -10,4 +10,6 @@ target/
 /out
 .clones/
 *.log
-dbg/
+dbg_tla_reader/
+dbg_tla_parser/
+parser_passes/

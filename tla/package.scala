@@ -130,7 +130,7 @@ val wellformed: Wellformed =
 
     Id ::= Atom
     Ids ::= repeated(tok(Id), minCount = 1)
-    OpSym ::= Atom
+    OpSym ::= Choice(Operators.Operator.instances.toSet)
     Order2 ::= fields(
       tok(Id),
       tok(Order2.Arity)

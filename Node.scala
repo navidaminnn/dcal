@@ -289,13 +289,22 @@ object Node:
         case _ => false
 
     final override def toString(): String =
-      val dummyWf = Wellformed:
-        Node.Top ::= Wellformed.Shape.AnyShape
-      val str = sexpr.serialize.toPrettyString(dummyWf.serializeTree(this))
+      val str =
+        sexpr.serialize.toPrettyString(Wellformed.empty.serializeTree(this))
 
       if this.isInstanceOf[Top]
       then s"[top] $str"
       else str
+
+    final def presentErrors(): String =
+      require(hasErrors)
+      errors
+        .map: err =>
+          val msg = err(Builtin.Error.Message)
+          val ast = err(Builtin.Error.AST)
+
+          s"${msg.sourceRange.decodeString()} at ${ast.sourceRange.presentationStringLong}"
+        .mkString("\n")
 
   sealed trait Root extends All:
     override type This <: Root
@@ -444,7 +453,8 @@ object Node:
       children.clear()
       children.addAll(childrenInit)
 
-    final def unparentedChildren: IterableOnce[Node.Child] =
+    final def unparentedChildren
+        : scala.collection.mutable.ArraySeq[Node.Child] =
       // .unparent() is done by Children .clear
       val result = children.toArray
       children.clear()

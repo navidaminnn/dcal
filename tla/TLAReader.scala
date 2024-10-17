@@ -80,7 +80,8 @@ object TLAReader extends Reader:
   case object `.` extends NonAlpha
   case object `!` extends NonAlpha
   case object `@` extends NonAlpha
-  case object `==` extends NonAlpha
+  case object `_==_` extends NonAlpha:
+    override def spelling: String = "=="
 
   case object `WF_` extends NonAlpha
   case object `SF_` extends NonAlpha

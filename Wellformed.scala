@@ -298,6 +298,9 @@ final class Wellformed private (
 end Wellformed
 
 object Wellformed:
+  val empty: Wellformed = Wellformed:
+    Node.Top ::= Wellformed.Shape.AnyShape
+
   private object SkipMarker extends Token
 
   def apply(fn: Builder ?=> Unit): Wellformed =

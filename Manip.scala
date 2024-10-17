@@ -1,7 +1,7 @@
 package distcompiler
 
 import cats.syntax.all.given
-import distcompiler.Node.All
+import util.{++, toShortString}
 
 enum Manip[+T]:
   private inline given DebugInfo = DebugInfo.poison
@@ -237,6 +237,9 @@ object Manip:
             case Handle.Sentinel(parent, idx) =>
               s"end [idx=$idx] of $parent"
 
+    def treeDescrShort: String =
+      treeDescr.toShortString()
+
   object RefMap:
     def empty: RefMap = RefMap(Map.empty)
 
@@ -414,7 +417,7 @@ object Manip:
         resultCount: Int
     )(using RefMap): Unit
 
-  object NopTracer extends Tracer:
+  abstract class AbstractNopTracer extends Tracer:
     def beforePass(debugInfo: DebugInfo)(using RefMap): Unit = ()
     def afterPass(debugInfo: DebugInfo)(using RefMap): Unit = ()
     def onCommit(debugInfo: DebugInfo)(using RefMap): Unit = ()
@@ -433,6 +436,8 @@ object Manip:
         resultCount: Int
     )(using RefMap): Unit = ()
     def close(): Unit = ()
+
+  object NopTracer extends AbstractNopTracer
 
   final class LogTracer(out: java.io.OutputStream, limit: Int = -1)
       extends Tracer:
@@ -456,7 +461,7 @@ object Manip:
       then throw RuntimeException(s"logged $lineCount lines")
 
     private def treeDesc(using RefMap): String =
-      summon[RefMap].treeDescr
+      summon[RefMap].treeDescrShort
 
     def beforePass(debugInfo: DebugInfo)(using RefMap): Unit =
       logln(s"pass init $debugInfo at $treeDesc")
@@ -493,6 +498,81 @@ object Manip:
         s"rw done $debugInfo, from $idx, $resultCount nodes in parent $parent"
       )
 
+  final class RewriteDebugTracer(debugFolder: os.Path)
+      extends AbstractNopTracer:
+    os.remove.all(debugFolder) // no confusing left-over files!
+    os.makeDir.all(debugFolder)
+    private var passCounter = 0
+    private var rewriteCounter = 0
+
+    private def treeDesc(using RefMap): geny.Writable =
+      summon[RefMap].get(Manip.Handle.ref) match
+        case None => "<no tree>"
+        case Some(handle) =>
+          handle.findTop match
+            case None => "<??? top not found ???>"
+            case Some(top) =>
+              top.toPrettyWritable(Wellformed.empty)
+
+    private def pathAt(
+        passIdx: Int,
+        rewriteIdx: Int,
+        isDiff: Boolean = false
+    ): os.Path =
+      val ext = if isDiff then ".diff" else ".txt"
+      debugFolder / f"$passIdx%03d" / f"$rewriteIdx%03d$ext%s"
+
+    private def currPath: os.Path =
+      pathAt(passCounter, rewriteCounter)
+
+    private def prevPath: os.Path =
+      pathAt(passCounter, rewriteCounter - 1)
+
+    private def diffPath: os.Path =
+      pathAt(passCounter, rewriteCounter, isDiff = true)
+
+    private def takeSnapshot(debugInfo: DebugInfo)(using RefMap): Unit =
+      os.write(
+        target = currPath,
+        data = (s"//! $debugInfo\n": geny.Writable) ++ treeDesc ++ "\n",
+        createFolders = true
+      )
+
+    private def takeDiff()(using RefMap): Unit =
+      val result =
+        os.proc(
+          "diff",
+          "--report-identical-files",
+          "--ignore-space-change",
+          prevPath,
+          currPath
+        ).call(
+          stdout = os.PathRedirect(diffPath),
+          check = false
+        )
+      if result.exitCode == 0 || result.exitCode == 1
+      then () // fine (1 is used to mean files are different)
+      else throw RuntimeException(result.toString())
+
+    override def beforePass(debugInfo: DebugInfo)(using RefMap): Unit =
+      passCounter += 1
+      rewriteCounter = 0
+      takeSnapshot(debugInfo)
+
+    override def afterPass(debugInfo: DebugInfo)(using RefMap): Unit =
+      rewriteCounter += 1
+      takeSnapshot(debugInfo)
+
+    override def onRewriteComplete(
+        debugInfo: DebugInfo,
+        parent: Node.Parent,
+        idx: Int,
+        resultCount: Int
+    )(using RefMap): Unit =
+      rewriteCounter += 1
+      takeSnapshot(debugInfo)
+      takeDiff()
+
   enum Handle:
     assertCoherence()
 
@@ -507,12 +587,14 @@ object Manip:
           if parent.children.isDefinedAt(idx) && (parent.children(idx) eq child)
           then () // ok
           else
-            throw NodeError(s"mismatch: idx $idx in $parent and ptr -> $child")
+            throw NodeError(
+              s"mismatch: idx $idx in ${parent.toShortString()} and ptr -> ${child.toShortString()}"
+            )
         case Sentinel(parent, idx) =>
           if parent.children.length != idx
           then
             throw NodeError(
-              s"mismatch: sentinel at $idx does not point to end ${parent.children.length} of $parent"
+              s"mismatch: sentinel at $idx does not point to end ${parent.children.length} of ${parent.toShortString()}"
             )
 
     def rightSibling: Option[Handle] =
@@ -574,6 +656,19 @@ object Manip:
         case Sentinel(parent, _) =>
           Handle.idxIntoParent(parent, parent.children.length).get
 
+    def findTop: Option[Node.Top] =
+      def forParent(parent: Node.Parent): Option[Node.Top] =
+        val p = parent
+        inline given DebugInfo = DebugInfo.notPoison
+        import dsl.*
+        p.inspect:
+          theTop
+            | ancestor(theTop)
+      this match
+        case AtTop(top)            => Some(top)
+        case AtChild(parent, _, _) => forParent(parent)
+        case Sentinel(parent, _)   => forParent(parent)
+
   object Handle:
     object ref extends Ref[Handle]
 
@@ -628,7 +723,7 @@ object Manip:
         Manip.Handle.ref.updated(_ => handle.keepPtr)(manip)
 
     private case object RestrictNode extends Restriction[Handle, Node.All]:
-      protected val impl: PartialFunction[Handle, All] = {
+      protected val impl: PartialFunction[Handle, Node.All] = {
         case Handle.AtTop(top)           => top
         case Handle.AtChild(_, _, child) => child
       }
@@ -704,7 +799,9 @@ object Manip:
               val (parent, idx) =
                 handle match
                   case Handle.AtTop(top) =>
-                    throw NodeError(s"tried to rewrite top $top")
+                    throw NodeError(
+                      s"tried to rewrite top ${top.toShortString()}"
+                    )
                   case Handle.AtChild(parent, idx, _) => (parent, idx)
                   case Handle.Sentinel(parent, idx)   => (parent, idx)
               val matchedCount =
@@ -728,24 +825,34 @@ object Manip:
     )(
         manip: on.Ctx ?=> Rules
     ): Rules =
-      (getHandle, getTracer, Manip.GetRefMap).tupled
-        .tapEffect: (handle, tracer, refMap) =>
-          handle.assertCoherence()
-          val (parent, idx) =
-            handle match
-              case Handle.AtTop(top) =>
-                throw NodeError(s"tried to splice top $top")
-              case Handle.AtChild(parent, idx, _) => (parent, idx)
-              case Handle.Sentinel(parent, idx)   => (parent, idx)
-          parent.children.patchInPlace(idx, nodes, onCtx.matchedCount)
-          tracer.onRewriteComplete(summon[DebugInfo], parent, idx, nodes.size)(
-            using refMap
+      // Preparation for the rewrite may have reparented the node we were "on"
+      // When you immediately call splice, this pretty much always means "stay at that index and put something there",
+      // so that's what we do.
+      // Much easier than forcing the end user to understand such a confusing edge case.
+      keepHandleIdx:
+        (getHandle, getTracer, Manip.GetRefMap).tupled
+          .tapEffect: (handle, tracer, refMap) =>
+            handle.assertCoherence()
+            val (parent, idx) =
+              handle match
+                case Handle.AtTop(top) =>
+                  throw NodeError(s"tried to splice top $top")
+                case Handle.AtChild(parent, idx, _) => (parent, idx)
+                case Handle.Sentinel(parent, idx)   => (parent, idx)
+            parent.children.patchInPlace(idx, nodes, onCtx.matchedCount)
+            tracer.onRewriteComplete(
+              summon[DebugInfo],
+              parent,
+              idx,
+              nodes.size
+            )(using
+              refMap
+            )
+        *> keepHandleIdx(
+          pass.resultRef.updated(_ => RulesResult.Progress)(
+            manip(using on.Ctx(nodes.size))
           )
-      *> keepHandleIdx(
-        pass.resultRef.updated(_ => RulesResult.Progress)(
-          manip(using on.Ctx(nodes.size))
         )
-      )
 
     def spliceThen(using DebugInfo, on.Ctx)(nodes: Node.Child*)(
         manip: on.Ctx ?=> Rules
@@ -787,7 +894,9 @@ object Manip:
         val idx =
           handle match
             case Handle.AtTop(top) =>
-              throw NodeError(s"tried to skip match at top $top")
+              throw NodeError(
+                s"tried to skip match at top ${top.toShortString()}"
+              )
             case Handle.AtChild(_, idx, _) => idx
             case Handle.Sentinel(_, idx)   => idx
 
@@ -836,7 +945,7 @@ object Manip:
           case v if pred(v) => v
       def withFinally(fn: => Unit): Manip[T] =
         Manip.Finally(lhs, () => fn)
-      def withTracer(using DebugInfo)(tracer: => Tracer): Manip[T] =
+      def withTracer(tracer: => Tracer): Manip[T] =
         tracerRef.init(tracer):
           getTracer.lookahead.flatMap: tracer =>
             lhs.withFinally(tracer.close())

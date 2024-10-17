@@ -11,7 +11,7 @@ object tokens:
   object Atom extends Token:
     override def showSource: Boolean = true
 
-val wellFormed: Wellformed =
+val wellformed: Wellformed =
   import distcompiler.wf.*
   Wellformed:
     val listContents = repeated(tok(tokens.Atom, tokens.List))

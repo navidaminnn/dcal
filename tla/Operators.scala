@@ -6,6 +6,12 @@ object Operators:
   sealed trait Operator extends Token, Product:
     def spelling: String = productPrefix
 
+  object Operator:
+    lazy val instances: IArray[Operator] =
+      PrefixOperator.instances
+        ++ InfixOperator.instances
+        ++ PostfixOperator.instances
+
   sealed trait PrefixOperator(val lowPrecedence: Int, val highPrecedence: Int)
       extends Operator
   object PrefixOperator extends util.HasInstanceArray[PrefixOperator]

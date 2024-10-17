@@ -80,6 +80,12 @@ object Pattern:
         extends Manip.Restriction[Manip.Handle, (Int, Manip.Handle)]:
       protected val impl = (-1, _)
 
+    @scala.annotation.targetName("withTracerPattern")
+    def withTracer[T](tracer: => Manip.Tracer)(
+        pattern: Pattern[T]
+    ): Pattern[T] =
+      Pattern(Manip.ops.withTracer(pattern.manip)(tracer))
+
     @scala.annotation.targetName("getHandlePattern")
     def getHandle(using DebugInfo): Pattern[Manip.Handle] =
       Pattern(Manip.ops.restrict(Manip.ops.getHandle)(RestrictGetHandle))
@@ -100,73 +106,77 @@ object Pattern:
 
     abstract class Fields[Tpl <: Tuple] private ():
       self =>
+      protected inline given DebugInfo =
+        DebugInfo.poison // block givens from outside local class defns
       import Tuple.{Concat, Append}
       import Fields.{tupleConcatAssociativity, tupleConcatRightEmptyIdentity}
 
-      protected def withTail[Tl <: Tuple](
+      protected def withTail[Tl <: Tuple](info: DebugInfo)(
           tail: Pattern[Tl]
       ): Pattern[Concat[Tpl, Tl]]
 
-      final def field[T](using
-          DebugInfo
-      )(pattern: Pattern[T]): Fields[Append[Tpl, T]] =
+      final def field[T](using outerInfo: DebugInfo)(
+          pattern: Pattern[T]
+      ): Fields[Append[Tpl, T]] =
         new Fields[Tuple.Append[Tpl, T]]:
-          protected def withTail[Tl <: Tuple](
+          protected def withTail[Tl <: Tuple](info: DebugInfo)(
               tail: Pattern[Tl]
           ): Pattern[Concat[Append[Tpl, T], Tl]] =
             self
-              .withTail:
-                (pattern, rightSibling(tail))
+              .withTail(outerInfo):
+                (pattern, rightSibling(using info)(tail))
                   .mapN(_ *: _)
               .map(_.tupleConcatAssociativity)
 
-      final def skip[T](using DebugInfo)(pattern: Pattern[T]): Fields[Tpl] =
-        new Fields[Tpl]:
-          protected def withTail[Tl <: Tuple](
-              tail: Pattern[Tl]
-          ): Pattern[Concat[Tpl, Tl]] =
-            self.withTail:
-              pattern *> rightSibling(tail)
-
-      final def optionalSkip[T](using DebugInfo)(
+      final def skip[T](using outerInfo: DebugInfo)(
           pattern: Pattern[T]
       ): Fields[Tpl] =
         new Fields[Tpl]:
-          protected def withTail[Tl <: Tuple](
+          protected def withTail[Tl <: Tuple](info: DebugInfo)(
               tail: Pattern[Tl]
           ): Pattern[Concat[Tpl, Tl]] =
-            self.withTail:
-              pattern *> rightSibling(tail)
+            self.withTail(outerInfo):
+              pattern *> rightSibling(using info)(tail)
+
+      final def optionalSkip[T](using outerInfo: DebugInfo)(
+          pattern: Pattern[T]
+      ): Fields[Tpl] =
+        new Fields[Tpl]:
+          protected def withTail[Tl <: Tuple](info: DebugInfo)(
+              tail: Pattern[Tl]
+          ): Pattern[Concat[Tpl, Tl]] =
+            self.withTail(outerInfo):
+              pattern *> rightSibling(using info)(tail)
                 | tail
 
-      final def optional[T](using DebugInfo)(
+      final def optional[T](using outerInfo: DebugInfo)(
           pattern: Pattern[T]
       ): Fields[Append[Tpl, Option[T]]] =
         new Fields[Append[Tpl, Option[T]]]:
-          protected def withTail[Tl <: Tuple](
+          protected def withTail[Tl <: Tuple](info: DebugInfo)(
               tail: Pattern[Tl]
           ): Pattern[Concat[Append[Tpl, Option[T]], Tl]] =
             self
-              .withTail:
-                (pattern, rightSibling(tail))
+              .withTail(outerInfo):
+                (pattern, rightSibling(using info)(tail))
                   .mapN: (v, tl) =>
                     Some(v) *: tl
                 | tail.map(None *: _)
               .map(_.tupleConcatAssociativity)
 
       final def optionalFields[InnerTpl <: Tuple](using
-          DebugInfo
+          outerInfo: DebugInfo
       )(innerFields: Fields[InnerTpl])(using
           innerFieldsSize: ValueOf[Tuple.Size[InnerTpl]]
       ): Fields[Append[Tpl, Option[InnerTpl]]] =
         new Fields[Append[Tpl, Option[InnerTpl]]]:
-          protected def withTail[Tl <: Tuple](
+          protected def withTail[Tl <: Tuple](info: DebugInfo)(
               tail: Pattern[Tl]
           ): Pattern[Concat[Append[Tpl, Option[InnerTpl]], Tl]] =
             self
-              .withTail:
+              .withTail(outerInfo):
                 innerFields
-                  .withTail(tail)
+                  .withTail(info)(tail)
                   .map: joinedParts =>
                     val innerCount = innerFieldsSize.value
                     Some(joinedParts.take(innerCount).asInstanceOf[InnerTpl])
@@ -174,17 +184,17 @@ object Pattern:
                 | tail.map(None *: _)
               .map(_.tupleConcatAssociativity)
 
-      final def repeated[T](using DebugInfo)(
+      final def repeated[T](using outerInfo: DebugInfo)(
           pattern: Pattern[T]
       ): Fields[Append[Tpl, List[T]]] =
         new Fields[Append[Tpl, List[T]]]:
-          protected def withTail[Tl <: Tuple](
+          protected def withTail[Tl <: Tuple](info: DebugInfo)(
               tail: Pattern[Tl]
           ): Pattern[Concat[Append[Tpl, List[T]], Tl]] =
             self
-              .withTail:
+              .withTail(outerInfo):
                 lazy val impl: Pattern[(List[T], Tl)] =
-                  (pattern, rightSibling(defer(impl))).mapN:
+                  (pattern, rightSibling(using info)(defer(impl))).mapN:
                     case (v, (listTl, tl)) =>
                       (v :: listTl, tl)
                   | tail.map((Nil, _))
@@ -192,34 +202,59 @@ object Pattern:
                 impl.map(_ *: _)
               .map(_.tupleConcatAssociativity)
 
-      final def repeatedSkip[T](using DebugInfo)(
+      final def repeatedFields[InnerTpl <: Tuple](using outerInfo: DebugInfo)(
+          fields: Fields[InnerTpl]
+      ): Fields[Append[Tpl, List[InnerTpl]]] =
+        new Fields[Append[Tpl, List[InnerTpl]]]:
+          protected def withTail[Tl <: Tuple](info: DebugInfo)(
+              tail: Pattern[Tl]
+          ): Pattern[Concat[Append[Tpl, List[InnerTpl]], Tl]] =
+            self
+              .withTail(outerInfo):
+                lazy val impl: Pattern[(List[InnerTpl], Tl)] =
+                  fields
+                    .withTail(info)(defer(impl))
+                    .map: allTpl =>
+                      val sizeMinus2 = allTpl.size - 2
+                      val innerTpl =
+                        allTpl.take(sizeMinus2).asInstanceOf[InnerTpl]
+                      val (listTl, tl) = allTpl
+                        .drop(sizeMinus2)
+                        .asInstanceOf[(List[InnerTpl], Tl)]
+                      (innerTpl :: listTl, tl)
+                  | pure(Nil).product(tail)
+
+                impl.map(_ *: _)
+              .map(_.tupleConcatAssociativity)
+
+      final def repeatedSkip[T](using outerInfo: DebugInfo)(
           pattern: Pattern[T]
       ): Fields[Tpl] =
         new Fields[Tpl]:
-          protected def withTail[Tl <: Tuple](
+          protected def withTail[Tl <: Tuple](info: DebugInfo)(
               tail: Pattern[Tl]
           ): Pattern[Concat[Tpl, Tl]] =
-            self.withTail:
+            self.withTail(outerInfo):
               lazy val impl: Pattern[Tl] =
-                pattern *> rightSibling(defer(impl))
+                pattern *> rightSibling(using info)(defer(impl))
                   | tail
               impl
 
-      def atEnd(using DebugInfo): Pattern[Tpl] =
+      def atEnd(using outerInfo: DebugInfo): Pattern[Tpl] =
         self
-          .withTail:
+          .withTail(outerInfo):
             ops.atEnd.as(EmptyTuple)
           .map(_.tupleConcatRightEmptyIdentity)
 
-      def trailing: Pattern[Tpl] =
+      def trailing(using outerInfo: DebugInfo): Pattern[Tpl] =
         self
-          .withTail(pure(EmptyTuple))
+          .withTail(outerInfo)(pure(EmptyTuple))
           .map(_.tupleConcatRightEmptyIdentity)
 
     object Fields:
       import Tuple.{Concat, Append}
-      def apply(): Fields[EmptyTuple] = new Fields:
-        protected def withTail[Tl <: Tuple](
+      def apply(): Fields[EmptyTuple] = new Fields[EmptyTuple]:
+        protected def withTail[Tl <: Tuple](info: DebugInfo)(
             tail: Pattern[Tl]
         ): Pattern[Concat[EmptyTuple.type, Tl]] =
           tail

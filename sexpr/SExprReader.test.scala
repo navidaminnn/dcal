@@ -3,7 +3,7 @@ package distcompiler.sexpr
 import distcompiler.*
 import Builtin.{Error, SourceMarker}
 
-class parseTests extends munit.FunSuite:
+class SExprReaderTests extends munit.FunSuite:
   import tokens.Atom
   extension (str: String)
     def parse: Node.Top =

@@ -9,7 +9,7 @@ object SExprReader extends Reader:
   import distcompiler.Builtin.{Error, SourceMarker}
   import Reader.*
 
-  def wellformed: Wellformed = distcompiler.sexpr.wellFormed
+  def wellformed: Wellformed = distcompiler.sexpr.wellformed
 
   private val alpha: Set[Char] =
     ('a' to 'z').toSet ++ ('A' to 'Z').toSet
