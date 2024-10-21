@@ -5,3 +5,5 @@ object dsl:
   export Manip.Rules
   export Manip.ops.*
   export Pattern.ops.*
+  export Wellformed.Shape
+  export Wellformed.Shape.{fields, repeated, Atom, AnyShape, choice}

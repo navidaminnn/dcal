@@ -13,13 +13,17 @@ trait Reader:
   protected def rules: Manip[SourceRange]
 
   final def apply(sourceRange: SourceRange): Node.Top =
+    import dsl.*
     val top = Node.Top()
 
     val manip =
       Manip.ops.atNode(top):
         Reader.srcRef.init(sourceRange):
           Reader.matchedRef.init(sourceRange.take(0)):
-            rules
+            rules.flatMap: _ =>
+              if top.hasErrors
+              then Manip.unit
+              else wellformed.markErrorsPass
 
     tracePathOpt match
       case None => manip.perform()

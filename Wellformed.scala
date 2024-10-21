@@ -2,16 +2,35 @@ package distcompiler
 
 import cats.syntax.all.given
 import scala.collection.mutable
-import Builtin.Error
 
 final class Wellformed private (
     assigns: Map[Token, Wellformed.Shape],
     topShape: Wellformed.Shape
 ):
-  require:
-    assigns.iterator.map(_._1.name).distinct.size == assigns.size
   import Wellformed.Shape
   import dsl.*
+  require(
+    assigns.iterator.map(_._1.name).distinct.size == assigns.size,
+    s"assigns must be distinct"
+  )
+  locally:
+    val reached = mutable.HashSet.empty[Token]
+    def assertReachable(token: Token): Unit =
+      if !reached(token)
+      then
+        reached += token
+        require(assigns.contains(token), s"token $token must be assigned a shape")
+        assertReachableFromShape(assigns(token))
+
+    def assertReachableFromShape(shape: Shape): Unit =
+      shape match
+        case Shape.Atom =>
+        case Shape.AnyShape =>
+        case Shape.Choice(choices) => choices.foreach(assertReachable)
+        case Shape.Repeat(choice, _) => choice.choices.foreach(assertReachable)
+        case Shape.Fields(fields) => fields.foreach(_.choices.foreach(assertReachable))
+
+    assertReachableFromShape(topShape)
 
   private lazy val shortNameByToken: Map[Token, SourceRange] =
     val acc = mutable.HashMap[List[String], mutable.ListBuffer[Token]]()
@@ -65,39 +84,32 @@ final class Wellformed private (
   private lazy val tokenByShortName: Map[SourceRange, Token] =
     shortNameByToken.map(_.reverse)
 
-  lazy val markErrors: Manip[Unit] =
-    // target shapes differently...
-    // can't be "at end" anymore; you have to see it "from above"
-    // ... so we assert shapes at parents, with a tiny bit of extra work
-    def shapePattern(shape: Wellformed.Shape): Pattern[Node.Child] =
-      def forChoice(choice: Shape.Choice): Pattern[Node.Child] =
-        oneOfToks(choice.choices)
+  lazy val markErrorsPass: Manip[Unit] =
+    def shapePattern(shape: Wellformed.Shape): Pattern[Unit] =
+      import dsl.*
 
-      ???
-      // shape match
-      //   case Shape.Atom =>
-      //     atEnd
-      //   case Shape.AnyShape =>
-      //     anySibling
-      //   case choice: Shape.Choice =>
-      //     forChoice(choice).filter(_.idxInParent == 0)
-      //     | atEnd
-      //   case Shape.Repeat(choice, minCount) =>
-      //     forChoice(choice)
-      //     | atEnd.restrict:
-      //       case sentinel if sentinel.idxInParent >= minCount => sentinel
-      //   case Shape.Fields(fields) =>
-      //     val expectedEndIdx = fields.size
-      //     val endPat =
-      //       atEnd.restrict:
-      //         case sentinel if sentinel.idxInParent == expectedEndIdx =>
-      //           sentinel
-
-      //     fields.iterator.zipWithIndex
-      //       .map: (field, idx) =>
-      //         forChoice(field).restrict:
-      //           case sibling if sibling.idxInParent == idx => sibling
-      //       .foldLeft(endPat: Pattern[Node.Sibling])(_ | _)
+      children:
+        shape match
+          case Shape.Atom => atEnd
+          case Shape.AnyShape => anyChild.void
+          case choice: Shape.Choice =>
+            Fields()
+              .skip(oneOfToks(choice.choices))
+              .atEnd
+              .void
+          case Shape.Repeat(choice, minCount) =>
+            Fields()
+              .repeated(oneOfToks(choice.choices))
+              .atEnd
+              .restrict:
+                case Tuple1(elems) if elems.size >= minCount => ()
+          case Shape.Fields(fields) =>
+            fields
+              .iterator
+              .foldLeft(Fields(): Fields[? <: Tuple]): (acc, fld) =>
+                acc.skip(oneOfToks(fld.choices))
+              .atEnd
+              .void
 
     pass(once = true)
       .rules:
@@ -105,20 +117,34 @@ final class Wellformed private (
           tok(Builtin.Error)
         ).rewrite(_ => skipMatch)
         | on(
+          theTop <* not(shapePattern(topShape))
+        ).value.flatMap: top =>
+          effect:
+            top.children = List(Node(Builtin.Error)(
+              Builtin.Error.Message("unexpected root shape"),
+              Builtin.Error.AST(top.unparentedChildren),
+            ))
+          *> endPass
+        | on(
           anyChild
           <* not:
-            assigns.foldLeft(shapePattern(topShape) <* parent(theTop)):
+            assigns.foldLeft(reject: Pattern[Node]):
               case (acc, (token, shape)) =>
-                acc
-                  | (shapePattern(shape) <* parent(tok(token)))
-        ).rewrite: node =>
+                acc | (tok(token) <* shapePattern(shape))
+        ).rewrite: child =>
+          val desc = child match
+            case node: Node => node.token.name
+            case _: Node.Embed[?] => "embed"
           splice(
-            Error(
-              "unexpected shape",
-              node.unparent()
+            Builtin.Error(
+              s"unexpected shape in $desc",
+              child.unparent()
             )
           )
-  end markErrors
+  end markErrorsPass
+
+  def markErrors(top: Node.Top): Unit =
+    atNode(top)(markErrorsPass).perform()
 
   def makeDerived(fn: Wellformed.Builder ?=> Unit): Wellformed =
     val builder =
@@ -301,8 +327,6 @@ object Wellformed:
   val empty: Wellformed = Wellformed:
     Node.Top ::= Wellformed.Shape.AnyShape
 
-  private object SkipMarker extends Token
-
   def apply(fn: Builder ?=> Unit): Wellformed =
     val builder = Builder(mutable.HashMap.empty, None)
     fn(using builder)
@@ -350,12 +374,20 @@ object Wellformed:
       def |(other: Shape.Choice): Shape.Choice =
         Shape.Choice(choice.choices ++ other.choices)
 
+    def choice(tokens: Token*): Shape.Choice =
+      Shape.Choice(tokens.toSet)
+
+    def choice(tokens: Set[Token]): Shape.Choice =
+      Shape.Choice(tokens)
+
     def repeated(choice: Shape.Choice, minCount: Int = 0): Shape.Repeat =
       Shape.Repeat(choice, minCount)
 
     def fields(fields: Shape.Choice*): Shape.Fields =
       Shape.Fields(fields.toList)
 
-    def tok(token: Token, tokens: Token*): Shape.Choice =
-      Shape.Choice(Set(tokens*).incl(token))
+    import scala.language.implicitConversions
+    // TODO: once `into` keyword works, use that
+    implicit def tokenAsChoice(token: Token): Shape.Choice =
+      Shape.Choice(Set(token))
 end Wellformed

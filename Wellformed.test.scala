@@ -1,6 +1,6 @@
 package distcompiler
 
-import wf.*
+import dsl.*
 
 class WellformedTests extends munit.FunSuite:
   import WellformedTests.*
@@ -53,7 +53,48 @@ class WellformedTests extends munit.FunSuite:
       val deser = wf.deserializeTree(ser)
       assertEquals(deser, orig)
 
+  def expectNoErrors(using munit.Location)(wf: Wellformed)(ast: Node.Top): Unit =
+    wf.markErrors(ast)
+    if ast.hasErrors
+    then fail(s"unexpected errors: ${ast.toPrettyString(wf)}")
+
+  def expectErrors(using munit.Location)(wf: Wellformed)(ast: Node.Top): Unit =
+    wf.markErrors(ast)
+    if !ast.hasErrors
+    then fail(s"should have had errors: ${ast.toPrettyString(wf)}")
+
+  val wf1 = Wellformed:
+    Node.Top ::= tok2
+    tok2 ::= fields(tok3, tok3)
+    tok3 ::= Atom
+
+  test("fields: correct"):
+    expectNoErrors(wf1):
+      Node.Top(tok2(
+        tok3(),
+        tok3(),
+      ))
+
+  test("fields: no fields"):
+    expectErrors(wf1):
+      Node.Top(tok2())
+  test("fields: wrong tok"):
+    expectErrors(wf1):
+      Node.Top(tok3())
+  test("fields: swapped colors"):
+    expectErrors(wf1):
+      Node.Top(tok3(
+        tok2(),
+        tok2(),
+      ))
+  test("fields: one is not an atom"):
+    expectErrors(wf1):
+      Node.Top(tok2(
+        tok3(tok3()),
+        tok3(),
+      ))
+
 object WellformedTests:
-  object tok1 extends Token:
-    override def showSource: Boolean = true
+  object tok1 extends Token.ShowSource
   object tok2 extends Token
+  object tok3 extends Token

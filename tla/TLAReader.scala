@@ -3,14 +3,14 @@ package distcompiler.tla
 import cats.syntax.all.given
 
 import distcompiler.*
+import dsl.*
 
 object TLAReader extends Reader:
   lazy val wellformed = Wellformed:
-    import distcompiler.wf.*
-    Node.Top ::= repeated(tok(ModuleGroup))
+    Node.Top ::= repeated(ModuleGroup)
 
     val allToks =
-      tok(
+      choice(
         StringLiteral,
         NumberLiteral,
         // ---
@@ -25,10 +25,11 @@ object TLAReader extends Reader:
         LaTexLike,
         // ---
         Comment,
-        DashSeq
+        DashSeq,
+        EqSeq,
       )
-        | Choice(NonAlpha.instances.toSet)
-        | Choice(allOperators.toSet)
+        | choice(NonAlpha.instances.toSet)
+        | choice(allOperators.toSet)
 
     ModuleGroup ::= allToks
 
@@ -39,16 +40,17 @@ object TLAReader extends Reader:
     LetGroup ::= allToks
 
     StringLiteral ::= Atom
+    NumberLiteral ::= Atom
     Alpha ::= Atom
     LaTexLike ::= Atom
 
     Comment ::= Atom
     DashSeq ::= Atom
+    EqSeq ::= Atom
 
     allOperators.foreach(_ ::= Atom)
     NonAlpha.instances.foreach(_ ::= Atom)
 
-  import dsl.*
   import Reader.*
 
   // override protected def tracePathOpt: Option[os.Path] = Some(os.pwd / "tlareader.log")
@@ -69,6 +71,7 @@ object TLAReader extends Reader:
 
   object Comment extends Token.ShowSource
   object DashSeq extends Token.ShowSource
+  object EqSeq extends Token.ShowSource
 
   sealed trait NonAlpha extends Product, Token:
     def spelling: String = productPrefix
@@ -303,8 +306,10 @@ object TLAReader extends Reader:
         .onOneOf(spaces)(dropMatch(tokens))
         .onSeq("===="):
           bytes.selectManyLike(Set('=')):
-            on(tok(ModuleGroup)).check
-              *> extendThisNodeWithMatch(atParent(moduleSearch))
+            (on(tok(ModuleGroup)).check
+              *> consumeMatch: m =>
+                addChild(EqSeq(m))
+                *> atParent(moduleSearch))
               | consumeMatch: m =>
                 addChild(
                   Builtin.Error(

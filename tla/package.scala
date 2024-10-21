@@ -109,19 +109,19 @@ object tokens:
   object QuantifierBounds extends Token
 
 val wellformed: Wellformed =
-  import wf.*
+  import dsl.*
   import tokens.*
   Wellformed:
-    Node.Top ::= repeated(tok(Module))
+    Node.Top ::= repeated(Module)
 
     Module ::= fields(
-      tok(Id),
-      tok(Module.Extends),
-      tok(Module.Defns)
+      Id,
+      Module.Extends,
+      Module.Defns
     )
-    Module.Extends ::= repeated(tok(Id))
+    Module.Extends ::= repeated(Id)
     Module.Defns ::= repeated(
-      tok(
+      choice(
         Operator,
         Variable,
         Constant
@@ -129,15 +129,15 @@ val wellformed: Wellformed =
     )
 
     Id ::= Atom
-    Ids ::= repeated(tok(Id), minCount = 1)
-    OpSym ::= Choice(Operators.Operator.instances.toSet)
+    Ids ::= repeated(Id, minCount = 1)
+    OpSym ::= choice(Operators.Operator.instances.toSet)
     Order2 ::= fields(
-      tok(Id),
-      tok(Order2.Arity)
+      Id,
+      Order2.Arity
     )
     Order2.Arity ::= Atom
 
-    Expr ::= tok(
+    Expr ::= choice(
       Expr.IntLiteral,
       Expr.RationalLiteral,
       Expr.StringLiteral,
@@ -163,97 +163,95 @@ val wellformed: Wellformed =
     Expr.RationalLiteral ::= Atom
     Expr.StringLiteral ::= Atom
 
-    Expr.SetLiteral ::= repeated(tok(Expr))
-    Expr.TupleLiteral ::= repeated(tok(Expr))
-    Expr.RecordLiteral ::= repeated(tok(Expr.RecordLiteral.Field), minCount = 1)
+    Expr.SetLiteral ::= repeated(Expr)
+    Expr.TupleLiteral ::= repeated(Expr)
+    Expr.RecordLiteral ::= repeated(Expr.RecordLiteral.Field, minCount = 1)
     Expr.RecordLiteral.Field ::= fields(
-      tok(Id),
-      tok(Expr)
+      Id,
+      Expr
     )
     Expr.RecordSetLiteral ::= repeated(
-      tok(Expr.RecordLiteral.Field),
+      Expr.RecordLiteral.Field,
       minCount = 1
     )
     Expr.RecordSetLiteral.Field ::= fields(
-      tok(Id),
-      tok(Expr)
+      Id,
+      Expr
     )
 
     Expr.OpCall ::= fields(
-      tok(Id, OpSym),
-      tok(Expr.OpCall.Params)
+      choice(Id, OpSym),
+      Expr.OpCall.Params
     )
-    Expr.OpCall.Params ::= repeated(tok(Expr))
+    Expr.OpCall.Params ::= repeated(Expr)
 
     Expr.If ::= fields(
-      tok(Expr),
-      tok(Expr),
-      tok(Expr)
+      Expr,
+      Expr,
+      Expr
     )
 
-    Expr.Case ::= repeated(tok(Expr.Case.Branch), minCount = 1)
+    Expr.Case ::= repeated(Expr.Case.Branch, minCount = 1)
     Expr.Case.Branch ::= fields(
-      tok(Expr),
-      tok(Expr)
+      Expr,
+      Expr
     )
 
     Expr.Let ::= fields(
-      tok(Expr.Let.Defns),
-      tok(Expr)
+      Expr.Let.Defns,
+      Expr
     )
     Expr.Let.Defns ::= repeated(
-      tok(
-        Operator
-      ),
+      Operator,
       minCount = 1
     )
 
     Expr.Exists ::= fields(
-      tok(QuantifierBounds),
-      tok(Expr)
+      QuantifierBounds,
+      Expr
     )
     Expr.Forall ::= fields(
-      tok(QuantifierBounds),
-      tok(Expr)
+      QuantifierBounds,
+      Expr
     )
     Expr.Function ::= fields(
-      tok(QuantifierBounds),
-      tok(Expr)
+      QuantifierBounds,
+      Expr
     )
     Expr.SetComprehension ::= fields(
-      tok(Expr),
-      tok(QuantifierBounds)
+      Expr,
+      QuantifierBounds
     )
     Expr.SetRefinement ::= fields(
-      tok(QuantifierBound),
-      tok(Expr)
+      QuantifierBound,
+      Expr
     )
     Expr.Choose ::= fields(
-      tok(QuantifierBound),
-      tok(Expr)
+      QuantifierBound,
+      Expr
     )
 
     Expr.Except ::= fields(
-      tok(Expr),
-      tok(Expr.Except.Substitutions)
+      Expr,
+      Expr.Except.Substitutions
     )
     Expr.Except.Substitutions ::= repeated(
-      tok(Expr.Except.Substitution),
+      Expr.Except.Substitution,
       minCount = 1
     )
     Expr.Except.Substitution ::= fields(
-      tok(Expr.Except.Path),
-      tok(Expr)
+      Expr.Except.Path,
+      Expr
     )
-    Expr.Except.Path ::= repeated(tok(Expr), minCount = 1)
+    Expr.Except.Path ::= repeated(Expr, minCount = 1)
     Expr.Except.Anchor ::= Atom
 
     Expr.Lambda ::= fields(
-      tok(Expr.Lambda.Params),
-      tok(Expr)
+      Expr.Lambda.Params,
+      Expr
     )
     Expr.Lambda.Params ::= repeated(
-      tok(
+      choice(
         Id,
         Order2
       ),
@@ -261,23 +259,23 @@ val wellformed: Wellformed =
     )
 
     Operator ::= fields(
-      tok(Id, OpSym),
-      tok(Operator.Params),
-      tok(Expr)
+      choice(Id, OpSym),
+      Operator.Params,
+      Expr
     )
     Operator.Params ::= repeated(
-      tok(
+      choice(
         Id,
         Order2
       )
     )
 
-    Variable ::= fields(tok(Id))
-    Constant ::= fields(tok(Id, Order2))
+    Variable ::= fields(Id)
+    Constant ::= fields(choice(Id, Order2))
 
     QuantifierBound ::= fields(
-      tok(Id, Ids),
-      tok(Expr)
+      choice(Id, Ids),
+      Expr
     )
 
-    QuantifierBounds ::= repeated(tok(QuantifierBound), minCount = 1)
+    QuantifierBounds ::= repeated(QuantifierBound, minCount = 1)

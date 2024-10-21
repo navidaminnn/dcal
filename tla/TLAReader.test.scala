@@ -16,7 +16,7 @@ class TLAReaderTests extends munit.FunSuite, test.WithTLACorpus:
     )
 
     if top.hasErrors
-    then fail(top.presentErrors())
+    then fail(top.presentErrors(debug = true))
 
     if top.children.isEmpty
     then fail("no data extracted")

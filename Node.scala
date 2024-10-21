@@ -6,6 +6,7 @@ import cats.syntax.all.given
 import scala.collection.mutable
 import izumi.reflect.Tag
 import scala.annotation.constructorOnly
+import distcompiler.util.toShortString
 
 final case class NodeError(msg: String) extends RuntimeException(msg)
 
@@ -15,6 +16,9 @@ final class Node(val token: Token)(
       Node.Parent,
       Node.Traversable:
   thisNode =>
+
+  def this(token: Token)(childrenInit: Node.Child*) =
+    this(token)(childrenInit)
 
   // !! important !!
   // these vars must init _before_ we make Children, otherwise
@@ -296,23 +300,32 @@ object Node:
       then s"[top] $str"
       else str
 
-    final def presentErrors(): String =
+    final def presentErrors(debug: Boolean = false): String =
       require(hasErrors)
       errors
         .map: err =>
           val msg = err(Builtin.Error.Message)
           val ast = err(Builtin.Error.AST)
 
-          s"${msg.sourceRange.decodeString()} at ${ast.sourceRange.presentationStringLong}"
+          s"${msg.sourceRange.decodeString()} at ${ast.sourceRange.presentationStringLong}\n${
+            if debug then ast.toShortString() else ""
+          }"
         .mkString("\n")
 
-  sealed trait Root extends All:
-    override type This <: Root
+    final def serializedBy(wf: Wellformed): This =
+      wf.serializeTree(this).asInstanceOf[This]
+
+    final def toPrettyWritable(wf: Wellformed): geny.Writable =
+      sexpr.serialize.toPrettyWritable(serializedBy(wf))
+
+    final def toCompactWritable(wf: Wellformed): geny.Writable =
+      sexpr.serialize.toCompactWritable(serializedBy(wf))
+
+    final def toPrettyString(wf: Wellformed): String =
+      sexpr.serialize.toPrettyString(serializedBy(wf))
 
   final class Top(childrenInit: IterableOnce[Node.Child] @constructorOnly)
-      extends Root,
-        Parent,
-        Traversable:
+      extends Parent, Traversable:
     def this(childrenInit: Node.Child*) = this(childrenInit)
 
     val children: Children = Node.Children(this, childrenInit)
@@ -332,18 +345,6 @@ object Node:
         .filter(_.hasErrors)
         .flatMap(_.errors)
         .toList
-
-    def serializedBy(wf: Wellformed): This =
-      wf.serializeTree(this).asInstanceOf[This]
-
-    def toPrettyWritable(wf: Wellformed): geny.Writable =
-      sexpr.serialize.toPrettyWritable(serializedBy(wf))
-
-    def toCompactWritable(wf: Wellformed): geny.Writable =
-      sexpr.serialize.toCompactWritable(serializedBy(wf))
-
-    def toPrettyString(wf: Wellformed): String =
-      sexpr.serialize.toPrettyString(serializedBy(wf))
   end Top
 
   object Top
@@ -371,7 +372,7 @@ object Node:
     @scala.annotation.tailrec
     private[Node] final def incScopeRelevance(): Unit =
       this match
-        case root: Node.Root => // nothing to do here
+        case root: Node.Top => // nothing to do here
         case thisNode: Node =>
           thisNode._scopeRelevance += 1
           if thisNode._scopeRelevance == 1
@@ -383,7 +384,7 @@ object Node:
     @scala.annotation.tailrec
     private[Node] final def decScopeRelevance(): Unit =
       this match
-        case root: Node.Root => // nothing to do here
+        case root: Node.Top => // nothing to do here
         case thisNode: Node =>
           assert(thisNode._scopeRelevance > 0)
           thisNode._scopeRelevance -= 1
@@ -396,7 +397,7 @@ object Node:
     @scala.annotation.tailrec
     private[Node] final def incErrorRefCount(): Unit =
       this match
-        case root: Node.Root => // nothing to do here
+        case root: Node.Top => // nothing to do here
         case thisNode: Node =>
           thisNode._errorRefCount += 1
           if thisNode._errorRefCount == 1
@@ -408,7 +409,7 @@ object Node:
     @scala.annotation.tailrec
     private[Node] final def decErrorRefCount(): Unit =
       this match
-        case root: Node.Root => // nothing to do here
+        case root: Node.Top => // nothing to do here
         case thisNode: Node =>
           thisNode._errorRefCount -= 1
           if thisNode._errorRefCount == 0
@@ -420,7 +421,7 @@ object Node:
     @scala.annotation.tailrec
     private[Node] final def findNodeByKey(key: Node): List[Node] =
       this match
-        case root: Node.Root => Nil
+        case root: Node.Top => Nil
         case thisNode: Node
             if thisNode.token.symbolTableFor.contains(key.token) =>
           import Node.TraversalAction.*

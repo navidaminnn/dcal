@@ -1,9 +1,15 @@
 package distcompiler.tla
 
+import cats.syntax.all.given
 import distcompiler.*
 
 object TLAParser:
   import dsl.*
+
+  // TODO: figure out a general structure for passes
+  val unitDefnsWf =
+    TLAReader.wellformed.makeDerived:
+      ()
 
   val groupUnitDefns =
     import TLAReader.*
@@ -108,4 +114,4 @@ object TLAParser:
 
   // TODO: do this properly
   def apply(top: Node.Top, tracer: Manip.Tracer = Manip.NopTracer): Unit =
-    atNode(top)(groupUnitDefns).withTracer(tracer).perform()
+    atNode(top)(groupUnitDefns *> unitDefnsWf.markErrorsPass).withTracer(tracer).perform()

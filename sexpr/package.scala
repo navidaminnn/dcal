@@ -12,9 +12,9 @@ object tokens:
     override def showSource: Boolean = true
 
 val wellformed: Wellformed =
-  import distcompiler.wf.*
+  import dsl.*
   Wellformed:
-    val listContents = repeated(tok(tokens.Atom, tokens.List))
+    val listContents = repeated(choice(tokens.Atom, tokens.List))
     Node.Top ::= listContents
     tokens.Atom ::= Atom
     tokens.List ::= listContents

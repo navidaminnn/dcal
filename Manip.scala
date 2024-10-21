@@ -2,6 +2,7 @@ package distcompiler
 
 import cats.syntax.all.given
 import util.{++, toShortString}
+import distcompiler.Manip.ops.pass.resultRef
 
 enum Manip[+T]:
   private inline given DebugInfo = DebugInfo.poison
@@ -331,6 +332,10 @@ object Manip:
         case (Manip.Backtrack(_), right)             => right
         case (left, Manip.Backtrack(_))              => left
         case (left @ Manip.Anchor(), Manip.Anchor()) => left
+        // case (Manip.Ap(ff1, fa1), Manip.Ap(ff2, fa2)) =>
+        //   Manip.Ap(ff1 | ff2)
+        case (Manip.Negated(manip1, debugInfo1), Manip.Negated(manip2, debugInfo2)) =>
+          Manip.Negated(combineK(manip1, manip2), debugInfo1 ++ debugInfo2)
         case (
               Manip.Restrict(
                 Manip.RefGet(ref1, debugInfo1),
@@ -676,7 +681,7 @@ object Manip:
       node match
         case top: Node.Top => Handle.AtTop(top)
         case child: Node.Child =>
-          require(child.parent.nonEmpty)
+          require(child.parent.nonEmpty, "node must have parent")
           Handle.AtChild(child.parent.get, child.idxInParent, child)
 
     private def idxIntoParent(parent: Node.Parent, idx: Int): Option[Handle] =
@@ -836,7 +841,7 @@ object Manip:
             val (parent, idx) =
               handle match
                 case Handle.AtTop(top) =>
-                  throw NodeError(s"tried to splice top $top")
+                  throw NodeError(s"tried to splice top ${top.toShortString()}")
                 case Handle.AtChild(parent, idx, _) => (parent, idx)
                 case Handle.Sentinel(parent, idx)   => (parent, idx)
             parent.children.patchInPlace(idx, nodes, onCtx.matchedCount)
@@ -886,21 +891,25 @@ object Manip:
     def atNextNode(using passCtx: pass.Ctx)(manip: Rules): Rules =
       passCtx.strategy.atNext(manip)
 
+    def endPass(using DebugInfo): Rules =
+      resultRef.get
+
     def skipMatch(using
         DebugInfo
     )(using onCtx: on.Ctx, passCtx: pass.Ctx): Rules =
+      require(onCtx.matchedCount > 0, s"must have matched at least one node to skip. Matched ${onCtx.matchedCount}")
       getHandle.lookahead.flatMap: handle =>
         handle.assertCoherence()
-        val idx =
+        val idxOpt =
           handle match
-            case Handle.AtTop(top) =>
-              throw NodeError(
-                s"tried to skip match at top ${top.toShortString()}"
-              )
-            case Handle.AtChild(_, idx, _) => idx
-            case Handle.Sentinel(_, idx)   => idx
+            case Handle.AtTop(top) => None
+            case Handle.AtChild(_, idx, _) => Some(idx)
+            case Handle.Sentinel(_, idx)   => Some(idx)
 
-        atIdx(idx + (onCtx.matchedCount - 1).max(0))(continuePassAtNextNode)
+        idxOpt match
+          case None => endPass
+          case Some(idx) =>
+            atIdx(idx + onCtx.matchedCount.max(0))(continuePass)
 
     extension [T](lhs: Manip[T])
       @scala.annotation.targetName("or")
@@ -1024,7 +1033,7 @@ object Manip:
               *> atParent:
                 commit:
                   atRightSibling(next)
-                    | on(Pattern.ops.theTop).check *> resultRef.get
+                    | on(Pattern.ops.theTop).check *> endPass
 
       // object bottomUp extends TraversalStrategy:
       //   def traverse(
