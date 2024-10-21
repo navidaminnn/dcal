@@ -6,6 +6,15 @@ import distcompiler.*
 import dsl.*
 
 object TLAReader extends Reader:
+  lazy val groupTokens: List[Token] = List(
+    ModuleGroup,
+    ParenthesesGroup,
+    SqBracketsGroup,
+    BracesGroup,
+    TupleGroup,
+    LetGroup
+  )
+
   lazy val wellformed = Wellformed:
     Node.Top ::= repeated(ModuleGroup)
 
@@ -26,18 +35,18 @@ object TLAReader extends Reader:
         // ---
         Comment,
         DashSeq,
-        EqSeq,
+        EqSeq
       )
         | choice(NonAlpha.instances.toSet)
         | choice(allOperators.toSet)
 
-    ModuleGroup ::= allToks
+    ModuleGroup ::= repeated(allToks)
 
-    ParenthesesGroup ::= allToks
-    SqBracketsGroup ::= allToks
-    BracesGroup ::= allToks
-    TupleGroup ::= allToks
-    LetGroup ::= allToks
+    ParenthesesGroup ::= repeated(allToks)
+    SqBracketsGroup ::= repeated(allToks)
+    BracesGroup ::= repeated(allToks)
+    TupleGroup ::= repeated(allToks)
+    LetGroup ::= repeated(allToks)
 
     StringLiteral ::= Atom
     NumberLiteral ::= Atom
@@ -307,17 +316,17 @@ object TLAReader extends Reader:
         .onSeq("===="):
           bytes.selectManyLike(Set('=')):
             (on(tok(ModuleGroup)).check
-              *> consumeMatch: m =>
-                addChild(EqSeq(m))
+            *> consumeMatch: m =>
+              addChild(EqSeq(m))
                 *> atParent(moduleSearch))
-              | consumeMatch: m =>
-                addChild(
-                  Builtin.Error(
-                    "unexpected end of module",
-                    Builtin.SourceMarker(m)
-                  )
+            | consumeMatch: m =>
+              addChild(
+                Builtin.Error(
+                  "unexpected end of module",
+                  Builtin.SourceMarker(m)
                 )
-                  *> on(ancestor(theTop)).value.here(moduleSearch)
+              )
+                *> on(ancestor(theTop)).value.here(moduleSearch)
         .onSeq("----"):
           bytes.selectManyLike(Set('-')):
             consumeMatch: m =>

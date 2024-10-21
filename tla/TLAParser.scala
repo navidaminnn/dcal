@@ -7,13 +7,36 @@ object TLAParser:
   import dsl.*
 
   // TODO: figure out a general structure for passes
-  val unitDefnsWf =
-    TLAReader.wellformed.makeDerived:
-      ()
+  val unitDefnsWf = TLAReader.wellformed.makeDerived:
+    Node.Top ::=! repeated(tokens.Module)
+
+    tokens.Id ::= Atom
+    tokens.OpSym ::= Atom
+
+    tokens.Module ::= fields(
+      tokens.Id,
+      tokens.Module.Extends,
+      tokens.Module.Defns
+    )
+    tokens.Module.Extends ::= repeated(tokens.Id)
+    tokens.Module.Defns ::= repeated(
+      choice(
+        TLAReader.ParenthesesGroup.existingCases - TLAReader.`_==_` + tokens.Operator
+      )
+    )
+
+    TLAReader.groupTokens.foreach: tok =>
+      tok.removeCases(TLAReader.`_==_`)
+      tok.addCases(tokens.Operator)
+
+    tokens.Operator ::= fields(
+      choice(tokens.Id, tokens.OpSym),
+      TLAReader.ParenthesesGroup
+    )
 
   val groupUnitDefns =
     import TLAReader.*
-    pass(once = true)
+    pass(once = false)
       .rules:
         // module
         on(
@@ -66,12 +89,14 @@ object TLAParser:
             .skip(tok(`_==_`))
             .trailing
         ).rewrite: (name, paramsOpt) =>
-          val op = tokens.Operator(tokens.Id().like(name))
-          paramsOpt match
-            case None =>
-            case Some(params) =>
-              op.children.addOne(params.unparent())
-          splice(op)
+          splice(
+            tokens.Operator(
+              tokens.Id().like(name),
+              paramsOpt match
+                case None         => ParenthesesGroup()
+                case Some(params) => params.unparent()
+            )
+          )
         | on(
           Fields()
             .field(tok(Alpha))
@@ -95,7 +120,8 @@ object TLAParser:
         ).rewrite: (param, op) =>
           splice(
             tokens.Operator(
-              tokens.OpSym(op.unparent(), ParenthesesGroup(param.unparent()))
+              tokens.OpSym(op.unparent(), ParenthesesGroup(param.unparent())),
+              ParenthesesGroup()
             )
           )
         | on(
@@ -114,4 +140,6 @@ object TLAParser:
 
   // TODO: do this properly
   def apply(top: Node.Top, tracer: Manip.Tracer = Manip.NopTracer): Unit =
-    atNode(top)(groupUnitDefns *> unitDefnsWf.markErrorsPass).withTracer(tracer).perform()
+    atNode(top)(groupUnitDefns *> unitDefnsWf.markErrorsPass)
+      .withTracer(tracer)
+      .perform()

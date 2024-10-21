@@ -79,7 +79,7 @@ enum Manip[+T]:
         tracer(using refMap).onFatal(ctxInfo, posInfo)(using refMap)
 
         throw RuntimeException(
-          s"unrecovered backtrack at $posInfo, caught at $ctxInfo, at ${refMap.treeDescr}"
+          s"unrecovered backtrack at $posInfo, caught at $ctxInfo, at ${refMap.treeDescrShort}"
         )
 
     def impl[T, U](self: Manip[T])(using
@@ -334,7 +334,10 @@ object Manip:
         case (left @ Manip.Anchor(), Manip.Anchor()) => left
         // case (Manip.Ap(ff1, fa1), Manip.Ap(ff2, fa2)) =>
         //   Manip.Ap(ff1 | ff2)
-        case (Manip.Negated(manip1, debugInfo1), Manip.Negated(manip2, debugInfo2)) =>
+        case (
+              Manip.Negated(manip1, debugInfo1),
+              Manip.Negated(manip2, debugInfo2)
+            ) =>
           Manip.Negated(combineK(manip1, manip2), debugInfo1 ++ debugInfo2)
         case (
               Manip.Restrict(
@@ -897,12 +900,15 @@ object Manip:
     def skipMatch(using
         DebugInfo
     )(using onCtx: on.Ctx, passCtx: pass.Ctx): Rules =
-      require(onCtx.matchedCount > 0, s"must have matched at least one node to skip. Matched ${onCtx.matchedCount}")
+      require(
+        onCtx.matchedCount > 0,
+        s"must have matched at least one node to skip. Matched ${onCtx.matchedCount}"
+      )
       getHandle.lookahead.flatMap: handle =>
         handle.assertCoherence()
         val idxOpt =
           handle match
-            case Handle.AtTop(top) => None
+            case Handle.AtTop(top)         => None
             case Handle.AtChild(_, idx, _) => Some(idx)
             case Handle.Sentinel(_, idx)   => Some(idx)
 

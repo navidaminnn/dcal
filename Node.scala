@@ -307,9 +307,7 @@ object Node:
           val msg = err(Builtin.Error.Message)
           val ast = err(Builtin.Error.AST)
 
-          s"${msg.sourceRange.decodeString()} at ${ast.sourceRange.presentationStringLong}\n${
-            if debug then ast.toShortString() else ""
-          }"
+          s"${msg.sourceRange.decodeString()} at ${ast.sourceRange.presentationStringLong}\n${if debug then ast.toShortString() else ""}"
         .mkString("\n")
 
     final def serializedBy(wf: Wellformed): This =
@@ -325,7 +323,8 @@ object Node:
       sexpr.serialize.toPrettyString(serializedBy(wf))
 
   final class Top(childrenInit: IterableOnce[Node.Child] @constructorOnly)
-      extends Parent, Traversable:
+      extends Parent,
+        Traversable:
     def this(childrenInit: Node.Child*) = this(childrenInit)
 
     val children: Children = Node.Children(this, childrenInit)

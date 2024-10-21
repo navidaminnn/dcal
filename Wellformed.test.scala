@@ -53,7 +53,9 @@ class WellformedTests extends munit.FunSuite:
       val deser = wf.deserializeTree(ser)
       assertEquals(deser, orig)
 
-  def expectNoErrors(using munit.Location)(wf: Wellformed)(ast: Node.Top): Unit =
+  def expectNoErrors(using munit.Location)(wf: Wellformed)(
+      ast: Node.Top
+  ): Unit =
     wf.markErrors(ast)
     if ast.hasErrors
     then fail(s"unexpected errors: ${ast.toPrettyString(wf)}")
@@ -70,10 +72,12 @@ class WellformedTests extends munit.FunSuite:
 
   test("fields: correct"):
     expectNoErrors(wf1):
-      Node.Top(tok2(
-        tok3(),
-        tok3(),
-      ))
+      Node.Top(
+        tok2(
+          tok3(),
+          tok3()
+        )
+      )
 
   test("fields: no fields"):
     expectErrors(wf1):
@@ -83,16 +87,20 @@ class WellformedTests extends munit.FunSuite:
       Node.Top(tok3())
   test("fields: swapped colors"):
     expectErrors(wf1):
-      Node.Top(tok3(
-        tok2(),
-        tok2(),
-      ))
+      Node.Top(
+        tok3(
+          tok2(),
+          tok2()
+        )
+      )
   test("fields: one is not an atom"):
     expectErrors(wf1):
-      Node.Top(tok2(
-        tok3(tok3()),
-        tok3(),
-      ))
+      Node.Top(
+        tok2(
+          tok3(tok3()),
+          tok3()
+        )
+      )
 
 object WellformedTests:
   object tok1 extends Token.ShowSource

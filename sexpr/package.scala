@@ -32,31 +32,7 @@ object serialize:
   // and lazy code, and I ran into a bug where cats.Eval (reasonably for its normal use but not here)
   // silently memoized an effectful computation
   import scala.util.control.TailCalls.*
-
-  extension [T](iter: Iterator[T])
-    private def intercalate(value: T): Iterator[T] =
-      new Iterator[T]:
-        var prependSep = false
-        def hasNext: Boolean = iter.hasNext
-        def next(): T =
-          if prependSep && iter.hasNext
-          then
-            prependSep = false
-            value
-          else
-            prependSep = true
-            iter.next()
-    private def traverse(fn: T => TailRec[Unit]): TailRec[Unit] =
-      def impl: TailRec[Unit] =
-        if !iter.hasNext
-        then done(())
-        else
-          for
-            () <- fn(iter.next())
-            () <- impl
-          yield ()
-
-      impl
+  import distcompiler.util.TailCallsUtils.*
 
   def toPrettyString(top: Node.All): String =
     val out = java.io.ByteArrayOutputStream()

@@ -2,6 +2,8 @@ package distcompiler
 
 import cats.syntax.all.given
 import scala.collection.mutable
+import scala.util.control.TailCalls.*
+import util.TailCallsUtils.*
 
 final class Wellformed private (
     assigns: Map[Token, Wellformed.Shape],
@@ -15,22 +17,30 @@ final class Wellformed private (
   )
   locally:
     val reached = mutable.HashSet.empty[Token]
-    def assertReachable(token: Token): Unit =
+    def assertReachable(token: Token): TailRec[Unit] =
       if !reached(token)
       then
         reached += token
-        require(assigns.contains(token), s"token $token must be assigned a shape")
-        assertReachableFromShape(assigns(token))
+        require(
+          assigns.contains(token),
+          s"token $token must be assigned a shape"
+        )
+        tailcall(assertReachableFromShape(assigns(token)))
+      else done(())
 
-    def assertReachableFromShape(shape: Shape): Unit =
+    def assertReachableFromShape(shape: Shape): TailRec[Unit] =
       shape match
-        case Shape.Atom =>
-        case Shape.AnyShape =>
-        case Shape.Choice(choices) => choices.foreach(assertReachable)
-        case Shape.Repeat(choice, _) => choice.choices.foreach(assertReachable)
-        case Shape.Fields(fields) => fields.foreach(_.choices.foreach(assertReachable))
+        case Shape.Atom     => done(())
+        case Shape.AnyShape => done(())
+        case Shape.Choice(choices) =>
+          choices.iterator.traverse(assertReachable)
+        case Shape.Repeat(choice, _) =>
+          choice.choices.iterator.traverse(assertReachable)
+        case Shape.Fields(fields) =>
+          fields.iterator.traverse: field =>
+            field.choices.iterator.traverse(assertReachable)
 
-    assertReachableFromShape(topShape)
+    assertReachableFromShape(topShape).result
 
   private lazy val shortNameByToken: Map[Token, SourceRange] =
     val acc = mutable.HashMap[List[String], mutable.ListBuffer[Token]]()
@@ -85,84 +95,97 @@ final class Wellformed private (
     shortNameByToken.map(_.reverse)
 
   lazy val markErrorsPass: Manip[Unit] =
-    def shapePattern(shape: Wellformed.Shape): Pattern[Unit] =
-      import dsl.*
+    getNode.tapEffect(markErrors).void
 
-      children:
-        shape match
-          case Shape.Atom => atEnd
-          case Shape.AnyShape => anyChild.void
-          case choice: Shape.Choice =>
-            Fields()
-              .skip(oneOfToks(choice.choices))
-              .atEnd
-              .void
-          case Shape.Repeat(choice, minCount) =>
-            Fields()
-              .repeated(oneOfToks(choice.choices))
-              .atEnd
-              .restrict:
-                case Tuple1(elems) if elems.size >= minCount => ()
-          case Shape.Fields(fields) =>
-            fields
-              .iterator
-              .foldLeft(Fields(): Fields[? <: Tuple]): (acc, fld) =>
-                acc.skip(oneOfToks(fld.choices))
-              .atEnd
-              .void
+  def markErrors(node: Node.All): Unit =
+    def implShape(
+        desc: String,
+        parent: Node.Parent,
+        shape: Shape
+    ): TailRec[Unit] =
+      shape match
+        case Shape.AnyShape => done(())
+        case Shape.Atom =>
+          implShape(desc, parent, Shape.Fields(Nil))
+        case choice @ Shape.Choice(_) =>
+          implShape(desc, parent, Shape.Fields(List(choice)))
+        case Shape.Fields(fields) =>
+          if parent.children.size != fields.size
+          then
+            done:
+              val wrongSize = parent.children.size
+              parent.children = List(
+                Node(Builtin.Error)(
+                  Builtin.Error.Message(
+                    s"$desc should have exactly ${fields.size} children, but it had $wrongSize instead"
+                  ),
+                  Builtin.Error.AST(parent.unparentedChildren)
+                )
+              )
+          else
+            parent.children.iterator
+              .zip(fields.iterator)
+              .traverse: (child, choice) =>
+                child match
+                  case node: Node =>
+                    if node.token == Builtin.Error
+                    then done(())
+                    else if choice.choices(node.token)
+                    then tailcall(implForNode(child))
+                    else
+                      node.replaceThis:
+                        Builtin.Error(
+                          s"found token ${node.token}, but expected ${choice.choices.mkString(" or ")}",
+                          child.unparent()
+                        )
+                      done(())
+                  case _: Node.Embed[?] => ???
+        case Shape.Repeat(choice, minCount) =>
+          if parent.children.size < minCount
+          then
+            done:
+              val wrongSize = parent.children.size
+              parent.children = List(
+                Node(Builtin.Error)(
+                  Builtin.Error.Message(
+                    s"$desc should have at least $minCount children, but it had $wrongSize instead"
+                  ),
+                  Builtin.Error.AST(parent.unparentedChildren)
+                )
+              )
+          else
+            parent.children.iterator
+              .traverse:
+                case node: Node =>
+                  if node.token == Builtin.Error
+                  then done(())
+                  else if choice.choices(node.token)
+                  then tailcall(implForNode(node))
+                  else
+                    node.replaceThis:
+                      Builtin.Error(
+                        s"found token ${node.token}, but expected ${choice.choices.mkString(" or ")}",
+                        node.unparent()
+                      )
+                    done(())
+                case _: Node.Embed[?] => ???
 
-    pass(once = true)
-      .rules:
-        on(
-          tok(Builtin.Error)
-        ).rewrite(_ => skipMatch)
-        | on(
-          theTop <* not(shapePattern(topShape))
-        ).value.flatMap: top =>
-          effect:
-            top.children = List(Node(Builtin.Error)(
-              Builtin.Error.Message("unexpected root shape"),
-              Builtin.Error.AST(top.unparentedChildren),
-            ))
-          *> endPass
-        | on(
-          anyChild
-          <* not:
-            assigns.foldLeft(reject: Pattern[Node]):
-              case (acc, (token, shape)) =>
-                acc | (tok(token) <* shapePattern(shape))
-        ).rewrite: child =>
-          val desc = child match
-            case node: Node => node.token.name
-            case _: Node.Embed[?] => "embed"
-          splice(
-            Builtin.Error(
-              s"unexpected shape in $desc",
-              child.unparent()
-            )
-          )
-  end markErrorsPass
+    def implForNode(node: Node.All): TailRec[Unit] =
+      node match
+        case top: Node.Top =>
+          tailcall(implShape("top", top, topShape))
+        case node: Node =>
+          assert(assigns.contains(node.token))
+          tailcall(implShape(node.token.name, node, assigns(node.token)))
+        case embed: Node.Embed[?] => ???
 
-  def markErrors(top: Node.Top): Unit =
-    atNode(top)(markErrorsPass).perform()
+    implForNode(node).result
 
   def makeDerived(fn: Wellformed.Builder ?=> Unit): Wellformed =
     val builder =
       Wellformed.Builder(mutable.HashMap.from(assigns), Some(topShape))
     fn(using builder)
     builder.build()
-
-  import scala.util.control.TailCalls.*
-
-  extension [T](self: IterableOnce[T])
-    private def flatForEach(fn: T => TailRec[Unit]): TailRec[Unit] =
-      val iter = self.iterator
-      def impl(): TailRec[Unit] =
-        if iter.hasNext
-        then tailcall(fn(iter.next())).flatMap(_ => impl())
-        else done(())
-
-      impl()
 
   def serializeTree(tree: Node.All): tree.This =
     import sexpr.tokens.{Atom, List as SList}
@@ -174,8 +197,8 @@ final class Wellformed private (
       def addSerializedChildren(
           children: IterableOnce[Node.Child]
       ): TailRec[P] =
-        children
-          .flatForEach: child =>
+        children.iterator
+          .traverse: child =>
             tailcall(impl(child)).map(parent.children.addOne)
           .map(_ => parent)
 
@@ -302,8 +325,8 @@ final class Wellformed private (
       def addDeserializedChildren(
           children: IterableOnce[Node.Child]
       ): TailRec[P] =
-        children
-          .flatForEach: child =>
+        children.iterator
+          .traverse: child =>
             tailcall(impl(child)).map(parent.children.addOne)
           .map(_ => parent)
 
@@ -336,26 +359,73 @@ object Wellformed:
       assigns: mutable.HashMap[Token, Wellformed.Shape],
       private var topShapeOpt: Option[Wellformed.Shape]
   ):
-    extension (top: Node.Top.type)
-      @scala.annotation.targetName("setTopShape")
+    extension (token: Token | Node.Top.type)
       def ::=(shape: Shape): Unit =
-        require(topShapeOpt.isEmpty)
-        topShapeOpt = Some(shape)
+        token match
+          case token: Token =>
+            require(!assigns.contains(token))
+            assigns(token) = shape
+          case Node.Top =>
+            require(topShapeOpt.isEmpty)
+            topShapeOpt = Some(shape)
+
       @scala.annotation.targetName("resetTopShape")
       def ::=!(shape: Shape): Unit =
-        require(topShapeOpt.nonEmpty)
-        topShapeOpt = Some(shape)
+        token match
+          case token: Token =>
+            require(assigns.contains(token))
+            assigns(token) = shape
+          case Node.Top =>
+            require(topShapeOpt.nonEmpty)
+            topShapeOpt = Some(shape)
 
-    extension (token: Token)
-      @scala.annotation.targetName("setShape")
-      def ::=(shape: Shape): Unit =
-        require(!assigns.contains(token))
-        assigns(token) = shape
+      private def getExistingShape: Shape =
+        token match
+          case token: Token =>
+            require(assigns.contains(token))
+            assigns(token)
+          case Node.Top =>
+            require(topShapeOpt.nonEmpty)
+            topShapeOpt.get
 
-      @scala.annotation.targetName("resetShape")
-      def ::=!(shape: Shape): Unit =
-        require(assigns.contains(token))
-        assigns(token) = shape
+      def existingCases: Set[Token] =
+        getExistingShape match
+          case Shape.Choice(choices)    => choices
+          case Shape.Repeat(choices, _) => choices.choices
+          case shape: (Shape.Fields | Shape.Atom.type | Shape.AnyShape.type) =>
+            throw IllegalArgumentException(
+              s"$token's shape doesn't have cases ($shape)"
+            )
+
+      def removeCases(cases: Token*): Unit =
+        getExistingShape match
+          case Shape.Choice(choices) =>
+            token ::=! Shape.Choice(choices -- cases)
+          case Shape.Repeat(choices, minCount) =>
+            token ::=! Shape.Repeat(
+              Shape.Choice(choices.choices -- cases),
+              minCount
+            )
+          case Shape.Fields(fields) =>
+            token ::=! Shape.Fields(
+              fields.map(choice => Shape.Choice(choice.choices -- cases))
+            )
+          case Shape.AnyShape | Shape.Atom =>
+          // maybe it helps to assert something here, but it is technically correct to just do nothing
+
+      def addCases(cases: Token*): Unit =
+        getExistingShape match
+          case Shape.Choice(choices) =>
+            token ::=! Shape.Choice(choices ++ cases)
+          case Shape.Repeat(choice, minCount) =>
+            token ::=! Shape.Repeat(
+              Shape.Choice(choice.choices ++ cases),
+              minCount
+            )
+          case shape: (Shape.Fields | Shape.Atom.type | Shape.AnyShape.type) =>
+            throw IllegalArgumentException(
+              s"$token's shape is not appropriate for adding cases ($shape)"
+            )
 
     private[Wellformed] def build(): Wellformed =
       require(topShapeOpt.nonEmpty)
