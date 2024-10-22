@@ -31,7 +31,7 @@ object TLAParser:
 
     tokens.Operator ::= fields(
       choice(tokens.Id, tokens.OpSym),
-      TLAReader.ParenthesesGroup
+      choice(TLAReader.ParenthesesGroup, TLAReader.SqBracketsGroup)
     )
 
   val groupUnitDefns =
@@ -135,6 +135,19 @@ object TLAParser:
             tokens.Operator(
               tokens.OpSym(op.unparent()),
               ParenthesesGroup(param.unparent())
+            )
+          )
+        | on(
+          Fields()
+            .field(tok(Alpha))
+            .field(tok(SqBracketsGroup))
+            .skip(tok(`_==_`))
+            .trailing
+        ).rewrite: (name, params) =>
+          splice(
+            tokens.Operator(
+              tokens.Id().like(name),
+              params.unparent()
             )
           )
 
