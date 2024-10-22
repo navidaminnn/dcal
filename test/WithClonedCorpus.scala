@@ -14,7 +14,7 @@ transparent trait WithClonedCorpus:
     if !os.exists(checkoutFolder)
     then
       os.makeDir.all(clonesDir)
-      os.proc("git", "clone", repoURL, checkoutFolder).call()
+      os.proc("git", "clone", "--recurse-submodules", repoURL, checkoutFolder).call()
 
     var foundAnything = false
 
