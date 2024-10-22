@@ -2,68 +2,69 @@ package distcompiler.tla
 
 import cats.syntax.all.given
 import distcompiler.*
+import dsl.*
 
-object TLAParser:
-  import dsl.*
+object TLAParser extends PassSeq:
+  import TLAReader.*
+
+  def inputWellformed: Wellformed = TLAReader.wellformed
 
   val opDeclFields: Fields[Tuple1[(Node, Int)]] =
     Fields()
-      .field(TLAReader.Alpha)
+      .field(Alpha)
       .field:
-        tok(TLAReader.ParenthesesGroup).withChildren:
+        tok(ParenthesesGroup).withChildren:
           Fields()
             .optionalFields:
               Fields()
-                .skip(TLAReader.Alpha.filterSrc("_"))
+                .skip(Alpha.filterSrc("_"))
                 .repeatedFields:
                   Fields()
-                    .skip(TLAReader.`,`)
-                    .skip(TLAReader.Alpha.filterSrc("_"))
+                    .skip(`,`)
+                    .skip(Alpha.filterSrc("_"))
             .atEnd
       .map:
         case (name, opt) =>
           Tuple1((name, opt._1.fold(0)(_._1.size)))
 
-  // TODO: figure out a general structure for passes
-  val unitDefnsWf = TLAReader.wellformed.makeDerived:
-    Node.Top ::=! repeated(tokens.Module)
+  val unitDefns = passDef:
+    wellformed := TLAReader.wellformed.makeDerived:
+      Node.Top ::=! repeated(tokens.Module)
 
-    tokens.Id ::= Atom
-    tokens.OpSym ::= Atom
+      tokens.Id ::= Atom
+      tokens.OpSym.importFrom(tla.wellformed)
 
-    val addedTokens = List(
-      tokens.Operator,
-      tokens.Variable,
-      tokens.Constant
-    )
-
-    tokens.Module ::= fields(
-      tokens.Id,
-      tokens.Module.Extends,
-      tokens.Module.Defns
-    )
-    tokens.Module.Extends ::= repeated(tokens.Id)
-    tokens.Module.Defns ::= repeated(
-      choice(
-        TLAReader.ParenthesesGroup.existingCases - TLAReader.`_==_` ++ addedTokens
+      val addedTokens = List(
+        tokens.Operator,
+        tokens.Variable,
+        tokens.Constant
       )
-    )
 
-    TLAReader.groupTokens.foreach: tok =>
-      tok.removeCases(TLAReader.`_==_`)
-      tok.addCases(addedTokens*)
+      tokens.Module ::= fields(
+        tokens.Id,
+        tokens.Module.Extends,
+        tokens.Module.Defns
+      )
+      tokens.Module.Extends ::= repeated(tokens.Id)
+      tokens.Module.Defns ::= repeated(
+        choice(
+          TLAReader.ParenthesesGroup.existingCases - TLAReader.`_==_` ++ addedTokens
+        )
+      )
 
-    tokens.Operator ::= fields(
-      choice(tokens.Id, tokens.OpSym),
-      choice(TLAReader.ParenthesesGroup, TLAReader.SqBracketsGroup)
-    )
+      TLAReader.groupTokens.foreach: tok =>
+        tok.removeCases(TLAReader.`_==_`)
+        tok.addCases(addedTokens*)
 
-    tokens.Variable.importFrom(tla.wellformed)
-    tokens.Constant.importFrom(tla.wellformed)
-    tokens.OpSym.importFrom(tla.wellformed)
+      tokens.Operator ::= fields(
+        choice(tokens.Id, tokens.OpSym),
+        choice(TLAReader.ParenthesesGroup, TLAReader.SqBracketsGroup)
+      )
 
-  val groupUnitDefns =
-    import TLAReader.*
+      tokens.Variable.importFrom(tla.wellformed)
+      tokens.Constant.importFrom(tla.wellformed)
+      tokens.OpSym.importFrom(tla.wellformed)
+
     pass(once = false)
       .rules:
         // module
@@ -148,8 +149,8 @@ object TLAParser:
         ).rewrite: (param, op) =>
           splice(
             tokens.Operator(
-              tokens.OpSym(op.unparent(), ParenthesesGroup(param.unparent())),
-              ParenthesesGroup()
+              tokens.OpSym(op.unparent()),
+              ParenthesesGroup(param.unparent())
             )
           )
         | on(
@@ -179,6 +180,7 @@ object TLAParser:
             )
           )
         // TODO: separate pass to mark keywords
+        // variable decls
         | on(
           Fields()
             .skip(Alpha.filterSrc("VARIABLE") | Alpha.filterSrc("VARIABLES"))
@@ -193,6 +195,7 @@ object TLAParser:
             tokens.Variable(tokens.Id().like(v1))
               :: vRest.map(v => tokens.Variable(tokens.Id().like(v._1)))
           )
+        // constant decls
         | on(
           Fields()
             .skip(Alpha.filterSrc("CONSTANT") | Alpha.filterSrc("CONSTANTS"))
@@ -217,9 +220,3 @@ object TLAParser:
                     tokens.Order2(id, tokens.Order2.Arity(width.toString))
                   )
           )
-
-  // TODO: do this properly
-  def apply(top: Node.Top, tracer: Manip.Tracer = Manip.NopTracer): Unit =
-    atNode(top)(groupUnitDefns *> unitDefnsWf.markErrorsPass)
-      .withTracer(tracer)
-      .perform()
