@@ -173,9 +173,9 @@ object TLAReader extends Reader:
           tok(ModuleGroup)
           *> children:
             Fields()
-              .skip(tok(DashSeq))
-              .skip(tok(Alpha).filterSrc("MODULE"))
-              .optionalSkip(tok(Alpha))
+              .skip(DashSeq)
+              .skip(Alpha.filterSrc("MODULE"))
+              .optionalSkip(Alpha)
               .atEnd
         ).check
 
@@ -204,9 +204,9 @@ object TLAReader extends Reader:
                   tok(ModuleGroup)
                   *> children:
                     Fields()
-                      .skip(tok(DashSeq))
-                      .skip(tok(Alpha).filterSrc("MODULE"))
-                      .skip(tok(Alpha))
+                      .skip(DashSeq)
+                      .skip(Alpha.filterSrc("MODULE"))
+                      .skip(Alpha)
                       .atEnd
                 ).check *> consumeMatch: m =>
                   addChild(DashSeq(m))

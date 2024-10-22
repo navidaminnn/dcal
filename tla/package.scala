@@ -36,6 +36,7 @@ object tokens:
     object Project extends Token
     object OpCall extends Token:
       object Params extends Token
+    object FnCall extends Token
 
     object If extends Token
 
@@ -131,6 +132,7 @@ val wellformed: Wellformed =
     Id ::= Atom
     Ids ::= repeated(Id, minCount = 1)
     OpSym ::= choice(Operators.Operator.instances.toSet)
+    Operators.Operator.instances.foreach(_ ::= Atom)
     Order2 ::= fields(
       Id,
       Order2.Arity
@@ -146,6 +148,7 @@ val wellformed: Wellformed =
       Expr.RecordLiteral,
       Expr.Project,
       Expr.OpCall,
+      Expr.FnCall,
       Expr.If,
       Expr.Case,
       Expr.Let,
@@ -170,6 +173,10 @@ val wellformed: Wellformed =
       Id,
       Expr
     )
+    Expr.Project ::= fields(
+      Expr,
+      Id
+    )
     Expr.RecordSetLiteral ::= repeated(
       Expr.RecordLiteral.Field,
       minCount = 1
@@ -184,6 +191,8 @@ val wellformed: Wellformed =
       Expr.OpCall.Params
     )
     Expr.OpCall.Params ::= repeated(Expr)
+
+    Expr.FnCall ::= fields(Expr, Expr)
 
     Expr.If ::= fields(
       Expr,
@@ -270,8 +279,8 @@ val wellformed: Wellformed =
       )
     )
 
-    Variable ::= fields(Id)
-    Constant ::= fields(choice(Id, Order2))
+    Variable ::= Id
+    Constant ::= choice(Id, Order2)
 
     QuantifierBound ::= fields(
       choice(Id, Ids),

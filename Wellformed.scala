@@ -6,8 +6,8 @@ import scala.util.control.TailCalls.*
 import util.TailCallsUtils.*
 
 final class Wellformed private (
-    assigns: Map[Token, Wellformed.Shape],
-    topShape: Wellformed.Shape
+    val assigns: Map[Token, Wellformed.Shape],
+    val topShape: Wellformed.Shape
 ):
   import Wellformed.Shape
   import dsl.*
@@ -426,6 +426,30 @@ object Wellformed:
             throw IllegalArgumentException(
               s"$token's shape is not appropriate for adding cases ($shape)"
             )
+
+      def importFrom(wf2: Wellformed): Unit =
+        def fillFromShape(shape: Shape): Unit =
+          shape match
+            case Shape.Atom     =>
+            case Shape.AnyShape =>
+            case Shape.Choice(choices) =>
+              choices.foreach(fillFromToken)
+            case Shape.Repeat(choice, _) =>
+              choice.choices.foreach(fillFromToken)
+            case Shape.Fields(fields) =>
+              fields.foreach(_.choices.foreach(fillFromToken))
+
+        def fillFromToken(token: Token): Unit =
+          if !assigns.contains(token)
+          then
+            assigns(token) = wf2.assigns(token)
+            fillFromShape(wf2.assigns(token))
+
+        token match
+          case Node.Top =>
+            topShapeOpt = Some(wf2.topShape)
+            fillFromShape(wf2.topShape)
+          case token: Token => fillFromToken(token)
 
     private[Wellformed] def build(): Wellformed =
       require(topShapeOpt.nonEmpty)
