@@ -1,6 +1,7 @@
 package distcompiler
 
 import scala.collection.mutable
+import distcompiler.Manip.ops.backtrack
 
 trait Token extends Equals, Named:
   require(!Token._nameSet.contains(name), s"duplicate name $name")
@@ -27,7 +28,7 @@ trait Token extends Equals, Named:
   final def canBeLookedUp: Boolean = !lookedUpBy.isBacktrack
 
   def symbolTableFor: Set[Token] = Set.empty
-  def lookedUpBy: Pattern[Set[Node]] = Pattern.reject
+  def lookedUpBy: Manip[Set[Node]] = backtrack
   def showSource: Boolean = false
 end Token
 

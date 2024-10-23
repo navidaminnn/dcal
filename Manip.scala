@@ -10,6 +10,7 @@ enum Manip[+T]:
   case Backtrack(debugInfo: DebugInfo)
   case Pure(value: T)
   case Ap[T, U](ff: Manip[T => U], fa: Manip[T]) extends Manip[U]
+  case MapOpt[T, U](manip: Manip[T], fn: T => U) extends Manip[U]
   case FlatMap[T, U](manip: Manip[T], fn: T => Manip[U]) extends Manip[U]
 
   case Anchor[T]() extends Manip[T]
@@ -98,6 +99,9 @@ enum Manip[+T]:
             given Continue[t, U] = fa => tailcall(continue(ff(fa)))
             tailcall(impl(ap.fa))
           impl(ap.ff)
+        case mapOpt: MapOpt[t, u] =>
+          given Continue[t, U] = t => tailcall(continue(mapOpt.fn(t)))
+          impl(mapOpt.manip)
         case flatMap: FlatMap[t, u] =>
           given Continue[t, U] = value =>
             given Continue[u, U] = continue
@@ -313,6 +317,8 @@ object Manip:
 
   given applicative: cats.Applicative[Manip] with
     override def unit: Manip[Unit] = Manip.unit
+    override def map[A, B](fa: Manip[A])(f: A => B): Manip[B] =
+      Manip.MapOpt(fa, f)
     def ap[A, B](ff: Manip[A => B])(fa: Manip[A]): Manip[B] =
       pushRight2(ff, fa): (ff, fa) =>
         Manip.Ap(ff, fa)
@@ -670,8 +676,8 @@ object Manip:
         inline given DebugInfo = DebugInfo.notPoison
         import dsl.*
         p.inspect:
-          theTop
-            | ancestor(theTop)
+          on(theTop).value
+            | atAncestor(on(theTop).value)
       this match
         case AtTop(top)            => Some(top)
         case AtChild(parent, _, _) => forParent(parent)
@@ -778,6 +784,12 @@ object Manip:
           case None         => backtrack
           case Some(handle) => Manip.Handle.ref.updated(_ => handle)(manip)
 
+    def atAncestor[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
+      lazy val impl: Manip[T] =
+        manip | atParent(defer(impl))
+
+      atParent(impl)
+
     def addChild[T](using DebugInfo)(child: => Node.Child): Manip[Node.Child] =
       getNode.lookahead.flatMap:
         case thisParent: Node.Parent =>
@@ -787,22 +799,22 @@ object Manip:
             tmp
         case _ => backtrack
 
-    final class on[T](val pattern: Pattern[T]):
-      def raw: Manip[(Int, T)] =
+    final class on[T](val pattern: SeqPattern[T]):
+      def raw: Manip[(Manip.Handle, Boolean, T)] =
         pattern.manip
 
       def value: Manip[T] =
-        raw.map(_._2)
+        raw.map(_._3)
 
       def check: Manip[Unit] =
-        raw.as(())
+        raw.void
 
       def rewrite(using DebugInfo)(
           action: on.Ctx ?=> T => Rules
       ): Rules =
         (raw, getHandle, getTracer, Manip.GetRefMap).tupled
           .flatMap:
-            case ((maxIdx, value), handle, tracer, refMap) =>
+            case ((endHandle, matched, value), handle, tracer, refMap) =>
               handle.assertCoherence()
               val (parent, idx) =
                 handle match
@@ -812,11 +824,21 @@ object Manip:
                     )
                   case Handle.AtChild(parent, idx, _) => (parent, idx)
                   case Handle.Sentinel(parent, idx)   => (parent, idx)
+              val didMatchAdjust = if matched then 1 else 0
               val matchedCount =
-                if maxIdx == -1
-                then 0
-                else
-                  maxIdx + 1 - idx // +1 because if we matched range 2 - 2 then we saw 1 node
+                endHandle match
+                  case Handle.AtTop(top) =>
+                    throw NodeError(
+                      s"ended pattern at top ${top.toShortString()}"
+                    )
+                  case Handle.AtChild(endParent, endIdx, _) =>
+                    assert(parent eq endParent)
+                    endIdx - idx + didMatchAdjust
+                  case Handle.Sentinel(endParent, endIdx) =>
+                    assert(parent eq endParent)
+                    endIdx - idx + didMatchAdjust
+
+              assert(matchedCount >= 1, s"can't rewrite a match of 0 elements")
               tracer.onRewriteMatch(
                 summon[DebugInfo],
                 parent,
@@ -1035,11 +1057,11 @@ object Manip:
           commit:
             atFirstChild(next)
               | atRightSibling(next)
-              | (on(Pattern.ops.atEnd).check *> resultRef.get)
+              | (on(SeqPattern.ops.atEnd).check *> resultRef.get)
               *> atParent:
                 commit:
                   atRightSibling(next)
-                    | on(Pattern.ops.theTop).check *> endPass
+                    | on(SeqPattern.ops.theTop).check *> endPass
 
       // object bottomUp extends TraversalStrategy:
       //   def traverse(

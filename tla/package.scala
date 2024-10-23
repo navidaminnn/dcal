@@ -1,8 +1,8 @@
 package distcompiler.tla
 
 import cats.syntax.all.given
-
 import distcompiler.*
+import dsl.*
 
 object tokens:
   object Module extends Token:
@@ -16,9 +16,10 @@ object tokens:
   object Ids extends Token
   object OpSym extends Token.ShowSource
   object Order2 extends Token:
-    override val lookedUpBy: Pattern[Set[Node]] =
-      import dsl.*
-      tok(Order2) *> children(tok(Id).map(Set(_)))
+    override val lookedUpBy: Manip[Set[Node]] =
+      on(
+        Order2.withChildren(tok(Id).map(Set(_)))
+      ).value
     object Arity extends Token.ShowSource
 
   object Expr extends Token:
@@ -66,9 +67,8 @@ object tokens:
         override val symbolTableFor: Set[Token] =
           Set(Anchor)
       object Path extends Token:
-        override val lookedUpBy: Pattern[Set[Node]] =
-          import dsl.*
-          tok(Path) *> Pattern.pure(Set(Anchor()))
+        override val lookedUpBy: Manip[Set[Node]] =
+          on(Path).check.as(Set(Anchor()))
       object Anchor extends Token
 
     object Lambda extends Token:
@@ -80,32 +80,32 @@ object tokens:
   object Operator extends Token:
     override val symbolTableFor: Set[Token] =
       Set(Id, OpSym)
-    override val lookedUpBy: Pattern[Set[Node]] =
-      import dsl.*
-      tok(Operator) *> children(tok(Id, OpSym)).map(Set(_))
+    override val lookedUpBy: Manip[Set[Node]] =
+      on(tok(Operator) *> children(tok(Id, OpSym)).map(Set(_))).value
 
     object Params extends Token
 
   object Variable extends Token:
-    override val lookedUpBy: Pattern[Set[Node]] =
-      import dsl.*
-      tok(Variable) *> children(tok(Id).map(Set(_)))
+    override val lookedUpBy: Manip[Set[Node]] =
+      on(tok(Variable) *> children(tok(Id).map(Set(_)))).value
 
   object Constant extends Token:
-    override val lookedUpBy: Pattern[Set[Node]] =
-      import dsl.*
-      tok(Constant) *> children:
-        tok(Id).map(Set(_))
-          | Order2.lookedUpBy
+    override val lookedUpBy: Manip[Set[Node]] =
+      on(
+        tok(Constant) *> children:
+          tok(Id).map(Set(_))
+            | refine(Order2.lookedUpBy)
+      ).value
 
   object QuantifierBound extends Token:
-    override val lookedUpBy: Pattern[Set[Node]] =
-      import dsl.*
-      tok(QuantifierBound)
-      *> children:
-        tok(Id).map(Set(_))
-          | tok(Ids) *> children:
-            repeated(tok(Id)).map(_.toSet)
+    override val lookedUpBy: Manip[Set[Node]] =
+      on(
+        tok(QuantifierBound)
+        *> children:
+          tok(Id).map(Set(_))
+            | tok(Ids) *> children:
+              repeated(tok(Id)).map(_.toSet)
+      ).value
 
   object QuantifierBounds extends Token
 

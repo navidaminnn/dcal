@@ -160,7 +160,7 @@ object TLAReader extends Reader:
 
   lazy val moduleSearchNeverMind: Manip[SourceRange] =
     on(
-      tok(ModuleGroup) *> parent(theTop)
+      tok(ModuleGroup) *> refine(atParent(on(theTop).value))
     ).value.flatMap: top =>
       dropMatch:
         effect(top.children.dropRightInPlace(1))
@@ -170,13 +170,11 @@ object TLAReader extends Reader:
     lazy val onAlpha: Manip[SourceRange] =
       val validCases =
         on(
-          tok(ModuleGroup)
-          *> children:
-            Fields()
-              .skip(DashSeq)
-              .skip(Alpha.filterSrc("MODULE"))
-              .optionalSkip(Alpha)
-              .atEnd
+          tok(ModuleGroup).withChildren:
+            skip(DashSeq)
+              ~ skip(Alpha.src("MODULE"))
+              ~ skip(optional(Alpha))
+              ~ eof
         ).check
 
       (validCases *> moduleSearch)
@@ -201,13 +199,11 @@ object TLAReader extends Reader:
                       *> moduleSearch
               )
                 | (on(
-                  tok(ModuleGroup)
-                  *> children:
-                    Fields()
-                      .skip(DashSeq)
-                      .skip(Alpha.filterSrc("MODULE"))
-                      .skip(Alpha)
-                      .atEnd
+                  tok(ModuleGroup).withChildren:
+                    skip(DashSeq)
+                      ~ skip(Alpha.src("MODULE"))
+                      ~ skip(Alpha)
+                      ~ eof
                 ).check *> consumeMatch: m =>
                   addChild(DashSeq(m))
                     *> tokens)
@@ -283,19 +279,19 @@ object TLAReader extends Reader:
   private lazy val letGroupSemantics: Manip[SourceRange] =
     commit:
       on(
-        lastChild(tok(Alpha).filterSrc("LET"))
+        lastChild(Alpha.src("LET"))
       ).value.flatMap: node =>
         effect(node.replaceThis(LetGroup(node.sourceRange)))
           .here(tokens)
       | on(
-        tok(LetGroup) *> lastChild(tok(Alpha).filterSrc("IN"))
+        tok(LetGroup) *> lastChild(Alpha.src("IN"))
       ).value.flatMap: node =>
         effect(node.removeThis().sourceRange)
           .flatMap: m =>
             extendThisNode(m)
             atParent(tokens)
       | on(
-        lastChild(tok(Alpha).filterSrc("IN"))
+        lastChild(Alpha.src("IN"))
       ).value.flatMap: node =>
         effect(node.removeThis().sourceRange)
           .flatMap: m =>
@@ -306,7 +302,7 @@ object TLAReader extends Reader:
               )
             )
               *> tokens
-      | on(not(lastChild(tok(Alpha).filterSrc("IN")))).check *> tokens
+      | on(not(lastChild(Alpha.src("IN")))).check *> tokens
 
   private lazy val tokens: Manip[SourceRange] =
     commit:

@@ -259,33 +259,31 @@ final class Wellformed private (
         tok(Atom)
           .map(_.sourceRange)
           .restrict(tokenByShortName)
-          <* children(atEnd)
+          <* refine(atFirstChild(on(atEnd).check))
       ).value.map: token =>
         done(token())
       | on(
-        anyNode *:
-          tok(SList).withChildren:
-            Fields()
-              .field:
-                tok(Atom)
-                  .map(_.sourceRange)
-                  .restrict(tokenByShortName)
-              .optional:
-                tok(SList).withChildren:
-                  Fields()
-                    .skip(tok(Atom).filterSrc(txt))
-                    .field(tok(Atom).map(_.sourceRange))
-                    .atEnd
-                    .map(_._1)
-              .optional:
-                tok(SList).withChildren:
-                  Fields()
-                    .skip(tok(Atom).filterSrc(src))
-                    .field(tok(Atom))
-                    .field(tok(Atom))
-                    .field(tok(Atom))
-                    .atEnd
-              .trailing
+        anyNode
+        *: tok(SList).withChildren:
+          field:
+            tok(Atom)
+              .map(_.sourceRange)
+              .restrict(tokenByShortName)
+          ~ field:
+            optional:
+              tok(SList).withChildren:
+                skip(tok(Atom).src(txt))
+                  ~ field(tok(Atom).map(_.sourceRange))
+                  ~ eof1
+          ~ field:
+            optional:
+              tok(SList).withChildren:
+                skip(tok(Atom).src(src))
+                  ~ field(tok(Atom))
+                  ~ field(tok(Atom))
+                  ~ field(tok(Atom))
+                  ~ eof
+          ~ trailing
       ).value.map: (node, token, txtOpt, srcOpt) =>
         val result = token()
         srcOpt match

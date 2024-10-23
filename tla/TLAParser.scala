@@ -9,23 +9,14 @@ object TLAParser extends PassSeq:
 
   def inputWellformed: Wellformed = TLAReader.wellformed
 
-  val opDeclFields: Fields[Tuple1[(Node, Int)]] =
-    Fields()
-      .field(Alpha)
-      .field:
-        tok(ParenthesesGroup).withChildren:
-          Fields()
-            .optionalFields:
-              Fields()
-                .skip(Alpha.filterSrc("_"))
-                .repeatedFields:
-                  Fields()
-                    .skip(`,`)
-                    .skip(Alpha.filterSrc("_"))
-            .atEnd
-      .map:
-        case (name, opt) =>
-          Tuple1((name, opt._1.fold(0)(_._1.size)))
+  val opDeclPattern: SeqPattern[(Node, Int)] =
+    // TODO: all the other ones!
+    field(Alpha)
+    ~ field:
+      tok(ParenthesesGroup).withChildren:
+        field(repeatedSepBy(`,`)(Alpha.src("_")).map(_.size))
+          ~ eof1
+    ~ trailing
 
   val unitDefns = passDef:
     wellformed := TLAReader.wellformed.makeDerived:
@@ -71,33 +62,29 @@ object TLAParser extends PassSeq:
         on(
           ModuleGroup
           *: children:
-            Fields()
-              .skip(DashSeq)
-              .optionalSkip(Comment)
-              .skip(Alpha.filterSrc("MODULE"))
-              .optionalSkip(Comment)
-              .field(Alpha)
-              .optionalSkip(Comment)
-              .skip(DashSeq)
-              .optionalSkip(Comment)
-              .optionalFields:
-                Fields()
-                  .skip(Alpha.filterSrc("EXTENDS"))
-                  .optionalSkip(Comment)
-                  .field(Alpha)
-                  .repeatedFields:
-                    Fields()
-                      .optionalSkip(Comment)
-                      .skip(`,`)
-                      .optionalSkip(Comment)
-                      .field(Alpha)
-              .optional(anyChild)
-              .trailing
+            skip(DashSeq)
+              ~ skip(optional(Comment))
+              ~ skip(Alpha.src("MODULE"))
+              ~ skip(optional(Comment))
+              ~ field(Alpha)
+              ~ skip(optional(Comment))
+              ~ skip(DashSeq)
+              ~ skip(optional(Comment))
+              ~ field(
+                optional:
+                  skip(Alpha.src("EXTENDS"))
+                    ~ field(
+                      repeatedSepBy1(skip(optional(Comment)) ~ skip(`,`)):
+                        skip(optional(Comment))
+                          ~ field(Alpha)
+                          ~ trailing1
+                    ) ~ trailing1
+              ) ~ field(optional(anyChild))
+              ~ trailing
         ).rewrite: (m, name, extendsOpt, endOpt) =>
           val exts = extendsOpt match
-            case None => Nil
-            case Some((first, rest)) =>
-              tokens.Id().like(first) :: rest.map(p => tokens.Id().like(p._1))
+            case None       => Nil
+            case Some(exts) => exts.map(ext => tokens.Id().like(ext))
           val defns = endOpt match
             case None => Nil
             case Some(end) =>
@@ -112,11 +99,10 @@ object TLAParser extends PassSeq:
           )
         // operator defn variations
         | on(
-          Fields()
-            .field(Alpha)
-            .optional(ParenthesesGroup)
-            .skip(`_==_`)
-            .trailing
+          field(Alpha)
+            ~ field(optional(ParenthesesGroup))
+            ~ skip(`_==_`)
+            ~ trailing
         ).rewrite: (name, paramsOpt) =>
           splice(
             tokens.Operator(
@@ -127,12 +113,11 @@ object TLAParser extends PassSeq:
             )
           )
         | on(
-          Fields()
-            .field(Alpha)
-            .field(oneOfToks(Operators.InfixOperator.instances))
-            .field(Alpha)
-            .skip(`_==_`)
-            .trailing
+          field(Alpha)
+            ~ field(tok(Operators.InfixOperator.instances*))
+            ~ field(Alpha)
+            ~ skip(`_==_`)
+            ~ trailing
         ).rewrite: (param1, op, param2) =>
           splice(
             tokens.Operator(
@@ -141,11 +126,10 @@ object TLAParser extends PassSeq:
             )
           )
         | on(
-          Fields()
-            .field(Alpha)
-            .field(oneOfToks(Operators.PostfixOperator.instances))
-            .skip(`_==_`)
-            .trailing
+          field(Alpha)
+            ~ field(tok(Operators.PostfixOperator.instances*))
+            ~ skip(`_==_`)
+            ~ trailing
         ).rewrite: (param, op) =>
           splice(
             tokens.Operator(
@@ -154,11 +138,10 @@ object TLAParser extends PassSeq:
             )
           )
         | on(
-          Fields()
-            .field(oneOfToks(Operators.PrefixOperator.instances))
-            .field(Alpha)
-            .skip(`_==_`)
-            .trailing
+          field(tok(Operators.PrefixOperator.instances*))
+            ~ field(Alpha)
+            ~ skip(`_==_`)
+            ~ trailing
         ).rewrite: (op, param) =>
           splice(
             tokens.Operator(
@@ -167,11 +150,10 @@ object TLAParser extends PassSeq:
             )
           )
         | on(
-          Fields()
-            .field(Alpha)
-            .field(SqBracketsGroup)
-            .skip(`_==_`)
-            .trailing
+          field(Alpha)
+            ~ field(SqBracketsGroup)
+            ~ skip(`_==_`)
+            ~ trailing
         ).rewrite: (name, params) =>
           splice(
             tokens.Operator(
@@ -182,41 +164,40 @@ object TLAParser extends PassSeq:
         // TODO: separate pass to mark keywords
         // variable decls
         | on(
-          Fields()
-            .skip(Alpha.filterSrc("VARIABLE") | Alpha.filterSrc("VARIABLES"))
-            .field(Alpha)
-            .repeatedFields:
-              Fields()
-                .skip(`,`)
-                .field(Alpha)
-            .trailing
-        ).rewrite: (v1, vRest) =>
+          skip(Alpha.src("VARIABLE") | Alpha.src("VARIABLES"))
+            ~ field(repeatedSepBy1(`,`)(Alpha))
+            ~ trailing1
+        ).rewrite: vars =>
           splice(
-            tokens.Variable(tokens.Id().like(v1))
-              :: vRest.map(v => tokens.Variable(tokens.Id().like(v._1)))
+            vars.map: v =>
+              tokens.Variable(tokens.Id().like(v))
           )
         // constant decls
         | on(
-          Fields()
-            .skip(Alpha.filterSrc("CONSTANT") | Alpha.filterSrc("CONSTANTS"))
-            .nestedFields(opDeclFields)
-            .repeatedFields:
-              Fields()
-                .skip(`,`)
-                .nestedFields(opDeclFields)
-            .trailing
-        ).rewrite: (declsHd, declsTl) =>
+          skip(Alpha.src("CONSTANT") | Alpha.src("CONSTANTS"))
+            ~ field(
+              repeatedSepBy1(`,`):
+                opDeclPattern
+                  | tok(Alpha)
+            ) ~ trailing1
+        ).rewrite: decls =>
           splice(
-            (Iterator.single(declsHd) ++ declsTl.iterator.map(_._1))
-              .map: (name, width) =>
-                val id = name.token match
-                  case Alpha => tokens.Id().like(name)
-                  case op    => name
-
-                if width == 0
-                then tokens.Constant(id)
-                else
+            decls.iterator
+              .map:
+                case (alpha, arity) if alpha.token == Alpha =>
                   tokens.Constant(
-                    tokens.Order2(id, tokens.Order2.Arity(width.toString))
+                    tokens.Order2(
+                      tokens.Id().like(alpha),
+                      tokens.Order2.Arity(arity.toString)
+                    )
                   )
+                case (op, arity) =>
+                  tokens.Constant(
+                    tokens.Order2(
+                      op.unparent(),
+                      tokens.Order2.Arity(arity.toString)
+                    )
+                  )
+                case alpha: Node =>
+                  tokens.Constant(tokens.Id().like(alpha))
           )

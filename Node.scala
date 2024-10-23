@@ -242,10 +242,10 @@ object Node:
     final override def clone(): This =
       cloneEval().value
 
-    final def inspect[T](pattern: Pattern[T]): Option[T] =
+    final def inspect[T](manip: Manip[T]): Option[T] =
       import dsl.*
-      val pat = (pattern.map(Some(_)) | Pattern.pure(None))
-      atNode(this)(pat.manip).perform()._2
+      atNode(this)(manip.map(Some(_)) | Manip.pure(None))
+        .perform()
 
     def asNode: Node =
       throw NodeError("not a node")
