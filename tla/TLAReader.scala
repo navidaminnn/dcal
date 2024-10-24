@@ -106,15 +106,15 @@ object TLAReader extends Reader:
     Set(' ', '\t', '\n', '\r')
 
   val allOperators =
-    Operators.PrefixOperator.instances
-      ++ Operators.InfixOperator.instances
-      ++ Operators.PostfixOperator.instances
+    defns.PrefixOperator.instances
+      ++ defns.InfixOperator.instances
+      ++ defns.PostfixOperator.instances
 
-  val nonAlphaNonLaTexOperators: IArray[Operators.Operator] =
+  val nonAlphaNonLaTexOperators: IArray[defns.Operator] =
     allOperators.filter: op =>
       (!op.spelling.startsWith(
         "\\"
-      ) || op == Operators.`\\/` || op == Operators.`\\`)
+      ) || op == defns.`\\/` || op == defns.`\\`)
         && !letters(op.spelling.head)
 
   extension (sel: bytes.selecting[SourceRange])

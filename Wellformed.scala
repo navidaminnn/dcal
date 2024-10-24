@@ -361,20 +361,20 @@ object Wellformed:
       def ::=(shape: Shape): Unit =
         token match
           case token: Token =>
-            require(!assigns.contains(token))
+            require(!assigns.contains(token), s"$token already has a shape")
             assigns(token) = shape
           case Node.Top =>
-            require(topShapeOpt.isEmpty)
+            require(topShapeOpt.isEmpty, s"top already has a shape")
             topShapeOpt = Some(shape)
 
       @scala.annotation.targetName("resetTopShape")
       def ::=!(shape: Shape): Unit =
         token match
           case token: Token =>
-            require(assigns.contains(token))
+            require(assigns.contains(token), s"$token has no shape to replace")
             assigns(token) = shape
           case Node.Top =>
-            require(topShapeOpt.nonEmpty)
+            require(topShapeOpt.nonEmpty, s"top has no shape to replace")
             topShapeOpt = Some(shape)
 
       private def getExistingShape: Shape =

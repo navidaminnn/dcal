@@ -18,8 +18,33 @@ object TLAParser extends PassSeq:
           ~ eof
     ~ trailing
 
-  val unitDefns = passDef:
+  val reservedWordsAndComments = passDef:
     wellformed := TLAReader.wellformed.makeDerived:
+      TLAReader.groupTokens.foreach: tok =>
+        tok.addCases(defns.ReservedWord.instances*)
+      defns.ReservedWord.instances.iterator
+        .filter(!_.isInstanceOf[defns.Operator])
+        .foreach(_ ::= Atom)
+
+    val reservedWordMap =
+      defns.ReservedWord.instances.iterator
+        .map: word =>
+          SourceRange.entire(Source.fromString(word.spelling)) -> word
+        .toMap
+
+    pass(once = true, strategy = pass.bottomUp)
+      .rules:
+        on(
+          tok(Alpha).filter(node => reservedWordMap.contains(node.sourceRange))
+        ).rewrite: word =>
+          splice(reservedWordMap(word.sourceRange)().like(word))
+        | on(
+          TLAReader.Comment
+        ).rewrite: _ =>
+          splice() // delete it. TODO: maybe try to gather comments?
+
+  val unitDefns = passDef:
+    wellformed := prevWellformed.makeDerived:
       Node.Top ::=! repeated(tokens.Module)
 
       tokens.Id ::= Atom
@@ -30,6 +55,13 @@ object TLAParser extends PassSeq:
         tokens.Variable,
         tokens.Constant
       )
+      val removedTokens = List(
+        TLAReader.`_==_`,
+        defns.VARIABLE,
+        defns.VARIABLES,
+        defns.CONSTANT,
+        defns.CONSTANTS
+      )
 
       tokens.Module ::= fields(
         tokens.Id,
@@ -39,12 +71,12 @@ object TLAParser extends PassSeq:
       tokens.Module.Extends ::= repeated(tokens.Id)
       tokens.Module.Defns ::= repeated(
         choice(
-          TLAReader.ParenthesesGroup.existingCases - TLAReader.`_==_` ++ addedTokens
+          TLAReader.ParenthesesGroup.existingCases -- removedTokens ++ addedTokens
         )
       )
 
       TLAReader.groupTokens.foreach: tok =>
-        tok.removeCases(TLAReader.`_==_`)
+        tok.removeCases(removedTokens*)
         tok.addCases(addedTokens*)
 
       tokens.Operator ::= fields(
@@ -64,7 +96,7 @@ object TLAParser extends PassSeq:
           *: children:
             skip(DashSeq)
               ~ skip(optional(Comment))
-              ~ skip(Alpha.src("MODULE"))
+              ~ skip(defns.MODULE)
               ~ skip(optional(Comment))
               ~ field(Alpha)
               ~ skip(optional(Comment))
@@ -72,7 +104,7 @@ object TLAParser extends PassSeq:
               ~ skip(optional(Comment))
               ~ field(
                 optional:
-                  skip(Alpha.src("EXTENDS"))
+                  skip(defns.EXTENDS)
                     ~ field(
                       repeatedSepBy1(skip(optional(Comment)) ~ skip(`,`)):
                         skip(optional(Comment))
@@ -114,7 +146,7 @@ object TLAParser extends PassSeq:
           )
         | on(
           field(Alpha)
-            ~ field(tok(Operators.InfixOperator.instances*))
+            ~ field(tok(defns.InfixOperator.instances*))
             ~ field(Alpha)
             ~ skip(`_==_`)
             ~ trailing
@@ -127,7 +159,7 @@ object TLAParser extends PassSeq:
           )
         | on(
           field(Alpha)
-            ~ field(tok(Operators.PostfixOperator.instances*))
+            ~ field(tok(defns.PostfixOperator.instances*))
             ~ skip(`_==_`)
             ~ trailing
         ).rewrite: (param, op) =>
@@ -138,7 +170,7 @@ object TLAParser extends PassSeq:
             )
           )
         | on(
-          field(tok(Operators.PrefixOperator.instances*))
+          field(tok(defns.PrefixOperator.instances*))
             ~ field(Alpha)
             ~ skip(`_==_`)
             ~ trailing
@@ -161,10 +193,9 @@ object TLAParser extends PassSeq:
               params.unparent()
             )
           )
-        // TODO: separate pass to mark keywords
         // variable decls
         | on(
-          skip(Alpha.src("VARIABLE") | Alpha.src("VARIABLES"))
+          skip(tok(defns.VARIABLE, defns.VARIABLES))
             ~ field(repeatedSepBy1(`,`)(Alpha))
             ~ trailing
         ).rewrite: vars =>
@@ -174,7 +205,7 @@ object TLAParser extends PassSeq:
           )
         // constant decls
         | on(
-          skip(Alpha.src("CONSTANT") | Alpha.src("CONSTANTS"))
+          skip(tok(defns.CONSTANT, defns.CONSTANTS))
             ~ field(
               repeatedSepBy1(`,`):
                 opDeclPattern

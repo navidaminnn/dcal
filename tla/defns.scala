@@ -2,9 +2,39 @@ package distcompiler.tla
 
 import distcompiler.*
 
-object Operators:
-  sealed trait Operator extends Token, Product:
+object defns:
+  transparent sealed trait HasSpelling extends Product:
     def spelling: String = productPrefix
+
+  sealed trait ReservedWord extends Token, HasSpelling
+  object ReservedWord extends util.HasInstanceArray[ReservedWord]
+
+  case object IN extends ReservedWord
+  case object WITH extends ReservedWord
+  case object THEN extends ReservedWord
+  case object CONSTANTS extends ReservedWord
+  case object ASSUMPTION extends ReservedWord
+  case object VARIABLE extends ReservedWord
+  case object WF_ extends ReservedWord
+  case object ASSUME extends ReservedWord
+  case object AXIOM extends ReservedWord
+  case object CHOOSE extends ReservedWord
+  case object OTHER extends ReservedWord
+  case object EXTENDS extends ReservedWord
+  case object VARIABLES extends ReservedWord
+  case object EXCEPT extends ReservedWord
+  case object INSTANCE extends ReservedWord
+  case object THEOREM extends ReservedWord
+  case object SF_ extends ReservedWord
+  case object MODULE extends ReservedWord
+  case object LET extends ReservedWord
+  case object IF extends ReservedWord
+  case object LOCAL extends ReservedWord
+  case object ELSE extends ReservedWord
+  case object CONSTANT extends ReservedWord
+  case object CASE extends ReservedWord
+
+  sealed trait Operator extends Token, HasSpelling
 
   object Operator:
     lazy val instances: IArray[Operator] =
@@ -16,17 +46,17 @@ object Operators:
       extends Operator
   object PrefixOperator extends util.HasInstanceArray[PrefixOperator]
 
-  case object `ENABLED` extends PrefixOperator(4, 15)
-  case object `SUBSET` extends PrefixOperator(8, 8)
-  case object `DOMAIN` extends PrefixOperator(9, 9)
+  case object `ENABLED` extends PrefixOperator(4, 15), ReservedWord
+  case object `SUBSET` extends PrefixOperator(8, 8), ReservedWord
+  case object `DOMAIN` extends PrefixOperator(9, 9), ReservedWord
   case object `[]` extends PrefixOperator(4, 15)
   case object `\\neg` extends PrefixOperator(4, 4)
   case object `~` extends PrefixOperator(4, 4)
-  case object `UNION` extends PrefixOperator(8, 8)
+  case object `UNION` extends PrefixOperator(8, 8), ReservedWord
   case object `<>` extends PrefixOperator(4, 15)
   case object `\\lnot` extends PrefixOperator(4, 4)
   case object `-_` extends PrefixOperator(12, 12)
-  case object `UNCHANGED` extends PrefixOperator(4, 15)
+  case object `UNCHANGED` extends PrefixOperator(4, 15), ReservedWord
 
   sealed trait InfixOperator(
       val lowPrecedence: Int,

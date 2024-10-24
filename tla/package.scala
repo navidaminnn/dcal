@@ -131,8 +131,8 @@ val wellformed: Wellformed =
 
     Id ::= Atom
     Ids ::= repeated(Id, minCount = 1)
-    OpSym ::= choice(Operators.Operator.instances.toSet)
-    Operators.Operator.instances.foreach(_ ::= Atom)
+    OpSym ::= choice(defns.Operator.instances.toSet)
+    defns.Operator.instances.foreach(_ ::= Atom)
     Order2 ::= fields(
       Id,
       Order2.Arity

@@ -898,7 +898,13 @@ object Manip:
     def splice(using DebugInfo)(using onCtx: on.Ctx, passCtx: pass.Ctx)(
         nodes: Iterable[Node.Child]
     ): Rules =
-      spliceThen(nodes)(skipMatch)
+      spliceThen(nodes):
+        // If we _now_ have a match count of 0, it means the splice deleted our match.
+        // In that case, it's safe to retry at same position because we changed something.
+        // Normally that's bad, because it means we matched nothing and will retry in same position.
+        if summon[on.Ctx].matchedCount == 0
+        then continuePass
+        else skipMatch
 
     def splice(using DebugInfo, on.Ctx, pass.Ctx)(nodes: Node.Child*): Rules =
       splice(nodes)
@@ -938,7 +944,7 @@ object Manip:
         idxOpt match
           case None => endPass
           case Some(idx) =>
-            atIdx(idx + onCtx.matchedCount.max(0))(continuePass)
+            atIdx(idx + onCtx.matchedCount)(continuePass)
 
     extension [T](lhs: Manip[T])
       @scala.annotation.targetName("or")

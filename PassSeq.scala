@@ -13,6 +13,10 @@ transparent trait PassSeq:
   private val entries = mutable.ListBuffer.empty[PassSeq.Entry]
   private var entriesSealed = false
 
+  protected def prevWellformed(using BuildCtx): Wellformed =
+    require(entries.nonEmpty, "there is not previous Wellformed")
+    entries.last.wellformed
+
   protected object wellformed:
     def :=(using ctx: BuildCtx)(wellformed: Wellformed): Unit =
       require(ctx.wellformedOpt.isEmpty)
