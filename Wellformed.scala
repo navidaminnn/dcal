@@ -274,7 +274,7 @@ final class Wellformed private (
               tok(SList).withChildren:
                 skip(tok(Atom).src(txt))
                   ~ field(tok(Atom).map(_.sourceRange))
-                  ~ eof1
+                  ~ eof
           ~ field:
             optional:
               tok(SList).withChildren:

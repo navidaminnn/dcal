@@ -40,7 +40,7 @@ class SeqPatternTests extends munit.FunSuite:
 
   on(
     field(repeated(tok(tok1)))
-      ~ eof1
+      ~ eof
       | SeqPattern.pure("no")
   )
     .onChildren("fields repeated: 0")()(Nil)
@@ -60,7 +60,7 @@ class SeqPatternTests extends munit.FunSuite:
     skip(tok(tok1))
       ~ field(tok(tok2))
       ~ skip(tok(tok3))
-      ~ eof1
+      ~ eof
       | SeqPattern.pure("no")
   )
     .onChildren("fields skips: exact")(tok1(), tok2(), tok3())(tok2())

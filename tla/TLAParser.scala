@@ -15,7 +15,7 @@ object TLAParser extends PassSeq:
     ~ field:
       tok(ParenthesesGroup).withChildren:
         field(repeatedSepBy(`,`)(Alpha.src("_")).map(_.size))
-          ~ eof1
+          ~ eof
     ~ trailing
 
   val unitDefns = passDef:
@@ -77,8 +77,8 @@ object TLAParser extends PassSeq:
                       repeatedSepBy1(skip(optional(Comment)) ~ skip(`,`)):
                         skip(optional(Comment))
                           ~ field(Alpha)
-                          ~ trailing1
-                    ) ~ trailing1
+                          ~ trailing
+                    ) ~ trailing
               ) ~ field(optional(anyChild))
               ~ trailing
         ).rewrite: (m, name, extendsOpt, endOpt) =>
@@ -166,7 +166,7 @@ object TLAParser extends PassSeq:
         | on(
           skip(Alpha.src("VARIABLE") | Alpha.src("VARIABLES"))
             ~ field(repeatedSepBy1(`,`)(Alpha))
-            ~ trailing1
+            ~ trailing
         ).rewrite: vars =>
           splice(
             vars.map: v =>
@@ -179,7 +179,7 @@ object TLAParser extends PassSeq:
               repeatedSepBy1(`,`):
                 opDeclPattern
                   | tok(Alpha)
-            ) ~ trailing1
+            ) ~ trailing
         ).rewrite: decls =>
           splice(
             decls.iterator

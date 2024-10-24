@@ -43,30 +43,16 @@ final class SeqPattern[+T](val manip: Manip[(Manip.Handle, Boolean, T)])
         Fields(flds1.fields ++ flds2.fields)
 
   @scala.annotation.targetName("fieldsEnd")
-  def ~[Tpl <: Tuple](using T <:< Fields[Tpl])(using
-      scala.util.NotGiven[Tpl <:< Tuple1[?]]
-  )(using DebugInfo)(other: eof.type): SeqPattern[Tpl] =
-    this.productAtRightSibling(atEnd).map(_._1.fields)
+  def ~[Tpl <: Tuple, T2](using T <:< Fields[Tpl])(using maybeStrip: Fields.MaybeStripTuple1[Tpl, T2])(using DebugInfo)(other: eof.type): SeqPattern[T2] =
+    this.productAtRightSibling(atEnd).map(flds => maybeStrip(flds._1.fields))
 
   @scala.annotation.targetName("fieldsTrailing")
-  def ~[Tpl <: Tuple](using
+  def ~[Tpl <: Tuple, T2](using
       T <:< Fields[Tpl]
-  )(using scala.util.NotGiven[Tpl <:< Tuple1[?]])(
+  )(using maybeStrip: Fields.MaybeStripTuple1[Tpl, T2])(
       other: trailing.type
-  ): SeqPattern[Tpl] =
-    this.map(_.fields)
-
-  @scala.annotation.targetName("fieldsEndTuple1")
-  def ~[TT](using T <:< Fields[Tuple1[TT]])(using DebugInfo)(
-      other: eof1.type
-  ): SeqPattern[TT] =
-    this.productAtRightSibling(atEnd).map(_._1.fields._1)
-
-  @scala.annotation.targetName("fieldsTrailingTuple1")
-  def ~[TT](using T <:< Fields[Tuple1[TT]])(
-      other: trailing1.type
-  ): SeqPattern[TT] =
-    this.map(_.fields._1)
+  ): SeqPattern[T2] =
+    this.map(flds => maybeStrip(flds.fields))
 
   def stripFields[TT](using T <:< Fields[TT]): SeqPattern[TT] =
     this.map(t => t.fields)
@@ -147,10 +133,18 @@ object SeqPattern:
     tok(token)
 
   final class Fields[T](val fields: T) extends AnyVal
+  object Fields:
+    sealed trait MaybeStripTuple1[Tpl <: Tuple, T]:
+      def apply(tpl: Tpl): T
+
+    given stripTuple1[T]: MaybeStripTuple1[Tuple1[T], T] with
+      def apply(tpl: Tuple1[T]): T = tpl._1
+
+    given notTuple1[Tpl <: Tuple](using scala.util.NotGiven[Tpl <:< Tuple1[?]]): MaybeStripTuple1[Tpl, Tpl] with
+      def apply(tpl: Tpl): Tpl = tpl
+
   case object FieldsEndMarker
   case object FieldsTrailingMarker
-  case object FieldsEndTuple1Marker
-  case object FieldsTrailingTuple1Marker
 
   object ops:
     def refine[T](manip: Manip[T]): SeqPattern[T] =
@@ -203,9 +197,7 @@ object SeqPattern:
 
     export SeqPattern.{
       FieldsEndMarker as eof,
-      FieldsEndTuple1Marker as eof1,
-      FieldsTrailingMarker as trailing,
-      FieldsTrailingTuple1Marker as trailing1
+      FieldsTrailingMarker as trailing
     }
 
     def not[T](using DebugInfo)(pattern: SeqPattern[T]): SeqPattern[Unit] =
@@ -234,7 +226,7 @@ object SeqPattern:
         DebugInfo
     )(sep: SeqPattern[?])(pattern: SeqPattern[T]): SeqPattern[List[T]] =
       (field(pattern) ~ field(
-        repeated(skip(sep) ~ field(pattern) ~ trailing1)
+        repeated(skip(sep) ~ field(pattern) ~ trailing)
       ) ~ trailing)
         .map(_ :: _)
 
