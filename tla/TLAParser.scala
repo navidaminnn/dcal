@@ -10,13 +10,37 @@ object TLAParser extends PassSeq:
   def inputWellformed: Wellformed = TLAReader.wellformed
 
   val opDeclPattern: SeqPattern[(Node, Int)] =
-    // TODO: all the other ones!
-    field(Alpha)
-    ~ field:
-      tok(ParenthesesGroup).withChildren:
-        field(repeatedSepBy(`,`)(Alpha.src("_")).map(_.size))
-          ~ eof
-    ~ trailing
+    val alphaCase =
+      field(Alpha)
+      ~ field:
+        tok(ParenthesesGroup).withChildren:
+          field(repeatedSepBy(`,`)(Alpha.src("_")).map(_.size))
+            ~ eof
+      ~ trailing
+    val prefixCase =
+      locally:
+        field(tok(defns.PrefixOperator.instances*))
+          ~ skip(Alpha.src("_"))
+          ~ trailing
+      .map((_, 1))
+    val infixCase =
+      locally:
+        skip(Alpha.src("_"))
+          ~ field(tok(defns.InfixOperator.instances*))
+          ~ skip(Alpha.src("_"))
+          ~ trailing
+      .map((_, 2))
+    val postfixCase =
+      locally:
+        skip(Alpha.src("_"))
+          ~ field(tok(defns.PostfixOperator.instances*))
+          ~ trailing
+      .map((_, 1))
+
+    alphaCase
+      | prefixCase
+      | infixCase
+      | postfixCase
 
   val reservedWordsAndComments = passDef:
     wellformed := TLAReader.wellformed.makeDerived:
