@@ -43,7 +43,9 @@ final class SeqPattern[+T](val manip: Manip[(Manip.Handle, Boolean, T)])
         Fields(flds1.fields ++ flds2.fields)
 
   @scala.annotation.targetName("fieldsEnd")
-  def ~[Tpl <: Tuple, T2](using T <:< Fields[Tpl])(using maybeStrip: Fields.MaybeStripTuple1[Tpl, T2])(using DebugInfo)(other: eof.type): SeqPattern[T2] =
+  def ~[Tpl <: Tuple, T2](using T <:< Fields[Tpl])(using
+      maybeStrip: Fields.MaybeStripTuple1[Tpl, T2]
+  )(using DebugInfo)(other: eof.type): SeqPattern[T2] =
     this.productAtRightSibling(atEnd).map(flds => maybeStrip(flds._1.fields))
 
   @scala.annotation.targetName("fieldsTrailing")
@@ -140,7 +142,9 @@ object SeqPattern:
     given stripTuple1[T]: MaybeStripTuple1[Tuple1[T], T] with
       def apply(tpl: Tuple1[T]): T = tpl._1
 
-    given notTuple1[Tpl <: Tuple](using scala.util.NotGiven[Tpl <:< Tuple1[?]]): MaybeStripTuple1[Tpl, Tpl] with
+    given notTuple1[Tpl <: Tuple](using
+        scala.util.NotGiven[Tpl <:< Tuple1[?]]
+    ): MaybeStripTuple1[Tpl, Tpl] with
       def apply(tpl: Tpl): Tpl = tpl
 
   case object FieldsEndMarker
@@ -195,10 +199,7 @@ object SeqPattern:
         getHandle.restrict:
           case handle @ Manip.Handle.Sentinel(_, _) => (handle, false, ())
 
-    export SeqPattern.{
-      FieldsEndMarker as eof,
-      FieldsTrailingMarker as trailing
-    }
+    export SeqPattern.{FieldsEndMarker as eof, FieldsTrailingMarker as trailing}
 
     def not[T](using DebugInfo)(pattern: SeqPattern[T]): SeqPattern[Unit] =
       SeqPattern(
@@ -240,6 +241,12 @@ object SeqPattern:
       SeqPattern:
         getHandle.restrict:
           case handle @ Manip.Handle.AtTop(top) => (handle, true, top)
+
+    def theFirstChild(using DebugInfo): SeqPattern[Node.Child] =
+      SeqPattern:
+        getHandle.restrict:
+          case handle @ Manip.Handle.AtChild(_, 0, child) =>
+            (handle, true, child)
 
     def children[T](using DebugInfo)(pattern: SeqPattern[T]): SeqPattern[T] =
       refine(atFirstChild(pattern.asManip))

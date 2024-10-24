@@ -1,5 +1,7 @@
 package distcompiler
 
+import dsl.*
+
 class ManipTests extends munit.FunSuite:
   import ManipTests.*
 
@@ -34,15 +36,26 @@ class ManipTests extends munit.FunSuite:
   def treePairs: Iterator[(Node.Top, Node.Top)] =
     examples(4, shouldVary = true).zip(examples(4, shouldVary = false))
 
-  import dsl.*
   val unifyColors1 =
     pass(once = true)
       .rules:
         on(
-          tok(tok2)
+          tok2
         ).rewrite: node =>
           spliceThen(tok1(node.unparentedChildren)):
             continuePassAtNextNode
+
+  val unifyColors2 =
+    pass(once = false)
+      .rules:
+        on(tok2).rewrite: node =>
+          splice(tok1(node.unparentedChildren))
+
+  val unifyColors3 =
+    pass(once = true, strategy = pass.bottomUp)
+      .rules:
+        on(tok2).rewrite: node =>
+          splice(tok1(node.unparentedChildren))
 
   // test sanity condition
   test("all trees are equal".fail):
@@ -52,6 +65,16 @@ class ManipTests extends munit.FunSuite:
   test("treePairs unifyColors1"):
     treePairs.foreach: (bi, mono) =>
       atNode(bi)(unifyColors1).perform()
+      assertEquals(bi, mono)
+
+  test("treePairs unifyColors2"):
+    treePairs.foreach: (bi, mono) =>
+      atNode(bi)(unifyColors2).perform()
+      assertEquals(bi, mono)
+
+  test("treePairs unifyColors3"):
+    treePairs.foreach: (bi, mono) =>
+      atNode(bi)(unifyColors3).perform()
       assertEquals(bi, mono)
 
   test("unifyColors1 on a single node"):

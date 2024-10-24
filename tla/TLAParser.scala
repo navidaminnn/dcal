@@ -56,7 +56,7 @@ object TLAParser extends PassSeq:
       tokens.Constant.importFrom(tla.wellformed)
       tokens.OpSym.importFrom(tla.wellformed)
 
-    pass(once = false)
+    pass(once = true, strategy = pass.bottomUp)
       .rules:
         // module
         on(

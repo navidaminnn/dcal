@@ -3,6 +3,7 @@ package distcompiler
 import cats.syntax.all.given
 import util.{++, toShortString}
 import distcompiler.Manip.ops.pass.resultRef
+import distcompiler.SeqPattern.ops.theFirstChild
 
 enum Manip[+T]:
   private inline given DebugInfo = DebugInfo.poison
@@ -1020,7 +1021,7 @@ object Manip:
         wrapFn:
           lazy val bigLoop: Manip[Unit] =
             pass.resultRef.init(RulesResult.NoProgress):
-              (before *> loop <* after).flatMap:
+              (before *> strategy.atInit(loop) <* after).flatMap:
                 case RulesResult.Progress if !once =>
                   bigLoop
                 case RulesResult.Progress | RulesResult.NoProgress =>
@@ -1047,10 +1048,13 @@ object Manip:
           strategy.atNext(loop)
 
       trait TraversalStrategy:
+        def atInit(manip: Manip[RulesResult]): Manip[RulesResult]
         def atNext(manip: Manip[RulesResult]): Manip[RulesResult]
 
       object topDown extends TraversalStrategy:
         private inline given DebugInfo = DebugInfo.notPoison
+
+        def atInit(manip: Manip[RulesResult]): Manip[RulesResult] = manip
 
         def atNext(manip: Manip[RulesResult]): Manip[RulesResult] =
           val next = commit(manip)
@@ -1063,32 +1067,36 @@ object Manip:
                   atRightSibling(next)
                     | on(SeqPattern.ops.theTop).check *> endPass
 
-      // object bottomUp extends TraversalStrategy:
-      //   def traverse(
-      //       rules: Rules
-      //   ): Manip[Boolean] =
-      //     // TODO: fix this code, not tested and probably has similar bug to what topDown had
-      //     def atBottomLeft[T](manip: Manip[T]): Manip[T] =
-      //       lazy val impl: Manip[T] =
-      //         atFirstChild(defer(impl))
-      //           | manip
+      object bottomUp extends TraversalStrategy:
+        private inline given DebugInfo = DebugInfo.notPoison
 
-      //       impl
+        def atInit(manip: Manip[RulesResult]): Manip[RulesResult] =
+          lazy val impl: Manip[RulesResult] =
+            commit:
+              atFirstChild(defer(impl))
+                | manip
 
-      //     lazy val impl: Manip[Boolean] =
-      //       rules.flatMap: nextNode =>
-      //         atNode(nextNode):
-      //           impl.as(true)
-      //       | atRightSibling:
-      //         commit(defer(impl))
-      //       | atParent:
-      //         atRightSibling:
-      //           atFirstChild:
-      //             commit(defer(impl))
-      //         | atFirstSibling:
-      //           commit(defer(impl))
-      //       | atParent(on(Pattern.ops.theTop).check.as(false))
+          impl
 
-      //     atBottomLeft(impl)
+        def atNext(manip: Manip[RulesResult]): Manip[RulesResult] =
+          val next = commit(manip)
+          def atNextCousin[T](manip: Manip[T]): Manip[T] =
+            lazy val impl: Manip[T] =
+              atFirstChild(manip)
+                | atRightSibling(defer(impl))
+
+            atParent(atRightSibling(impl))
+
+          commit:
+            // same layer, same parent (next case ensures we already processed any children)
+            atRightSibling(next)
+            // go all the way into next subtree on the right
+              | atNextCousin(atInit(next))
+              // up one layer, far left, knowing we looked at all reachable children
+              | atParent(atFirstSibling(next))
+              // special case: parent is top
+              | atParent(on(SeqPattern.ops.theTop).check *> next)
+              // onward from top --> done
+              | on(SeqPattern.ops.theTop).check *> endPass
   end ops
 end Manip
