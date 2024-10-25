@@ -25,14 +25,10 @@ def updateLicense(check: Boolean): Unit =
       .linesIterator
       .map(line => s"//$line")
       .mkString(System.lineSeparator())
-      ++ System.lineSeparator()
-      ++ System.lineSeparator()
 
   val yearString = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy"))
   val licenseText = licenseTemplate.replace("____", yearString)
-  val licenseRegex = Regex.quote(licenseTemplate)
-    .replace("____", raw"""\d\d\d\d""")
-    .r
+  val licenseRegex = raw"""// Copyright \d\d\d\d.*// limitations under the license.""".r
   val licenseReplacement = Regex.quoteReplacement(licenseText)
 
   var checkFailed = false
@@ -46,8 +42,14 @@ def updateLicense(check: Boolean): Unit =
       
       val modifiedContents =
         licenseRegex.findFirstIn(contents) match
-          case None => licenseText ++ contents
-          case Some(_) =>
+          case None =>
+            licenseText
+              ++ System.lineSeparator()
+              ++ System.lineSeparator()
+              ++ contents
+          case Some(str) =>
+            println(s"replace $str")
+            println(s"with $licenseReplacement")
             licenseRegex.replaceFirstIn(contents, licenseReplacement)
 
       if check
