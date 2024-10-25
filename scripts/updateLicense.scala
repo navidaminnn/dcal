@@ -20,8 +20,8 @@ import java.time.format.DateTimeFormatter
 import caseapp.*
 
 final case class Options(
-  check: Boolean = true,
-)  
+    check: Boolean = true
+)
 
 @main
 def updateLicense(args: String*): Unit =
@@ -84,5 +84,4 @@ def updateLicense(args: String*): Unit =
       println("check failed. TODO: update license info")
       System.exit(1)
     else println("check ok, all licenses up to date.")
-  else
-    println("all changes made.")
+  else println("all changes made.")
