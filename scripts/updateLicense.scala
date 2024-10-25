@@ -13,12 +13,19 @@
 // limitations under the License.
 
 //> using dep com.lihaoyi::os-lib:0.11.3
+//> using dep com.github.alexarchambault::case-app:2.1.0-M29
 import scala.util.matching.Regex
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import caseapp.*
+
+final case class Options(
+  check: Boolean = true,
+)  
 
 @main
-def updateLicense(check: Boolean): Unit =
+def updateLicense(args: String*): Unit =
+  val (options, _) = CaseApp.process[Options](args)
   val licenseTemplate =
     """ Copyright ____ DCal Team
       |
@@ -62,7 +69,7 @@ def updateLicense(check: Boolean): Unit =
           case Some(str) =>
             licenseRegex.replaceFirstIn(contents, licenseReplacement)
 
-      if check
+      if options.check
       then
         if contents != modifiedContents
         then
@@ -70,10 +77,12 @@ def updateLicense(check: Boolean): Unit =
           println(s"license needs updating in $sourceFile")
       else () // os.write.over(sourceFile, modifiedContents)
 
-  if check
+  if options.check
   then
     if checkFailed
     then
       println("check failed. TODO: update license info")
       System.exit(1)
     else println("check ok, all licenses up to date.")
+  else
+    println("all changes made.")

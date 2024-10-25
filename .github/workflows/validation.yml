@@ -21,4 +21,4 @@ jobs:
       - uses: VirtusLab/scala-cli-setup@v1.5.1
         with:
           jvm: temurin:21
-      - run: scala-cli run scripts/updateLicense.scala -- true
+      - run: scala-cli run scripts/updateLicense.scala
