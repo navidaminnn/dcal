@@ -14,7 +14,7 @@ jobs:
           jvm: temurin:21
       - run: scala-cli format --check .
       - run: scala-cli format --check scripts/
-  version-check:
+  license-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
