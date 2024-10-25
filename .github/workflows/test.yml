@@ -9,8 +9,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        jvm: [temurin:21, temurin:11]
+        os: ['ubuntu-latest', 'windows-latest', 'macos-latest']
+        jvm: ['temurin:21', 'temurin:11']
     steps:
       - uses: actions/checkout@v4
       - uses: VirtusLab/scala-cli-setup@v1.5.1
