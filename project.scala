@@ -20,7 +20,7 @@
 //> using dep dev.zio::izumi-reflect:2.3.10
 //> using test.dep org.scalameta::munit:1.0.2
 
-//> using exclude updateLicense.scala
+//> using exclude scripts/
 
 //> using javaProp distcompiler.Node.assertErrorRefCorrectness=no
 

@@ -1,0 +1,19 @@
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+
+jobs:
+  scalafmt:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        jvm: [temurin:21, temurin:11]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: VirtusLab/scala-cli-setup@v1.5.1
+        with:
+          jvm: ${{ matrix.jvm }}
+      - run: scala-cli test .

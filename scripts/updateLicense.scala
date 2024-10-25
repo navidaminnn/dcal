@@ -13,8 +13,6 @@
 // limitations under the License.
 
 //> using dep com.lihaoyi::os-lib:0.11.3
-package distcompiler
-
 import scala.util.matching.Regex
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
