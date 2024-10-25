@@ -257,14 +257,14 @@ object TLAParser extends PassSeq:
                   tokens.Constant(
                     tokens.Order2(
                       tokens.Id().like(alpha),
-                      tokens.Order2.Arity(arity.toString)
+                      Node.Embed(arity)
                     )
                   )
                 case (op, arity) =>
                   tokens.Constant(
                     tokens.Order2(
                       op.unparent(),
-                      tokens.Order2.Arity(arity.toString)
+                      Node.Embed(arity)
                     )
                   )
                 case alpha: Node =>

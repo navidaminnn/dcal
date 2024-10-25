@@ -11,3 +11,4 @@ target/
 .clones/
 *.log
 dbg_*/
+scala-doc/

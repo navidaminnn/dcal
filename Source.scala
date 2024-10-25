@@ -68,6 +68,11 @@ object Source:
   def fromByteBuffer(byteBuffer: ByteBuffer): Source =
     ByteBufferSource(None, byteBuffer)
 
+  def fromWritable(writable: geny.Writable): Source =
+    val out = java.io.ByteArrayOutputStream()
+    writable.writeBytesTo(out)
+    fromByteBuffer(ByteBuffer.wrap(out.toByteArray()))
+
   def mapFromFile(path: os.Path): Source =
     Using.resource(FileChannel.open(path.toNIO)): channel =>
       val mappedBuf = channel.map(MapMode.READ_ONLY, 0, channel.size())

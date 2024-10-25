@@ -23,12 +23,18 @@ class WellformedTests extends munit.FunSuite:
     tok1 ::= AnyShape
     tok2 ::= AnyShape
 
+    // dummy to make sure the wf knows how to embed ints
+    tok3 ::= embedded[Int]
+
   val tmpSrc = Source.mapFromFile(os.temp("foo"))
   val src1 = SourceRange.entire(tmpSrc).take(2)
   val src2 = SourceRange.entire(tmpSrc).drop(2)
   val src3 = SourceRange.entire(Source.fromString("bar"))
 
-  def joinN(breadth: Int, iterFn: () => Iterator[Node]): Iterator[List[Node]] =
+  def joinN(
+      breadth: Int,
+      iterFn: () => Iterator[Node.Child]
+  ): Iterator[List[Node.Child]] =
     breadth match
       case 0 => Iterator.single(Nil)
       case breadth =>
@@ -37,17 +43,23 @@ class WellformedTests extends munit.FunSuite:
           tl <- joinN(breadth - 1, iterFn)
         yield hd.clone() :: tl
 
-  def exampleNodes(depth: Int): Iterator[Node] =
+  def exampleNodes(depth: Int): Iterator[Node.Child] =
     depth match
       case 0 => Iterator.empty
       case _ if depth > 0 =>
         for
           breadth <- (0 until 3).iterator
-          parent <- Iterator(tok1(src1), tok2(src2), tok1(src3), tok1())
+          parent <-
+            Iterator(tok1(src1), tok2(src2), tok1(src3), tok1())
+            ++ locally:
+              if breadth == 0
+              then Iterator.single(Node.Embed(42))
+              else Iterator.empty
           children <- joinN(breadth, () => exampleNodes(depth - 1))
         yield locally:
           val p = parent.clone()
-          p.children.addAll(children)
+          if breadth != 0
+          then p.asParent.children.addAll(children)
           p
 
   def examples(depth: Int): Iterator[Node.Top] =

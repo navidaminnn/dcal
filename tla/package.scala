@@ -34,7 +34,6 @@ object tokens:
       on(
         Order2.withChildren(tok(Id).map(Set(_)))
       ).value
-    object Arity extends Token.ShowSource
 
   object Expr extends Token:
     object IntLiteral extends Token.ShowSource
@@ -149,9 +148,8 @@ val wellformed: Wellformed =
     defns.Operator.instances.foreach(_ ::= Atom)
     Order2 ::= fields(
       Id,
-      Order2.Arity
+      embedded[Int]
     )
-    Order2.Arity ::= Atom
 
     Expr ::= choice(
       Expr.IntLiteral,

@@ -16,6 +16,7 @@ package distcompiler
 
 import cats.syntax.all.given
 import scala.collection.mutable
+import izumi.reflect.Tag
 import scala.util.control.TailCalls.*
 import util.TailCallsUtils.*
 
@@ -31,21 +32,27 @@ final class Wellformed private (
   )
   locally:
     val reached = mutable.HashSet.empty[Token]
-    def assertReachable(token: Token): TailRec[Unit] =
-      if !reached(token)
-      then
-        reached += token
-        require(
-          assigns.contains(token),
-          s"token $token must be assigned a shape"
-        )
-        tailcall(assertReachableFromShape(assigns(token)))
-      else done(())
+    def assertReachable(tokenOrEmbed: Token | EmbedMeta[?]): TailRec[Unit] =
+      tokenOrEmbed match
+        case token: Token =>
+          if !reached(token)
+          then
+            reached += token
+            require(
+              assigns.contains(token),
+              s"token $token must be assigned a shape"
+            )
+            tailcall(assertReachableFromShapeOrEmbed(assigns(token)))
+          else done(())
+        case _: EmbedMeta[?] => done(())
 
-    def assertReachableFromShape(shape: Shape): TailRec[Unit] =
+    def assertReachableFromShapeOrEmbed(
+        shape: Shape | EmbedMeta[?]
+    ): TailRec[Unit] =
       shape match
-        case Shape.Atom     => done(())
-        case Shape.AnyShape => done(())
+        case _: EmbedMeta[?] => done(())
+        case Shape.Atom      => done(())
+        case Shape.AnyShape  => done(())
         case Shape.Choice(choices) =>
           choices.iterator.traverse(assertReachable)
         case Shape.Repeat(choice, _) =>
@@ -54,11 +61,37 @@ final class Wellformed private (
           fields.iterator.traverse: field =>
             field.choices.iterator.traverse(assertReachable)
 
-    assertReachableFromShape(topShape).result
+    assertReachableFromShapeOrEmbed(topShape).result
+
+  private lazy val knownMetasByName: Map[SourceRange, EmbedMeta[?]] =
+    def implForShape(shape: Shape): Iterator[(SourceRange, EmbedMeta[?])] =
+      shape match
+        case Shape.Atom | Shape.AnyShape => Iterator.empty
+        case Shape.Choice(choices) =>
+          choices.iterator.flatMap(implForTokenOrEmbed)
+        case Shape.Fields(fields) =>
+          fields.iterator.flatMap(implForShape)
+        case Shape.Repeat(choice, _) =>
+          implForShape(choice)
+
+    def implForTokenOrEmbed(
+        tokenOrEmbed: Token | EmbedMeta[?]
+    ): Option[(SourceRange, EmbedMeta[?])] =
+      tokenOrEmbed match
+        case token: Token => None
+        case embed: EmbedMeta[?] =>
+          val name = SourceRange.entire(Source.fromString(embed.canonicalName))
+          Some(name -> embed)
+
+    assigns.iterator
+      .map(_._2)
+      .flatMap(implForShape)
+      .toMap
 
   private lazy val shortNameByToken: Map[Token, SourceRange] =
     val acc = mutable.HashMap[List[String], mutable.ListBuffer[Token]]()
     acc(Nil) = assigns.iterator.map(_._1).to(mutable.ListBuffer)
+    acc(Nil) += Node.EmbedT // we use this for serialization to mark embed sites
 
     def namesToFix: List[List[String]] =
       acc.iterator
@@ -153,7 +186,16 @@ final class Wellformed private (
                           child.unparent()
                         )
                       done(())
-                  case _: Node.Embed[?] => ???
+                  case embed: Node.Embed[?] =>
+                    if choice.choices(embed.meta)
+                    then done(())
+                    else
+                      embed.replaceThis:
+                        Builtin.Error(
+                          s"found embed ${embed.meta.canonicalName}, but expected ${choice.choices.mkString(" or ")}",
+                          embed.unparent()
+                        )
+                      done(())
         case Shape.Repeat(choice, minCount) =>
           if parent.children.size < minCount
           then
@@ -253,8 +295,15 @@ final class Wellformed private (
                     )
 
             result.addSerializedChildren(node.children)
-          case _: Node.Embed[?] =>
-            ???
+          case embed: Node.Embed[?] =>
+            val bytes =
+              Source.fromWritable(embed.meta.serialize(embed.value))
+            done:
+              SList(
+                Atom(shortNameByToken(Node.EmbedT)),
+                Atom(embed.meta.canonicalName),
+                Atom(SourceRange.entire(bytes))
+              )
 
       result.asInstanceOf[TailRec[tree.This]]
 
@@ -276,6 +325,14 @@ final class Wellformed private (
           <* refine(atFirstChild(on(atEnd).check))
       ).value.map: token =>
         done(token())
+      | on(
+        tok(SList).withChildren:
+          skip(tok(Atom).src(shortNameByToken(Node.EmbedT)))
+            ~ field(tok(Atom).map(_.sourceRange).restrict(knownMetasByName))
+            ~ field(tok(Atom).map(_.sourceRange))
+            ~ eof
+      ).value.map: (meta, src) =>
+        done(Node.Embed(meta.deserialize(src))(using meta))
       | on(
         anyNode
         *: tok(SList).withChildren:
@@ -400,7 +457,7 @@ object Wellformed:
             require(topShapeOpt.nonEmpty)
             topShapeOpt.get
 
-      def existingCases: Set[Token] =
+      def existingCases: Set[Token | EmbedMeta[?]] =
         getExistingShape match
           case Shape.Choice(choices)    => choices
           case Shape.Repeat(choices, _) => choices.choices
@@ -409,7 +466,7 @@ object Wellformed:
               s"$token's shape doesn't have cases ($shape)"
             )
 
-      def removeCases(cases: Token*): Unit =
+      def removeCases(cases: (Token | EmbedMeta[?])*): Unit =
         getExistingShape match
           case Shape.Choice(choices) =>
             token ::=! Shape.Choice(choices -- cases)
@@ -445,23 +502,26 @@ object Wellformed:
             case Shape.Atom     =>
             case Shape.AnyShape =>
             case Shape.Choice(choices) =>
-              choices.foreach(fillFromToken)
+              choices.foreach(fillFromTokenOrEmbed)
             case Shape.Repeat(choice, _) =>
-              choice.choices.foreach(fillFromToken)
+              choice.choices.foreach(fillFromTokenOrEmbed)
             case Shape.Fields(fields) =>
-              fields.foreach(_.choices.foreach(fillFromToken))
+              fields.foreach(_.choices.foreach(fillFromTokenOrEmbed))
 
-        def fillFromToken(token: Token): Unit =
-          if !assigns.contains(token)
-          then
-            assigns(token) = wf2.assigns(token)
-            fillFromShape(wf2.assigns(token))
+        def fillFromTokenOrEmbed(tokenOrEmbed: Token | EmbedMeta[?]): Unit =
+          tokenOrEmbed match
+            case token: Token =>
+              if !assigns.contains(token)
+              then
+                assigns(token) = wf2.assigns(token)
+                fillFromShape(wf2.assigns(token))
+            case _: EmbedMeta[?] =>
 
         token match
           case Node.Top =>
             topShapeOpt = Some(wf2.topShape)
             fillFromShape(wf2.topShape)
-          case token: Token => fillFromToken(token)
+          case token: Token => fillFromTokenOrEmbed(token)
 
     private[Wellformed] def build(): Wellformed =
       require(topShapeOpt.nonEmpty)
@@ -470,7 +530,7 @@ object Wellformed:
 
   enum Shape:
     case Atom, AnyShape
-    case Choice(choices: Set[Token])
+    case Choice(choices: Set[Token | EmbedMeta[?]])
     case Repeat(choice: Shape.Choice, minCount: Int)
     case Fields(fields: List[Shape.Choice])
 
@@ -480,14 +540,17 @@ object Wellformed:
       def |(other: Shape.Choice): Shape.Choice =
         Shape.Choice(choice.choices ++ other.choices)
 
-    def choice(tokens: Token*): Shape.Choice =
+    def choice(tokens: (Token | EmbedMeta[?])*): Shape.Choice =
       Shape.Choice(tokens.toSet)
 
-    def choice(tokens: Set[Token]): Shape.Choice =
+    def choice(tokens: Set[Token | EmbedMeta[?]]): Shape.Choice =
       Shape.Choice(tokens)
 
     def repeated(choice: Shape.Choice, minCount: Int = 0): Shape.Repeat =
       Shape.Repeat(choice, minCount)
+
+    inline def embedded[T: EmbedMeta]: Shape.Choice =
+      Shape.Choice(Set(summon[EmbedMeta[T]]))
 
     def fields(fields: Shape.Choice*): Shape.Fields =
       Shape.Fields(fields.toList)

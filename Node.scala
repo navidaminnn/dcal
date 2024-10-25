@@ -18,7 +18,6 @@ import cats.Eval
 import cats.data.Chain
 import cats.syntax.all.given
 import scala.collection.mutable
-import izumi.reflect.Tag
 import scala.annotation.constructorOnly
 import distcompiler.util.toShortString
 
@@ -250,7 +249,6 @@ object Node:
     type This <: All
     def cloneEval(): Eval[This]
 
-    // TODO: delete this?
     def assertErrorRefCounts(): Unit = ()
 
     final override def clone(): This =
@@ -266,6 +264,9 @@ object Node:
 
     def asTop: Top =
       throw NodeError("not a top")
+
+    def asParent: Parent =
+      throw NodeError("not a parent")
 
     def asChild: Child =
       throw NodeError("not a child")
@@ -366,6 +367,8 @@ object Node:
     thisParent =>
 
     override type This <: Parent
+
+    override def asParent: Parent = this
 
     val children: Node.Children
 
@@ -557,15 +560,17 @@ object Node:
         parent.children.lift(idxInParent + 1)
   end Child
 
-  final case class Embed[T](value: T)(using val nodeMeta: NodeMeta[T])
+  final case class Embed[T](value: T)(using val meta: EmbedMeta[T])
       extends Child:
     override type This = Embed[T]
     override def cloneEval(): Eval[Embed[T]] =
-      Eval.now(Embed(nodeMeta.doClone(value)))
+      Eval.now(Embed(meta.doClone(value)))
 
     override def hasErrors: Boolean = false
     override def errors: List[Node] = Nil
   end Embed
+
+  object EmbedT extends Token
 
   final class Children private[Node] (
       val parent: Node.Parent,
@@ -663,22 +668,3 @@ object Node:
       (0 until length).iterator.map(this)
   end Children
 end Node
-
-trait NodeMeta[T](using val tag: Tag[T]):
-  extension (self: T) def asNode: Node
-
-  def doClone(self: T): T
-
-object NodeMeta:
-  given forToken: NodeMeta[Token] with
-    extension (self: Token) def asNode: Node = self()
-
-    def doClone(self: Token): Token = self
-
-  final class byToString[T: Tag] extends NodeMeta[T]:
-    def doClone(self: T): T = self
-    extension (self: T)
-      def asNode: Node =
-        byToString.mkNode().at(self.toString())
-
-  object byToString extends Token

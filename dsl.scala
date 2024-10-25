@@ -20,4 +20,4 @@ object dsl:
   export Manip.ops.*
   export SeqPattern.ops.*
   export Wellformed.Shape
-  export Wellformed.Shape.{fields, repeated, Atom, AnyShape, choice}
+  export Wellformed.Shape.{fields, repeated, Atom, AnyShape, choice, embedded}

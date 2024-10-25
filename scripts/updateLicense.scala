@@ -75,7 +75,7 @@ def updateLicense(args: String*): Unit =
         then
           checkFailed = true
           println(s"license needs updating in $sourceFile")
-      else () // os.write.over(sourceFile, modifiedContents)
+      else os.write.over(sourceFile, modifiedContents)
 
   if options.check
   then
