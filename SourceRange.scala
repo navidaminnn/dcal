@@ -39,7 +39,11 @@ final class SourceRange(
       .get(offset + i)
 
   def byteBuffer(): ByteBuffer =
-    source.byteBuffer.slice(offset, length)
+    source.byteBuffer
+      .duplicate()
+      .position(offset)
+      .limit(offset + length)
+      .slice()
 
   def decodeString(charset: Charset = StandardCharsets.UTF_8): String =
     charset.decode(byteBuffer()).toString()
