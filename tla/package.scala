@@ -105,10 +105,24 @@ object tokens:
   object Constant extends Token:
     override val lookedUpBy: Manip[Set[Node]] =
       on(
-        tok(Constant) *> children:
+        tok(Constant).withChildren:
           tok(Id).map(Set(_))
             | refine(Order2.lookedUpBy)
       ).value
+
+  object Local extends Token
+  object Recursive extends Token:
+    override val lookedUpBy: Manip[Set[Node]] =
+      on(
+        tok(Recursive).withChildren:
+          tok(Id).map(Set(_))
+            | refine(Order2.lookedUpBy)
+      ).value
+  object Assumption extends Token
+  object Theorem extends Token
+  object Instance extends Token:
+    object Substitutions extends Token
+    object Substitution extends Token
 
   object QuantifierBound extends Token:
     override val lookedUpBy: Manip[Set[Node]] =
@@ -136,10 +150,26 @@ val wellformed: Wellformed =
     Module.Extends ::= repeated(Id)
     Module.Defns ::= repeated(
       choice(
+        Local,
+        Recursive,
         Operator,
         Variable,
-        Constant
+        Constant,
+        Assumption,
+        Theorem,
+        Instance
       )
+    )
+
+    Local ::= choice(
+      Operator,
+      Instance
+      // ModuleDefinition,
+    )
+
+    Recursive ::= choice(
+      Id,
+      Order2
     )
 
     Id ::= Atom
@@ -293,6 +323,17 @@ val wellformed: Wellformed =
 
     Variable ::= Id
     Constant ::= choice(Id, Order2)
+    Assumption ::= Expr
+    Theorem ::= Expr
+    Instance ::= fields(
+      Id,
+      Instance.Substitutions
+    )
+    Instance.Substitutions ::= repeated(Instance.Substitution)
+    Instance.Substitution ::= fields(
+      choice(Id, OpSym),
+      Expr
+    )
 
     QuantifierBound ::= fields(
       choice(Id, Ids),

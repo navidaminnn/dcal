@@ -29,11 +29,12 @@ class TLAParserTests extends munit.FunSuite, test.WithTLACorpus:
       top /*, tracer = Manip.RewriteDebugTracer(os.pwd / "parser_passes")*/
     )
 
-    os.write.over(
-      os.pwd / "dbg_tla_parser" / s"${file.last}.dbg",
-      top.toPrettyWritable(TLAReader.wellformed),
-      createFolders = true
-    )
+    // re-enable if interesting:
+    // os.write.over(
+    //   os.pwd / "dbg_tla_parser" / s"${file.last}.dbg",
+    //   top.toPrettyWritable(TLAReader.wellformed),
+    //   createFolders = true
+    // )
 
     if top.hasErrors
     then fail(top.presentErrors(debug = true))

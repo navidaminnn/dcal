@@ -91,14 +91,23 @@ object TLAParser extends PassSeq:
       val addedTokens = List(
         tokens.Operator,
         tokens.Variable,
-        tokens.Constant
+        tokens.Constant,
+        tokens.Assumption,
+        tokens.Theorem,
+        tokens.Recursive,
+        tokens.Instance
       )
       val removedTokens = List(
         TLAReader.`_==_`,
         defns.VARIABLE,
         defns.VARIABLES,
         defns.CONSTANT,
-        defns.CONSTANTS
+        defns.CONSTANTS,
+        defns.ASSUME,
+        defns.AXIOM,
+        defns.ASSUMPTION,
+        defns.THEOREM,
+        defns.INSTANCE
       )
 
       tokens.Module ::= fields(
@@ -125,6 +134,10 @@ object TLAParser extends PassSeq:
       tokens.Variable.importFrom(tla.wellformed)
       tokens.Constant.importFrom(tla.wellformed)
       tokens.OpSym.importFrom(tla.wellformed)
+      tokens.Assumption ::= Atom
+      tokens.Theorem ::= Atom
+      tokens.Recursive.importFrom(tla.wellformed)
+      tokens.Instance ::= tokens.Id
 
     pass(once = true, strategy = pass.bottomUp)
       .rules:
@@ -270,3 +283,68 @@ object TLAParser extends PassSeq:
                 case alpha: Node =>
                   tokens.Constant(tokens.Id().like(alpha))
           )
+        // assume
+        | on(
+          tok(defns.ASSUME, defns.ASSUMPTION, defns.AXIOM)
+        ).rewrite: kw =>
+          splice(tokens.Assumption().like(kw))
+        // theorem
+        | on(
+          tok(defns.THEOREM)
+        ).rewrite: kw =>
+          splice(tokens.Theorem().like(kw))
+        // recursive
+        | on(
+          skip(tok(defns.RECURSIVE))
+            ~ field(
+              repeatedSepBy1(`,`):
+                opDeclPattern
+                  | tok(Alpha)
+            )
+            ~ trailing
+        ).rewrite: decls =>
+          splice(
+            decls.iterator
+              .map:
+                case (alpha, arity) if alpha.token == Alpha =>
+                  tokens.Recursive(
+                    tokens.Order2(
+                      tokens.Id().like(alpha),
+                      Node.Embed(arity)
+                    )
+                  )
+                case (op, arity) =>
+                  tokens.Recursive(
+                    tokens.Order2(
+                      op.unparent(),
+                      Node.Embed(arity)
+                    )
+                  )
+                case alpha: Node =>
+                  tokens.Recursive(tokens.Id().like(alpha))
+          )
+        // instance
+        | on(
+          skip(defns.INSTANCE)
+            ~ field(TLAReader.Alpha)
+            ~ trailing
+        ).rewrite: name =>
+          splice(tokens.Instance(tokens.Id().like(name)))
+
+  val liftLocals = passDef:
+    wellformed := prevWellformed.makeDerived:
+      tokens.Module.Defns.removeCases(defns.LOCAL)
+      tokens.Module.Defns.addCases(tokens.Local)
+      tokens.Local.importFrom(tla.wellformed)
+      TLAReader.groupTokens.foreach: tok =>
+        tok.removeCases(defns.LOCAL)
+        tok.addCases(tokens.Local)
+
+    pass(once = true, strategy = pass.bottomUp)
+      .rules:
+        on(
+          field(defns.LOCAL)
+            ~ field(tok(tokens.Operator, tokens.Instance))
+            ~ trailing
+        ).rewrite: (local, op) =>
+          splice(tokens.Local(op.unparent()).like(local))

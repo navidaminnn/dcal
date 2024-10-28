@@ -47,6 +47,32 @@ object defns:
   case object ELSE extends ReservedWord
   case object CONSTANT extends ReservedWord
   case object CASE extends ReservedWord
+  case object COROLLARY extends ReservedWord
+  case object BY extends ReservedWord
+  case object HAVE extends ReservedWord
+  case object QED extends ReservedWord
+  case object TAKE extends ReservedWord
+  case object DEF extends ReservedWord
+  case object HIDE extends ReservedWord
+  case object RECURSIVE extends ReservedWord
+  case object USE extends ReservedWord
+  case object DEFINE extends ReservedWord
+  case object PROOF extends ReservedWord
+  case object WITNESS extends ReservedWord
+  case object PICK extends ReservedWord
+  case object DEFS extends ReservedWord
+  case object PROVE extends ReservedWord
+  case object SUFFICES extends ReservedWord
+  case object NEW extends ReservedWord
+  case object LAMBDA extends ReservedWord
+  case object STATE extends ReservedWord
+  case object ACTION extends ReservedWord
+  case object TEMPORAL extends ReservedWord
+  case object OBVIOUS extends ReservedWord
+  case object OMITTED extends ReservedWord
+  case object LEMMA extends ReservedWord
+  case object PROPOSITION extends ReservedWord
+  case object ONLY extends ReservedWord
 
   sealed trait Operator extends Token, HasSpelling
 
