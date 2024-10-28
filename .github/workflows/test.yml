@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  scalafmt:
+  tests:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
