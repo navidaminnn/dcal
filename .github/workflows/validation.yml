@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: VirtusLab/scala-cli-setup@v1.5.1
+      - uses: VirtusLab/scala-cli-setup@main
         with:
           jvm: temurin:21
       - run: scala-cli format --check .
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: VirtusLab/scala-cli-setup@v1.5.1
+      - uses: VirtusLab/scala-cli-setup@main
         with:
           jvm: temurin:21
       - run: scala-cli run scripts/updateLicense.scala
