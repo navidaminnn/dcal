@@ -175,7 +175,8 @@ final class SourceRange(
       else (startCol until endCol).foreach(_ => builder += '^')
     else
       (0 until startCol).foreach(_ => builder += ' ')
-      (startCol until line1AfterEnd).foreach(_ => builder += 'v')
+      val line1EndCol = line1AfterEnd - line1Start
+      (startCol until line1EndCol).foreach(_ => builder += 'v')
       builder += '\n'
       builder.addAll(
         entireSource.slice(line1Start, line1AfterEnd).trimNl.decodeString()
