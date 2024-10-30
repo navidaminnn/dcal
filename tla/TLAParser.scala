@@ -377,7 +377,7 @@ object TLAParser extends PassSeq:
               instance.unparent()
             )
           )
-      // TODO: actually look for LOCAL <op> INSTANCE
+    // TODO: actually look for LOCAL <op> INSTANCE
 
   // val consumeDefinitionContents = passDef:
   //   val delimiterSeq = Seq(
