@@ -1081,11 +1081,14 @@ object Manip:
           commit:
             atFirstChild(next)
               | atRightSibling(next)
-              | (on(SeqPattern.ops.atEnd).check *> resultRef.get)
-              *> atParent:
-                commit:
-                  atRightSibling(next)
-                    | on(SeqPattern.ops.theTop).check *> endPass
+              | (on(SeqPattern.ops.atEnd).check
+                *> atParent(
+                  commit(
+                    // going right finds either real sibling or sentinel, unless at top
+                    atRightSibling(next)
+                      | on(SeqPattern.ops.theTop).check *> endPass
+                  )
+                ))
 
       object bottomUp extends TraversalStrategy:
         private inline given DebugInfo = DebugInfo.notPoison
