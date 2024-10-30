@@ -132,7 +132,8 @@ val wellformed: Wellformed =
         t.Constant,
         t.Assumption,
         t.Theorem,
-        t.Instance
+        t.Instance,
+        t.ModuleDefinition
       )
     )
 
@@ -145,6 +146,12 @@ val wellformed: Wellformed =
     t.Recursive ::= choice(
       t.Id,
       t.Order2
+    )
+
+    t.ModuleDefinition ::= fields(
+      t.Id,
+      t.Operator.Params,
+      t.Instance
     )
 
     t.Id ::= Atom
@@ -228,7 +235,11 @@ val wellformed: Wellformed =
       t.Expr
     )
     t.Expr.Let.Defns ::= repeated(
-      t.Operator,
+      choice(
+        t.Operator,
+        t.ModuleDefinition,
+        t.Recursive
+      ),
       minCount = 1
     )
 

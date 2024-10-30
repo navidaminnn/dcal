@@ -265,6 +265,9 @@ object SeqPattern:
     def children[T](using DebugInfo)(pattern: SeqPattern[T]): SeqPattern[T] =
       refine(atFirstChild(pattern.asManip))
 
+    def onlyChild[T](using DebugInfo)(pattern: SeqPattern[T]): SeqPattern[T] =
+      refine(atFirstChild((field(pattern) ~ eof).asManip))
+
     def parent[T](using DebugInfo)(pattern: SeqPattern[T]): SeqPattern[T] =
       refine(atParent(on(pattern).value))
 

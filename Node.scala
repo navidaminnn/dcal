@@ -372,14 +372,17 @@ object Node:
 
     val children: Node.Children
 
-    final def apply(tok: Token): Node =
+    final def apply(tok: Token, toks: Token*): Node =
       val results = children.iterator
         .collect:
-          case node: Node if node.token == tok =>
+          case node: Node if node.token == tok || toks.contains(node.token) =>
             node
         .toList
 
-      require(results.size == 1)
+      require(
+        results.size == 1,
+        s"token(s) not found ${(tok +: toks).map(_.name).mkString(", ")}"
+      )
       results.head
 
     final def firstChild: Option[Node.Child] =

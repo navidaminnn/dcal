@@ -141,6 +141,11 @@ final class Wellformed private (
   private lazy val tokenByShortName: Map[SourceRange, Token] =
     shortNameByToken.map(_.reverse)
 
+  def shapeOf(tokenOrTop: Token | Node.Top.type): Shape =
+    tokenOrTop match
+      case token: Token => assigns(token)
+      case Node.Top     => topShape
+
   lazy val markErrorsPass: Manip[Unit] =
     getNode.tapEffect(markErrors).void
 
@@ -182,7 +187,7 @@ final class Wellformed private (
                     else
                       node.replaceThis:
                         Builtin.Error(
-                          s"found token ${node.token}, but expected ${choice.choices.mkString(" or ")}",
+                          s"in $desc, found token ${node.token}, but expected ${choice.choices.mkString(" or ")}",
                           child.unparent()
                         )
                       done(())
@@ -192,7 +197,7 @@ final class Wellformed private (
                     else
                       embed.replaceThis:
                         Builtin.Error(
-                          s"found embed ${embed.meta.canonicalName}, but expected ${choice.choices.mkString(" or ")}",
+                          s"in $desc, found embed ${embed.meta.canonicalName}, but expected ${choice.choices.mkString(" or ")}",
                           embed.unparent()
                         )
                       done(())
@@ -220,7 +225,7 @@ final class Wellformed private (
                   else
                     node.replaceThis:
                       Builtin.Error(
-                        s"found token ${node.token}, but expected ${choice.choices.mkString(" or ")}",
+                        s"in $desc, found token ${node.token}, but expected ${choice.choices.mkString(" or ")}",
                         node.unparent()
                       )
                     done(())

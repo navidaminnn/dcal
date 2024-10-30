@@ -172,7 +172,8 @@ object TLAParser extends PassSeq:
             case None => Nil
             case Some(end) =>
               val endIdx = end.idxInParent
-              m.unparentedChildren.view.drop(endIdx)
+              // .init to remove the EqSeq at end
+              m.unparentedChildren.view.drop(endIdx).init
           splice(
             tokens.Module(
               tokens.Id().like(name),
@@ -290,7 +291,7 @@ object TLAParser extends PassSeq:
           splice(tokens.Assumption().like(kw))
         // theorem
         | on(
-          tok(defns.THEOREM)
+          tok(defns.THEOREM, defns.PROPOSITION, defns.LEMMA, defns.COROLLARY)
         ).rewrite: kw =>
           splice(tokens.Theorem().like(kw))
         // recursive
@@ -331,20 +332,140 @@ object TLAParser extends PassSeq:
         ).rewrite: name =>
           splice(tokens.Instance(tokens.Id().like(name)))
 
-  val liftLocals = passDef:
+  val joinCompoundUnits = passDef:
     wellformed := prevWellformed.makeDerived:
       tokens.Module.Defns.removeCases(defns.LOCAL)
-      tokens.Module.Defns.addCases(tokens.Local)
+      tokens.Module.Defns.addCases(tokens.Local, tokens.ModuleDefinition)
       tokens.Local.importFrom(tla.wellformed)
       TLAReader.groupTokens.foreach: tok =>
         tok.removeCases(defns.LOCAL)
-        tok.addCases(tokens.Local)
+        tok.addCases(tokens.Local, tokens.ModuleDefinition)
+
+      tokens.ModuleDefinition ::= fields(
+        choice(tokens.Id, tokens.OpSym),
+        TLAReader.ParenthesesGroup,
+        tokens.Instance
+      )
 
     pass(once = true, strategy = pass.bottomUp)
       .rules:
+        // LOCAL <op>
         on(
-          field(defns.LOCAL)
+          field(tok(defns.LOCAL) <* parent(tokens.Module.Defns))
             ~ field(tok(tokens.Operator, tokens.Instance))
             ~ trailing
         ).rewrite: (local, op) =>
-          splice(tokens.Local(op.unparent()).like(local))
+          spliceThen(tokens.Local(op.unparent()).like(local)):
+            // try again at this location; you might catch LOCAL op == INSTANCE ...
+            continuePass
+        // <op> == INSTANCE ...
+        | on(
+          field(
+            tok(tokens.Operator) <* children(
+              skip(anyNode)
+                ~ skip(not(TLAReader.SqBracketsGroup))
+                ~ trailing
+            )
+          )
+            ~ field(tokens.Instance)
+            ~ trailing
+        ).rewrite: (op, instance) =>
+          splice(
+            tokens.ModuleDefinition(
+              op(tokens.Id, tokens.OpSym).unparent(),
+              op(TLAReader.ParenthesesGroup).unparent(),
+              instance.unparent()
+            )
+          )
+      // TODO: actually look for LOCAL <op> INSTANCE
+
+  // val consumeDefinitionContents = passDef:
+  //   val delimiterSeq = Seq(
+  //     tokens.Operator,
+  //     tokens.Instance,
+  //     tokens.Local,
+  //     tokens.Recursive,
+  //     tokens.Theorem,
+  //     tokens.Assumption,
+  //     tokens.Variable,
+  //     tokens.Constant,
+  //     tokens.ModuleDefinition,
+  //     TLAReader.DashSeq,
+  //   )
+  //   wellformed := prevWellformed.makeDerived:
+  //     tokens.Operator ::=! fields(
+  //       choice(tokens.Id, tokens.OpSym),
+  //       choice(TLAReader.ParenthesesGroup, TLAReader.SqBracketsGroup),
+  //       tokens.Expr,
+  //     )
+
+  //     tokens.Expr ::= prevWellformed.shapeOf(TLAReader.ParenthesesGroup)
+  //     tokens.Expr.removeCases(delimiterSeq*)
+  //     TLAReader.groupTokens.foreach: tok =>
+  //       tok.removeCases(delimiterSeq*)
+
+  //     TLAReader.LetGroup ::=! tla.wellformed.shapeOf(tokens.Expr.Let.Defns)
+  //     tokens.Module.Defns ::=! tla.wellformed.shapeOf(tokens.Module.Defns)
+  //     tokens.Assumption ::=! tla.wellformed.shapeOf(tokens.Assumption)
+  //     tokens.Theorem ::=! tla.wellformed.shapeOf(tokens.Theorem)
+  //     tokens.Instance ::=! fields(
+  //       tokens.Id,
+  //       tokens.Instance.With,
+  //     )
+  //     tokens.Instance.With ::= repeated(choice(tokens.Expr.existingCases))
+
+  //   val delimiters = tok(delimiterSeq*)
+
+  //   pass(once = true, strategy = pass.bottomUp)
+  //     .rules:
+  //       val restChildren = field(repeated(anyChild <* not(delimiters)))
+  //       on(
+  //         TLAReader.DashSeq // delete all ----
+  //       ).rewrite: _ =>
+  //         splice()
+  //       | on(
+  //         fields(
+  //           (tok(tokens.Local), onlyChild(tokens.Operator)).tupled
+  //             | (tok(tokens.Operator) <* not(parent(tokens.Local))).map(op => (op, op))
+  //         )
+  //         ~ restChildren
+  //         ~ trailing
+  //       ).rewrite: (owner, op, contents) =>
+  //         op.children += tokens.Expr(contents.iterator.map(_.unparent()))
+  //         splice(owner)
+  //       | on(
+  //         field(tokens.Theorem)
+  //         ~ restChildren
+  //         ~ trailing
+  //       ).rewrite: (thm, contents) =>
+  //         thm.children += tokens.Expr(contents.iterator.map(_.unparent()))
+  //         splice(thm)
+  //       | on(
+  //         field(tokens.Assumption)
+  //         ~ restChildren
+  //         ~ trailing
+  //       ).rewrite: (assm, contents) =>
+  //         assm.children += tokens.Expr(contents.iterator.map(_.unparent()))
+  //         splice(assm)
+  //       | on(
+  //         fields(
+  //           (tok(tokens.Instance) <* not(parent(tokens.ModuleDefinition))).map(inst => (inst, inst))
+  //           | tok(tokens.ModuleDefinition).product(children(
+  //             skip(tok(tokens.Id, tokens.OpSym))
+  //             ~ skip(TLAReader.ParenthesesGroup)
+  //             ~ field(tokens.Instance)
+  //             ~ eof
+  //           ))
+  //         )
+  //         ~ field(optional(
+  //           skip(defns.WITH)
+  //           ~ restChildren
+  //           ~ trailing
+  //         ))
+  //         ~ trailing
+  //       ).rewrite: (parent, inst, contentsOpt) =>
+  //         // TODO: actually handle WITH structure (multiple bindings), maybe in another pass
+  //         inst.children += tokens.Instance.With(
+  //           contentsOpt.getOrElse(Nil).iterator.map(_.unparent())
+  //         )
+  //         splice(parent)
