@@ -17,6 +17,7 @@ package distcompiler.tla
 import cats.syntax.all.given
 import distcompiler.*
 import dsl.*
+import scala.collection.IndexedSeqView
 
 object TLAParser extends PassSeq:
   import TLAReader.*
@@ -56,6 +57,175 @@ object TLAParser extends PassSeq:
       | infixCase
       | postfixCase
 
+  val expressionDelimiters = Seq(
+    defns.VARIABLE,
+    defns.VARIABLES,
+    defns.CONSTANT,
+    defns.CONSTANTS,
+    defns.ASSUME,
+    defns.AXIOM,
+    defns.ASSUMPTION,
+    defns.THEOREM,
+    defns.PROPOSITION,
+    defns.LEMMA,
+    defns.COROLLARY,
+    defns.INSTANCE,
+    defns.LOCAL,
+    // For use in parsing opdecls and WITH, so we stop at the right places.
+    // Because we call these delimiters, we have to
+    // skip over them on purpose in nested expressions
+    // that have exposed commas or colons.
+    // We special-case: \A, \E, CHOOSE, LAMBDA.
+    // All the others are in () etc so don't count.
+    `<-`,
+    `,`,
+    `:`,
+    // what the beginning of a proof may look like
+    TLAReader.StepMarker,
+    defns.PROOF,
+    defns.BY,
+    defns.OBVIOUS,
+    defns.OMITTED,
+    // UseOrHide is its own unit
+    defns.USE,
+    defns.HIDE,
+    // may appear between top-level units
+    DashSeq
+  )
+
+  final case class RawExpression(nodes: IndexedSeqView[Node.Child]):
+    def mkNode: Node =
+      tokens.Expr(nodes.map(_.unparent()))
+
+  private lazy val operatorDefnBeginnings: SeqPattern[EmptyTuple] =
+    (skip(Alpha) ~ skip(optional(ParenthesesGroup)) ~ skip(`_==_`) ~ trailing)
+      | (skip(Alpha) ~ skip(SqBracketsGroup) ~ skip(`_==_`) ~ trailing)
+      | (skip(Alpha) ~ skip(tok(defns.InfixOperator.instances*)) ~ skip(
+        Alpha
+      ) ~ skip(`_==_`) ~ trailing)
+      | (skip(Alpha) ~ skip(tok(defns.PostfixOperator.instances*)) ~ skip(
+        `_==_`
+      ) ~ trailing)
+      | (skip(tok(defns.PrefixOperator.instances*)) ~ skip(Alpha) ~ skip(
+        `_==_`
+      ) ~ trailing)
+
+  lazy val rawExpression: SeqPattern[RawExpression] =
+    val simpleCases: SeqPattern[Unit] =
+      anyChild.void <* not(
+        tok(expressionDelimiters*)
+        // stop at operator definitions: all valid patterns leading to == here
+          | operatorDefnBeginnings
+      )
+
+    lazy val quantifierBound: SeqPattern[EmptyTuple] =
+      skip(
+        tok(TupleGroup).as(EmptyTuple)
+          | repeatedSepBy1(`,`)(Alpha)
+      )
+        ~ skip(tok(LaTexLike).src("\\in"))
+        ~ skip(defer(impl))
+        ~ trailing
+
+    lazy val quantifierBounds: SeqPattern[Unit] =
+      repeatedSepBy1(`,`)(quantifierBound).void
+
+    lazy val forallExists: SeqPattern[EmptyTuple] =
+      skip(
+        tok(LaTexLike).src("\\A") | tok(LaTexLike).src("\\AA") | tok(LaTexLike)
+          .src("\\E") | tok(LaTexLike).src("\\EE")
+      )
+        ~ skip(quantifierBounds | repeatedSepBy1(`,`)(Alpha))
+        ~ skip(`:`)
+        ~ trailing
+
+    lazy val choose: SeqPattern[EmptyTuple] =
+      skip(defns.CHOOSE)
+        ~ skip(quantifierBound | repeatedSepBy1(`,`)(Alpha))
+        ~ skip(`:`)
+        ~ trailing
+
+    lazy val lambda: SeqPattern[EmptyTuple] =
+      skip(defns.LAMBDA)
+        ~ skip(repeatedSepBy1(`,`)(Alpha))
+        ~ skip(`:`)
+        ~ trailing
+
+    // this is an over-approximation of what can show up
+    // in an identifier prefix
+    // TODO: why does the grammar make it look like it goes the other way round?
+    lazy val idFrag: SeqPattern[EmptyTuple] =
+      skip(`!`)
+        ~ skip(`:`)
+        ~ trailing
+
+    lazy val impl: SeqPattern[Unit] =
+      repeated1(
+        forallExists
+          | choose
+          | lambda
+          | idFrag
+          | simpleCases // last, otherwise it eats parts of the above
+      ).void
+
+    nodeSpanMatchedBy(impl).map(RawExpression.apply)
+
+  val proofDelimiters: Seq[Token] = Seq(
+    defns.ASSUME,
+    defns.VARIABLE,
+    defns.VARIABLES,
+    defns.CONSTANT,
+    defns.CONSTANTS,
+    defns.AXIOM,
+    defns.ASSUMPTION,
+    defns.THEOREM,
+    defns.PROPOSITION,
+    defns.LEMMA,
+    defns.COROLLARY,
+    defns.INSTANCE,
+    defns.LOCAL
+  )
+
+  lazy val assumeProve: SeqPattern[EmptyTuple] =
+    skip(defns.ASSUME)
+      ~ skip(
+        repeated(
+          anyChild <* not(tok(defns.PROVE, defns.ASSUME))
+            | defer(assumeProve)
+        )
+      )
+      ~ skip(defns.PROVE)
+      ~ skip(rawExpression)
+      ~ trailing
+
+  lazy val rawProofs: SeqPattern[IndexedSeqView[Node.Child]] =
+    val simpleCases: SeqPattern[Unit] =
+      anyChild.void <* not(
+        tok(proofDelimiters*)
+          | operatorDefnBeginnings
+      )
+
+    val innerDefn: SeqPattern[EmptyTuple] =
+      skip(StepMarker)
+        ~ skip(
+          (
+            skip(optional(defns.DEFINE))
+              ~ skip(operatorDefnBeginnings)
+              ~ trailing
+          )
+            | tok(defns.INSTANCE)
+        )
+        ~ trailing
+
+    val impl: SeqPattern[Unit] =
+      repeated(
+        assumeProve
+          | innerDefn
+          | simpleCases
+      ).void
+
+    nodeSpanMatchedBy(impl)
+
   val reservedWordsAndComments = passDef:
     wellformed := TLAReader.wellformed.makeDerived:
       TLAReader.groupTokens.foreach: tok =>
@@ -81,119 +251,171 @@ object TLAParser extends PassSeq:
         ).rewrite: _ =>
           splice() // delete it. TODO: maybe try to gather comments?
 
-  val unitDefns = passDef:
+  val moduleGroups = passDef:
     wellformed := prevWellformed.makeDerived:
       Node.Top ::=! repeated(tokens.Module)
-
-      tokens.Id ::= Atom
-      tokens.OpSym.importFrom(tla.wellformed)
-
-      val addedTokens = List(
-        tokens.Operator,
-        tokens.Variable,
-        tokens.Constant,
-        tokens.Assumption,
-        tokens.Theorem,
-        tokens.Recursive,
-        tokens.Instance
-      )
-      val removedTokens = List(
-        TLAReader.`_==_`,
-        defns.VARIABLE,
-        defns.VARIABLES,
-        defns.CONSTANT,
-        defns.CONSTANTS,
-        defns.ASSUME,
-        defns.AXIOM,
-        defns.ASSUMPTION,
-        defns.THEOREM,
-        defns.INSTANCE
-      )
+      TLAReader.groupTokens.foreach: tok =>
+        tok.removeCases(defns.MODULE, DashSeq, EqSeq)
 
       tokens.Module ::= fields(
         tokens.Id,
         tokens.Module.Extends,
         tokens.Module.Defns
       )
-      tokens.Module.Extends ::= repeated(tokens.Id)
+      tokens.Module.Extends.importFrom(tla.wellformed)
       tokens.Module.Defns ::= repeated(
+        choice(ModuleGroup.existingCases + DashSeq)
+      )
+
+    pass(once = true, strategy = pass.topDown)
+      .rules:
+        on(
+          tok(ModuleGroup).withChildren:
+            skip(DashSeq)
+              ~ skip(defns.MODULE)
+              ~ field(Alpha)
+              ~ skip(DashSeq)
+              ~ field(
+                optional(
+                  skip(defns.EXTENDS)
+                    ~ field(repeatedSepBy1(`,`)(Alpha))
+                    ~ trailing
+                ).map(_.getOrElse(Nil))
+              )
+              ~ field(repeated(anyChild <* not(EqSeq)))
+              ~ skip(EqSeq)
+              ~ eof
+        ).rewrite: (name, exts, unitSoup) =>
+          splice(
+            tokens.Module(
+              tokens.Id().like(name),
+              tokens.Module.Extends(exts.map(ext => tokens.Id().like(ext))),
+              tokens.Module.Defns(unitSoup.map(_.unparent()))
+            )
+          )
+
+  val unitDefns = passDef:
+    wellformed := prevWellformed.makeDerived:
+      tokens.OpSym.importFrom(tla.wellformed)
+
+      tokens.Module.Defns ::=! repeated(
         choice(
-          TLAReader.ParenthesesGroup.existingCases -- removedTokens ++ addedTokens
+          tokens.Operator,
+          tokens.Variable,
+          tokens.Constant,
+          tokens.Assumption,
+          tokens.Theorem,
+          tokens.Recursive,
+          tokens.Instance,
+          tokens.ModuleDefinition,
+          tokens.UseOrHide,
+          defns.LOCAL // goes away on next pass!
         )
       )
 
       TLAReader.groupTokens.foreach: tok =>
-        tok.removeCases(removedTokens*)
-        tok.addCases(addedTokens*)
+        tok.removeCases(
+          `_==_`,
+          defns.VARIABLE,
+          defns.VARIABLES,
+          defns.CONSTANT,
+          defns.CONSTANTS,
+          defns.ASSUME,
+          defns.AXIOM,
+          defns.ASSUMPTION,
+          defns.THEOREM,
+          defns.INSTANCE
+        )
 
-      tokens.Operator ::= fields(
-        choice(tokens.Id, tokens.OpSym),
-        choice(TLAReader.ParenthesesGroup, TLAReader.SqBracketsGroup)
+      tokens.Expr ::= repeated(
+        choice(TLAReader.ParenthesesGroup.existingCases),
+        minCount = 1
       )
 
+      TLAReader.LetGroup ::=! repeated(
+        choice(
+          tokens.Operator,
+          tokens.ModuleDefinition
+        )
+      )
+
+      tokens.Operator.importFrom(tla.wellformed)
       tokens.Variable.importFrom(tla.wellformed)
       tokens.Constant.importFrom(tla.wellformed)
       tokens.OpSym.importFrom(tla.wellformed)
-      tokens.Assumption ::= Atom
-      tokens.Theorem ::= Atom
+      tokens.Assumption.importFrom(tla.wellformed)
+      tokens.Theorem.importFrom(tla.wellformed)
       tokens.Recursive.importFrom(tla.wellformed)
-      tokens.Instance ::= tokens.Id
+      tokens.Instance.importFrom(tla.wellformed)
+      tokens.ModuleDefinition.importFrom(tla.wellformed)
+      tokens.UseOrHide.importFrom(tla.wellformed)
+
+    final case class Instance(
+        name: Node,
+        substitutions: List[(Node, RawExpression)]
+    ):
+      def mkNode: Node =
+        tokens.Instance(
+          tokens.Id().like(name),
+          tokens.Instance.Substitutions(
+            substitutions.iterator
+              .map: (name, expr) =>
+                tokens.Instance.Substitution(
+                  if name.token == Alpha
+                  then tokens.Id().like(name)
+                  else name.unparent(),
+                  expr.mkNode
+                )
+          )
+        )
+
+    object Instance:
+      val pattern: SeqPattern[Instance] =
+        (
+          skip(defns.INSTANCE)
+            ~ field(TLAReader.Alpha)
+            ~ field(
+              optional(
+                skip(defns.WITH)
+                  ~ field(repeatedSepBy1(`,`):
+                    field(tok(Alpha) | tok(defns.Operator.instances*))
+                      ~ skip(`<-`)
+                      ~ field(rawExpression)
+                      ~ trailing
+                  )
+                  ~ trailing
+              )
+            )
+            ~ trailing
+        ).map: (name, subsOpt) =>
+          Instance(name, subsOpt.getOrElse(Nil))
 
     pass(once = true, strategy = pass.bottomUp)
       .rules:
-        // module
-        on(
-          ModuleGroup
-          *: children:
-            skip(DashSeq)
-              ~ skip(optional(Comment))
-              ~ skip(defns.MODULE)
-              ~ skip(optional(Comment))
-              ~ field(Alpha)
-              ~ skip(optional(Comment))
-              ~ skip(DashSeq)
-              ~ skip(optional(Comment))
-              ~ field(
-                optional:
-                  skip(defns.EXTENDS)
-                    ~ field(
-                      repeatedSepBy1(skip(optional(Comment)) ~ skip(`,`)):
-                        skip(optional(Comment))
-                          ~ field(Alpha)
-                          ~ trailing
-                    ) ~ trailing
-              ) ~ field(optional(anyChild))
-              ~ trailing
-        ).rewrite: (m, name, extendsOpt, endOpt) =>
-          val exts = extendsOpt match
-            case None       => Nil
-            case Some(exts) => exts.map(ext => tokens.Id().like(ext))
-          val defns = endOpt match
-            case None => Nil
-            case Some(end) =>
-              val endIdx = end.idxInParent
-              // .init to remove the EqSeq at end
-              m.unparentedChildren.view.drop(endIdx).init
-          splice(
-            tokens.Module(
-              tokens.Id().like(name),
-              tokens.Module.Extends(exts),
-              tokens.Module.Defns(defns)
-            )
-          )
         // operator defn variations
-        | on(
+        on(
           field(Alpha)
-            ~ field(optional(ParenthesesGroup))
+            ~ field(
+              optional(
+                tok(ParenthesesGroup) *> children(
+                  repeatedSepBy(`,`)(TLAReader.Alpha)
+                )
+              )
+            )
             ~ skip(`_==_`)
+            ~ field(rawExpression)
             ~ trailing
-        ).rewrite: (name, paramsOpt) =>
+        ).rewrite: (name, paramsOpt, body) =>
           splice(
             tokens.Operator(
               tokens.Id().like(name),
               paramsOpt match
-                case None         => ParenthesesGroup()
-                case Some(params) => params.unparent()
+                case None => tokens.Operator.Params()
+                case Some(params) =>
+                  tokens.Operator.Params(
+                    params.iterator.map(p => tokens.Id().like(p))
+                  ),
+              body.mkNode
             )
           )
         | on(
@@ -201,48 +423,63 @@ object TLAParser extends PassSeq:
             ~ field(tok(defns.InfixOperator.instances*))
             ~ field(Alpha)
             ~ skip(`_==_`)
+            ~ field(rawExpression)
             ~ trailing
-        ).rewrite: (param1, op, param2) =>
+        ).rewrite: (param1, op, param2, body) =>
           splice(
             tokens.Operator(
               tokens.OpSym(op.unparent()),
-              ParenthesesGroup(param1.unparent(), param2.unparent())
+              tokens.Operator
+                .Params(tokens.Id().like(param1), tokens.Id().like(param2)),
+              body.mkNode
             )
           )
         | on(
           field(Alpha)
             ~ field(tok(defns.PostfixOperator.instances*))
             ~ skip(`_==_`)
+            ~ field(rawExpression)
             ~ trailing
-        ).rewrite: (param, op) =>
+        ).rewrite: (param, op, body) =>
           splice(
             tokens.Operator(
               tokens.OpSym(op.unparent()),
-              ParenthesesGroup(param.unparent())
+              tokens.Operator.Params(tokens.Id().like(param)),
+              body.mkNode
             )
           )
         | on(
           field(tok(defns.PrefixOperator.instances*))
             ~ field(Alpha)
             ~ skip(`_==_`)
+            ~ field(rawExpression)
             ~ trailing
-        ).rewrite: (op, param) =>
+        ).rewrite: (op, param, body) =>
           splice(
             tokens.Operator(
               tokens.OpSym(op.unparent()),
-              ParenthesesGroup(param.unparent())
+              tokens.Operator.Params(tokens.Id().like(param)),
+              body.mkNode
             )
           )
         | on(
           field(Alpha)
             ~ field(SqBracketsGroup)
             ~ skip(`_==_`)
+            ~ field(rawExpression)
             ~ trailing
-        ).rewrite: (name, params) =>
+        ).rewrite: (name, params, body) =>
           splice(
             tokens.Operator(
               tokens.Id().like(name),
-              params.unparent()
+              tokens.Operator.Params(),
+              tokens.Expr(
+                SqBracketsGroup(
+                  params.children.view.map(_.unparent())
+                    ++ List(`|->`())
+                    ++ body.nodes.map(_.unparent())
+                )
+              )
             )
           )
         // variable decls
@@ -286,14 +523,70 @@ object TLAParser extends PassSeq:
           )
         // assume
         | on(
-          tok(defns.ASSUME, defns.ASSUMPTION, defns.AXIOM)
-        ).rewrite: kw =>
-          splice(tokens.Assumption().like(kw))
+          skip(tok(defns.ASSUME, defns.ASSUMPTION, defns.AXIOM))
+            ~ field(
+              optional(
+                field(Alpha)
+                  ~ skip(`_==_`)
+                  ~ trailing
+              )
+            )
+            ~ field(rawExpression)
+            ~ trailing
+        ).rewrite: (nameOpt, rawExpr) =>
+          splice(
+            tokens.Assumption(
+              nameOpt match
+                case None       => tokens.Anonymous()
+                case Some(name) => tokens.Id().like(name),
+              rawExpr.mkNode
+            )
+          )
         // theorem
         | on(
-          tok(defns.THEOREM, defns.PROPOSITION, defns.LEMMA, defns.COROLLARY)
-        ).rewrite: kw =>
-          splice(tokens.Theorem().like(kw))
+          skip(
+            tok(defns.THEOREM, defns.PROPOSITION, defns.LEMMA, defns.COROLLARY)
+          )
+            ~ field(
+              optional(
+                field(Alpha)
+                  ~ skip(`_==_`)
+                  ~ trailing
+              )
+            )
+            ~ field(nodeSpanMatchedBy(assumeProve.void) | rawExpression)
+            ~ field(
+              optional(
+                // without ~, this works like a lookahead
+                tok(
+                  TLAReader.StepMarker,
+                  defns.PROOF,
+                  defns.BY,
+                  defns.OBVIOUS,
+                  defns.OMITTED
+                )
+                  *> rawProofs
+              )
+            )
+            ~ trailing
+        ).rewrite: (nameOpt, body, proofsOpt) =>
+          splice(
+            tokens.Theorem(
+              nameOpt match
+                case None       => tokens.Anonymous()
+                case Some(name) => tokens.Id().like(name),
+              body match
+                case rawExpr: RawExpression => rawExpr.mkNode
+                case assumeProveNodes: IndexedSeqView[Node.Child] =>
+                  tokens.Theorem.AssumeProve(
+                    assumeProveNodes.map(_.unparent())
+                  ),
+              proofsOpt match
+                case None => tokens.Theorem.Proofs()
+                case Some(proofs) =>
+                  tokens.Theorem.Proofs(proofs.map(_.unparent()))
+            )
+          )
         // recursive
         | on(
           skip(tok(defns.RECURSIVE))
@@ -326,146 +619,115 @@ object TLAParser extends PassSeq:
           )
         // instance
         | on(
-          skip(defns.INSTANCE)
-            ~ field(TLAReader.Alpha)
+          Instance.pattern
+        ).rewrite: inst =>
+          splice(inst.mkNode)
+        // module definition
+        | on(
+          field(Alpha)
+            ~ field(optional(ParenthesesGroup))
+            ~ skip(`_==_`)
+            ~ field(Instance.pattern)
             ~ trailing
-        ).rewrite: name =>
-          splice(tokens.Instance(tokens.Id().like(name)))
+        ).rewrite: (name, paramsOpt, instance) =>
+          splice(
+            tokens.ModuleDefinition(
+              tokens.Id().like(name),
+              paramsOpt match
+                case None => tokens.Operator.Params()
+                case Some(params) =>
+                  tokens.Operator.Params(params.unparentedChildren),
+              instance.mkNode
+            )
+          )
+        // dashseq
+        | on(
+          tok(DashSeq)
+        ).rewrite: _ =>
+          splice()
+        // useOrHide
+        | on(
+          tok(defns.USE, defns.HIDE)
+            *> rawProofs
+        ).rewrite: contents =>
+          splice(tokens.UseOrHide(contents.map(_.unparent())))
 
-  val joinCompoundUnits = passDef:
+  val addLocals = passDef:
     wellformed := prevWellformed.makeDerived:
       tokens.Module.Defns.removeCases(defns.LOCAL)
-      tokens.Module.Defns.addCases(tokens.Local, tokens.ModuleDefinition)
+      tokens.Module.Defns.addCases(tokens.Local)
       tokens.Local.importFrom(tla.wellformed)
-      TLAReader.groupTokens.foreach: tok =>
-        tok.removeCases(defns.LOCAL)
-        tok.addCases(tokens.Local, tokens.ModuleDefinition)
-
-      tokens.ModuleDefinition ::= fields(
-        choice(tokens.Id, tokens.OpSym),
-        TLAReader.ParenthesesGroup,
-        tokens.Instance
-      )
 
     pass(once = true, strategy = pass.bottomUp)
       .rules:
         // LOCAL <op>
         on(
-          field(tok(defns.LOCAL) <* parent(tokens.Module.Defns))
-            ~ field(tok(tokens.Operator, tokens.Instance))
+          field(tok(defns.LOCAL))
+            ~ field(
+              tok(tokens.Operator, tokens.Instance, tokens.ModuleDefinition)
+            )
             ~ trailing
         ).rewrite: (local, op) =>
-          spliceThen(tokens.Local(op.unparent()).like(local)):
-            // try again at this location; you might catch LOCAL op == INSTANCE ...
-            continuePass
-        // <op> == INSTANCE ...
-        | on(
-          field(
-            tok(tokens.Operator) <* children(
-              skip(anyNode)
-                ~ skip(not(TLAReader.SqBracketsGroup))
-                ~ trailing
-            )
-          )
-            ~ field(tokens.Instance)
-            ~ trailing
-        ).rewrite: (op, instance) =>
-          splice(
-            tokens.ModuleDefinition(
-              op(tokens.Id, tokens.OpSym).unparent(),
-              op(TLAReader.ParenthesesGroup).unparent(),
-              instance.unparent()
-            )
-          )
-    // TODO: actually look for LOCAL <op> INSTANCE
+          splice(tokens.Local(op.unparent()).like(local))
 
-  // val consumeDefinitionContents = passDef:
-  //   val delimiterSeq = Seq(
-  //     tokens.Operator,
-  //     tokens.Instance,
-  //     tokens.Local,
-  //     tokens.Recursive,
-  //     tokens.Theorem,
-  //     tokens.Assumption,
-  //     tokens.Variable,
-  //     tokens.Constant,
-  //     tokens.ModuleDefinition,
-  //     TLAReader.DashSeq,
-  //   )
+  // TODO: finish expression parsing
+  // val buildExpressions = passDef:
   //   wellformed := prevWellformed.makeDerived:
-  //     tokens.Operator ::=! fields(
-  //       choice(tokens.Id, tokens.OpSym),
-  //       choice(TLAReader.ParenthesesGroup, TLAReader.SqBracketsGroup),
-  //       tokens.Expr,
+  //     val removedCases = Seq(
+  //       TLAReader.StringLiteral,
+  //       TLAReader.NumberLiteral,
+  //       TLAReader.TupleGroup,
   //     )
-
-  //     tokens.Expr ::= prevWellformed.shapeOf(TLAReader.ParenthesesGroup)
-  //     tokens.Expr.removeCases(delimiterSeq*)
+  //     tokens.Module.Defns.removeCases(removedCases*)
+  //     tokens.Module.Defns.addCases(tokens.Expr)
   //     TLAReader.groupTokens.foreach: tok =>
-  //       tok.removeCases(delimiterSeq*)
+  //       tok.removeCases(removedCases*)
+  //       tok.addCases(tokens.Expr)
 
-  //     TLAReader.LetGroup ::=! tla.wellformed.shapeOf(tokens.Expr.Let.Defns)
-  //     tokens.Module.Defns ::=! tla.wellformed.shapeOf(tokens.Module.Defns)
-  //     tokens.Assumption ::=! tla.wellformed.shapeOf(tokens.Assumption)
-  //     tokens.Theorem ::=! tla.wellformed.shapeOf(tokens.Theorem)
-  //     tokens.Instance ::=! fields(
-  //       tokens.Id,
-  //       tokens.Instance.With,
-  //     )
-  //     tokens.Instance.With ::= repeated(choice(tokens.Expr.existingCases))
+  //     tokens.Expr.importFrom(tla.wellformed)
+  //     tokens.Expr.addCases(tokens.TmpGroupExpr)
 
-  //   val delimiters = tok(delimiterSeq*)
+  //     tokens.TmpGroupExpr ::= tokens.Expr
 
-  //   pass(once = true, strategy = pass.bottomUp)
+  //   pass(once = false, strategy = pass.bottomUp)
   //     .rules:
-  //       val restChildren = field(repeated(anyChild <* not(delimiters)))
   //       on(
-  //         TLAReader.DashSeq // delete all ----
-  //       ).rewrite: _ =>
-  //         splice()
+  //         TLAReader.StringLiteral
+  //       ).rewrite: lit =>
+  //         splice(tokens.Expr(tokens.Expr.StringLiteral().like(lit)))
   //       | on(
-  //         fields(
-  //           (tok(tokens.Local), onlyChild(tokens.Operator)).tupled
-  //             | (tok(tokens.Operator) <* not(parent(tokens.Local))).map(op => (op, op))
+  //         TLAReader.NumberLiteral
+  //       ).rewrite: lit =>
+  //         splice(tokens.Expr(tokens.Expr.NumberLiteral().like(lit)))
+  //       | on(
+  //         field(TLAReader.Alpha)
+  //         ~ field(
+  //           tok(TLAReader.ParenthesesGroup) *> children(
+  //             repeatedSepBy(`,`)(tokens.Expr)
+  //           )
   //         )
-  //         ~ restChildren
   //         ~ trailing
-  //       ).rewrite: (owner, op, contents) =>
-  //         op.children += tokens.Expr(contents.iterator.map(_.unparent()))
-  //         splice(owner)
+  //       ).rewrite: (name, params) =>
+  //         splice(tokens.Expr(tokens.Expr.OpCall(
+  //           tokens.Id().like(name),
+  //           tokens.Expr.OpCall.Params(params.iterator.map(_.unparent())),
+  //         )))
   //       | on(
-  //         field(tokens.Theorem)
-  //         ~ restChildren
-  //         ~ trailing
-  //       ).rewrite: (thm, contents) =>
-  //         thm.children += tokens.Expr(contents.iterator.map(_.unparent()))
-  //         splice(thm)
+  //         TLAReader.Alpha
+  //       ).rewrite: name =>
+  //         splice(tokens.Expr(tokens.Expr.OpCall(
+  //           tokens.Id().like(name),
+  //           tokens.Expr.OpCall.Params(),
+  //         )))
   //       | on(
-  //         field(tokens.Assumption)
-  //         ~ restChildren
-  //         ~ trailing
-  //       ).rewrite: (assm, contents) =>
-  //         assm.children += tokens.Expr(contents.iterator.map(_.unparent()))
-  //         splice(assm)
+  //         tok(TLAReader.ParenthesesGroup) *> onlyChild(tokens.Expr)
+  //       ).rewrite: expr =>
+  //         // mark this group as an expression, but leave evidence that it is a group (for operator precedence handling)
+  //         splice(tokens.Expr(tokens.TmpGroupExpr(expr.unparent())))
   //       | on(
-  //         fields(
-  //           (tok(tokens.Instance) <* not(parent(tokens.ModuleDefinition))).map(inst => (inst, inst))
-  //           | tok(tokens.ModuleDefinition).product(children(
-  //             skip(tok(tokens.Id, tokens.OpSym))
-  //             ~ skip(TLAReader.ParenthesesGroup)
-  //             ~ field(tokens.Instance)
-  //             ~ eof
-  //           ))
-  //         )
-  //         ~ field(optional(
-  //           skip(defns.WITH)
-  //           ~ restChildren
-  //           ~ trailing
+  //         tok(TLAReader.TupleGroup).product(children(
+  //           field(repeatedSepBy(`,`)(tokens.Expr))
+  //           ~ eof
   //         ))
-  //         ~ trailing
-  //       ).rewrite: (parent, inst, contentsOpt) =>
-  //         // TODO: actually handle WITH structure (multiple bindings), maybe in another pass
-  //         inst.children += tokens.Instance.With(
-  //           contentsOpt.getOrElse(Nil).iterator.map(_.unparent())
-  //         )
-  //         splice(parent)
+  //       ).rewrite: (lit, elems) =>
+  //         splice(tokens.Expr(tokens.Expr.TupleLiteral(elems.iterator.map(_.unparent()))))

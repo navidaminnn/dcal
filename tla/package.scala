@@ -36,8 +36,7 @@ object tokens extends TokenSrc:
       ).value
 
   object Expr extends Token, TokenSrc:
-    object IntLiteral extends Token.ShowSource
-    object RationalLiteral extends Token.ShowSource
+    object NumberLiteral extends Token.ShowSource
     object StringLiteral extends Token.ShowSource
 
     object Let extends Token:
@@ -164,8 +163,7 @@ val wellformed: Wellformed =
     )
 
     t.Expr ::= choice(
-      t.Expr.IntLiteral,
-      t.Expr.RationalLiteral,
+      t.Expr.NumberLiteral,
       t.Expr.StringLiteral,
       t.Expr.SetLiteral,
       t.Expr.TupleLiteral,
@@ -186,8 +184,7 @@ val wellformed: Wellformed =
       t.Expr.Lambda
     )
 
-    t.Expr.IntLiteral ::= Atom
-    t.Expr.RationalLiteral ::= Atom
+    t.Expr.NumberLiteral ::= Atom
     t.Expr.StringLiteral ::= Atom
 
     t.Expr.SetLiteral ::= repeated(t.Expr)
@@ -309,8 +306,21 @@ val wellformed: Wellformed =
 
     t.Variable ::= t.Id
     t.Constant ::= choice(t.Id, t.Order2)
-    t.Assumption ::= t.Expr
-    t.Theorem ::= t.Expr
+    t.Anonymous ::= Atom
+    t.Assumption ::= fields(
+      choice(t.Id, t.Anonymous),
+      t.Expr
+    )
+    t.Theorem ::= fields(
+      choice(t.Id, t.Anonymous),
+      choice(t.Expr, t.Theorem.AssumeProve),
+      t.Theorem.Proofs
+    )
+    // unparsed placeholders
+    t.Theorem.AssumeProve ::= AnyShape
+    t.Theorem.Proofs ::= AnyShape
+    t.UseOrHide ::= AnyShape
+
     t.Instance ::= fields(
       t.Id,
       t.Instance.Substitutions

@@ -16,6 +16,7 @@ package distcompiler
 
 import cats.syntax.all.given
 import dsl.*
+import scala.collection.IndexedSeqView
 
 final class SeqPattern[+T](val manip: Manip[(Manip.Handle, Boolean, T)])
     extends AnyVal:
@@ -72,6 +73,10 @@ final class SeqPattern[+T](val manip: Manip[(Manip.Handle, Boolean, T)])
 
   def stripFields[TT](using T <:< Fields[TT]): SeqPattern[TT] =
     this.map(t => t.fields)
+
+  @scala.annotation.targetName("logicalAnd")
+  def &&(other: SeqPattern[?]): SeqPattern[Unit] =
+    this *> other.void
 
 object SeqPattern:
   export applicative.{pure, unit}
@@ -213,14 +218,63 @@ object SeqPattern:
         getHandle.restrict:
           case handle @ Manip.Handle.Sentinel(_, _) => (handle, false, ())
 
+    def atBegin(using DebugInfo): SeqPattern[Unit] =
+      SeqPattern:
+        getHandle.restrict:
+          case handle @ Manip.Handle.Sentinel(_, 0)   => (handle, false, ())
+          case handle @ Manip.Handle.AtChild(_, 0, _) => (handle, false, ())
+
+    def nodeSpanMatchedBy(using DebugInfo)(
+        pattern: SeqPattern[Unit]
+    ): SeqPattern[IndexedSeqView[Node.Child]] =
+      def mkSlice(
+          parent: Node.Parent,
+          startIdx: Int,
+          endIdx: Int,
+          didMatchAtEnd: Boolean
+      ): IndexedSeqView[Node.Child] =
+        val adjustedEndIdx = if didMatchAtEnd then endIdx + 1 else endIdx
+        parent.children.view.slice(startIdx, endIdx)
+
+      SeqPattern:
+        SeqPattern(
+          getHandle
+            .restrict:
+              case handle @ Manip.Handle.Sentinel(parent, idx) =>
+                (handle, false, (parent, idx))
+              case handle @ Manip.Handle.AtChild(parent, idx, _) =>
+                (handle, false, (parent, idx))
+        )
+          .product(pattern)
+          .manip
+          .restrict:
+            case (
+                  handle @ Manip.Handle.Sentinel(parent2, endIdx),
+                  matchedHere,
+                  ((parent, startIdx), ())
+                ) =>
+              assert(parent eq parent2)
+              (
+                handle,
+                matchedHere,
+                mkSlice(parent, startIdx, endIdx, matchedHere)
+              )
+            case (
+                  handle @ Manip.Handle.AtChild(parent2, endIdx, _),
+                  matchedHere,
+                  ((parent, startIdx), ())
+                ) =>
+              assert(parent eq parent2)
+              (
+                handle,
+                matchedHere,
+                mkSlice(parent, startIdx, endIdx, matchedHere)
+              )
+
     export SeqPattern.{FieldsEndMarker as eof, FieldsTrailingMarker as trailing}
 
     def not[T](using DebugInfo)(pattern: SeqPattern[T]): SeqPattern[Unit] =
-      SeqPattern(
-        Manip.Negated(pattern.manip, summon[DebugInfo]) *> getHandle.map(
-          (_, false, ())
-        )
-      )
+      SeqPattern(Manip.Negated(pattern.manip, summon[DebugInfo]) *> unit.manip)
 
     def optional[T](using DebugInfo)(
         pattern: SeqPattern[T]
@@ -236,6 +290,11 @@ object SeqPattern:
           | pure(Nil)
 
       impl
+
+    def repeated1[T](using DebugInfo)(
+        pattern: SeqPattern[T]
+    ): SeqPattern[List[T]] =
+      (field(pattern) ~ field(repeated(pattern)) ~ trailing).map(_ :: _)
 
     def repeatedSepBy1[T](using
         DebugInfo

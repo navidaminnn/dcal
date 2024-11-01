@@ -234,7 +234,11 @@ object Node:
                       case None        =>
                       case Some(child) => impl(child)
                   case Some(child) => impl(child)
-          case embed: Embed[?] => fn(embed)
+          case embed: Embed[?] =>
+            fn(embed) // result doesn't matter as it has no children
+            embed.findNextChild match
+              case None        =>
+              case Some(child) => impl(child)
 
       this match
         case thisChild: Node.Child => impl(thisChild)
@@ -594,6 +598,9 @@ object Node:
 
     private[Node] def makeHole(idx: Int): Unit =
       val hole = Hole()
+      _children(idx) match
+        case node: Node       => hole.like(node)
+        case _: Node.Embed[?] =>
       _children(idx) = hole
       hole.ensureParent(parent, idx)
 

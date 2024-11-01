@@ -19,6 +19,9 @@ import distcompiler.*
 class TLAParserTests extends munit.FunSuite, test.WithTLACorpus:
   self =>
 
+  // TODO: skip the TLAPS files; parsing that seems like a waste of time for now...
+  // or maybe not?
+
   testWithCorpusFile: file =>
     val src = Source.mapFromFile(file)
     val top = TLAReader(SourceRange.entire(src))
@@ -30,11 +33,11 @@ class TLAParserTests extends munit.FunSuite, test.WithTLACorpus:
     )
 
     // re-enable if interesting:
-    // os.write.over(
-    //   os.pwd / "dbg_tla_parser" / s"${file.last}.dbg",
-    //   top.toPrettyWritable(TLAReader.wellformed),
-    //   createFolders = true
-    // )
+    os.write.over(
+      os.pwd / "dbg_tla_parser" / s"${file.last}.dbg",
+      top.toPrettyWritable(TLAReader.wellformed),
+      createFolders = true
+    )
 
     if top.hasErrors
     then fail(top.presentErrors(debug = true))

@@ -37,6 +37,8 @@ object TLAReader extends Reader:
         StringLiteral,
         NumberLiteral,
         // ---
+        StepMarker,
+        // ---
         ModuleGroup,
         ParenthesesGroup,
         SqBracketsGroup,
@@ -67,6 +69,16 @@ object TLAReader extends Reader:
     Alpha ::= Atom
     LaTexLike ::= Atom
 
+    StepMarker ::= fields(
+      choice(StepMarker.Num, StepMarker.Plus, StepMarker.Star),
+      StepMarker.Ident,
+      embedded[Int]
+    )
+    StepMarker.Num ::= Atom
+    StepMarker.Plus ::= Atom
+    StepMarker.Star ::= Atom
+    StepMarker.Ident ::= Atom
+
     Comment ::= Atom
     DashSeq ::= Atom
     EqSeq ::= Atom
@@ -82,6 +94,12 @@ object TLAReader extends Reader:
   object StringLiteral extends Token.ShowSource
   object NumberLiteral extends Token.ShowSource
 
+  object StepMarker extends Token:
+    object Num extends Token.ShowSource
+    object Plus extends Token
+    object Star extends Token
+    object Ident extends Token.ShowSource
+
   object ModuleGroup extends Token
   object ParenthesesGroup extends Token
   object SqBracketsGroup extends Token
@@ -93,14 +111,16 @@ object TLAReader extends Reader:
   object LaTexLike extends Token.ShowSource
 
   object Comment extends Token.ShowSource
-  object DashSeq extends Token.ShowSource
-  object EqSeq extends Token.ShowSource
+  object DashSeq extends Token
+  object EqSeq extends Token
 
   sealed trait NonAlpha extends Product, Token:
     def spelling: String = productPrefix
   object NonAlpha extends util.HasInstanceArray[NonAlpha]
 
   case object `:` extends NonAlpha
+  case object `::` extends NonAlpha
+  case object `<-` extends NonAlpha
   case object `|->` extends NonAlpha
   case object `,` extends NonAlpha
   case object `.` extends NonAlpha
@@ -168,6 +188,23 @@ object TLAReader extends Reader:
     private def installDotNumberLiterals: bytes.selecting[SourceRange] =
       digits.foldLeft(sel): (sel, d) =>
         sel.onSeq(s".$d")(numberLiteralAfterPoint)
+
+    private def installStepMarkers: bytes.selecting[SourceRange] =
+      digits
+        .foldLeft(sel): (sel, d) =>
+          sel.onSeq(s"<$d")(maybeNumStepMarker)
+        .onSeq("<*>"):
+          consumeMatch: m1 =>
+            finishStepMarkerWithIdx(
+              m1,
+              StepMarker.Star(m1.drop(1).dropRight(1))
+            )
+        .onSeq("<+>"):
+          consumeMatch: m1 =>
+            finishStepMarkerWithIdx(
+              m1,
+              StepMarker.Plus(m1.drop(1).dropRight(1))
+            )
 
   override protected lazy val rules: Manip[SourceRange] =
     moduleSearch
@@ -357,6 +394,7 @@ object TLAReader extends Reader:
         .on('}'):
           closeGroup(BracesGroup)
             | invalidGroupClose(BracesGroup, "braces")
+        .installStepMarkers
         .onSeq("<<")(openGroup(TupleGroup))
         .onSeq(">>"):
           closeGroup(TupleGroup)
@@ -469,3 +507,38 @@ object TLAReader extends Reader:
         .installAlphas(letGroupSemantics)
         .installDotNumberLiterals
         .fallback(endNumberLiteral)
+
+  private lazy val maybeNumStepMarker: Manip[SourceRange] =
+    commit:
+      bytes
+        .selecting[SourceRange]
+        .onOneOf(digits)(maybeNumStepMarker)
+        .on('>'):
+          consumeMatch: m1 =>
+            finishStepMarkerWithIdx(m1, StepMarker.Num(m1.drop(1).dropRight(1)))
+        .fallback:
+          Reader.matchedRef.get.flatMap: m =>
+            // throw away the leading <, then pretend it was a num all along
+            // note: this may in fact be `<5x__`  which should lex as op `<`, id `5x__`
+            //       (num lexer already handles this)
+            addChild(defns.`<`(m.take(1)))
+            *> Reader.matchedRef.updated(_ => m.drop(1)):
+              numberLiteral
+
+  private def finishStepMarkerWithIdx(
+      m1: SourceRange,
+      idx: Node
+  ): Manip[SourceRange] =
+    bytes.selectManyLike(digits ++ letters + '_'):
+      consumeMatch: m2 =>
+        bytes.selectManyLike(Set('.')):
+          consumeMatch: m3 =>
+            addChild(
+              StepMarker(
+                idx,
+                StepMarker.Ident(m2),
+                Node.Embed(m3.size)
+              )
+                .at(m1 <+> m2 <+> m3)
+            )
+              *> tokens

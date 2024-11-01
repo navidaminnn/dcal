@@ -634,6 +634,14 @@ object Manip:
           Handle.idxIntoParent(parent, idx + 1)
         case Sentinel(_, _) => None
 
+    def leftSibling: Option[Handle] =
+      assertCoherence()
+      this match
+        case AtTop(_) => None
+        case AtChild(parent, idx, _) =>
+          Handle.idxIntoParent(parent, idx - 1)
+        case Sentinel(_, _) => None
+
     def findFirstChild: Option[Handle] =
       assertCoherence()
       this match
@@ -765,6 +773,13 @@ object Manip:
     def atRightSibling[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       getHandle.lookahead.flatMap: handle =>
         handle.rightSibling match
+          case None => backtrack
+          case Some(handle) =>
+            Manip.Handle.ref.updated(_ => handle)(manip)
+
+    def atLeftSibling[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
+      getHandle.lookahead.flatMap: handle =>
+        handle.leftSibling match
           case None => backtrack
           case Some(handle) =>
             Manip.Handle.ref.updated(_ => handle)(manip)
