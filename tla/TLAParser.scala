@@ -90,7 +90,11 @@ object TLAParser extends PassSeq:
     defns.USE,
     defns.HIDE,
     // may appear between top-level units
-    DashSeq
+    DashSeq,
+    // nested modules look like this (we will have parsed them earlier)
+    tokens.Module,
+    // can occur in nested ASSUME ... ASSUME ... PROVE <expr> PROVE
+    defns.PROVE
   )
 
   final case class RawExpression(nodes: IndexedSeqView[Node.Child]):
@@ -123,7 +127,7 @@ object TLAParser extends PassSeq:
         tok(TupleGroup).as(EmptyTuple)
           | repeatedSepBy1(`,`)(Alpha)
       )
-        ~ skip(tok(LaTexLike).src("\\in"))
+        ~ skip(defns.`\\in`)
         ~ skip(defer(impl))
         ~ trailing
 
@@ -210,7 +214,8 @@ object TLAParser extends PassSeq:
         ~ skip(
           (
             skip(optional(defns.DEFINE))
-              ~ skip(operatorDefnBeginnings)
+            // you can have a chain of operator defs after DEFINE
+              ~ skip(repeatedSepBy1(rawExpression)(operatorDefnBeginnings))
               ~ trailing
           )
             | tok(defns.INSTANCE)
@@ -235,9 +240,16 @@ object TLAParser extends PassSeq:
         .foreach(_ ::= Atom)
 
     val reservedWordMap =
-      defns.ReservedWord.instances.iterator
+      defns.ReservedWord.instances.view
         .map: word =>
           SourceRange.entire(Source.fromString(word.spelling)) -> word
+        .toMap
+
+    val laTexLikeOperatorMap =
+      defns.Operator.instances.view
+        .filter(_.spelling.startsWith("\\"))
+        .map: op =>
+          SourceRange.entire(Source.fromString(op.spelling)) -> op
         .toMap
 
     pass(once = true, strategy = pass.bottomUp)
@@ -246,6 +258,12 @@ object TLAParser extends PassSeq:
           tok(Alpha).filter(node => reservedWordMap.contains(node.sourceRange))
         ).rewrite: word =>
           splice(reservedWordMap(word.sourceRange)().like(word))
+        | on(
+          tok(LaTexLike).filter(node =>
+            laTexLikeOperatorMap.contains(node.sourceRange)
+          )
+        ).rewrite: op =>
+          splice(laTexLikeOperatorMap(op.sourceRange)().like(op))
         | on(
           TLAReader.Comment
         ).rewrite: _ =>
@@ -264,27 +282,41 @@ object TLAParser extends PassSeq:
       )
       tokens.Module.Extends.importFrom(tla.wellformed)
       tokens.Module.Defns ::= repeated(
-        choice(ModuleGroup.existingCases + DashSeq)
+        choice(ModuleGroup.existingCases + DashSeq + tokens.Module)
       )
 
-    pass(once = true, strategy = pass.topDown)
+    pass(once = false, strategy = pass.topDown)
       .rules:
+        // remove top-level modules from ModuleGroup
         on(
-          tok(ModuleGroup).withChildren:
-            skip(DashSeq)
-              ~ skip(defns.MODULE)
-              ~ field(Alpha)
-              ~ skip(DashSeq)
-              ~ field(
-                optional(
-                  skip(defns.EXTENDS)
-                    ~ field(repeatedSepBy1(`,`)(Alpha))
-                    ~ trailing
-                ).map(_.getOrElse(Nil))
+          tok(ModuleGroup) *> onlyChild(tokens.Module)
+        ).rewrite: mod =>
+          splice(mod.unparent())
+        // Any module that doesn't have what looks like an unparsed nested module in it.
+        | on(
+          skip(DashSeq)
+            ~ skip(defns.MODULE)
+            ~ field(Alpha)
+            ~ skip(DashSeq)
+            ~ field(
+              optional(
+                skip(defns.EXTENDS)
+                  ~ field(repeatedSepBy1(`,`)(Alpha))
+                  ~ trailing
+              ).map(_.getOrElse(Nil))
+            )
+            ~ field(
+              repeated(
+                anyChild <* not(
+                  tok(EqSeq)
+                    | (skip(DashSeq) ~ skip(defns.MODULE) ~ skip(Alpha) ~ skip(
+                      DashSeq
+                    ) ~ trailing)
+                )
               )
-              ~ field(repeated(anyChild <* not(EqSeq)))
-              ~ skip(EqSeq)
-              ~ eof
+            )
+            ~ skip(EqSeq)
+            ~ trailing // we might be inside another module
         ).rewrite: (name, exts, unitSoup) =>
           splice(
             tokens.Module(
@@ -308,6 +340,7 @@ object TLAParser extends PassSeq:
           tokens.Recursive,
           tokens.Instance,
           tokens.ModuleDefinition,
+          tokens.Module,
           tokens.UseOrHide,
           defns.LOCAL // goes away on next pass!
         )
@@ -335,7 +368,8 @@ object TLAParser extends PassSeq:
       TLAReader.LetGroup ::=! repeated(
         choice(
           tokens.Operator,
-          tokens.ModuleDefinition
+          tokens.ModuleDefinition,
+          tokens.Recursive
         )
       )
 
@@ -625,7 +659,13 @@ object TLAParser extends PassSeq:
         // module definition
         | on(
           field(Alpha)
-            ~ field(optional(ParenthesesGroup))
+            ~ field(
+              optional(
+                tok(ParenthesesGroup) *> children(
+                  repeated1(Alpha)
+                )
+              )
+            )
             ~ skip(`_==_`)
             ~ field(Instance.pattern)
             ~ trailing
@@ -636,7 +676,9 @@ object TLAParser extends PassSeq:
               paramsOpt match
                 case None => tokens.Operator.Params()
                 case Some(params) =>
-                  tokens.Operator.Params(params.unparentedChildren),
+                  tokens.Operator.Params(
+                    params.map(param => tokens.Id().like(param))
+                  ),
               instance.mkNode
             )
           )

@@ -14,6 +14,7 @@
 
 package distcompiler
 
+import cats.syntax.all.given
 import dsl.*
 
 class ManipTests extends munit.FunSuite:
@@ -50,45 +51,21 @@ class ManipTests extends munit.FunSuite:
   def treePairs: Iterator[(Node.Top, Node.Top)] =
     examples(4, shouldVary = true).zip(examples(4, shouldVary = false))
 
+  // test sanity condition
+  test("sanity: all trees are equal to themselves".fail):
+    treePairs.foreach: (bi, mono) =>
+      assertEquals(bi, mono)
+
   val unifyColors1 =
     pass(once = true)
       .rules:
-        on(
-          tok2
-        ).rewrite: node =>
+        on(tok2).rewrite: node =>
           spliceThen(tok1(node.unparentedChildren)):
             continuePassAtNextNode
-
-  val unifyColors2 =
-    pass(once = false)
-      .rules:
-        on(tok2).rewrite: node =>
-          splice(tok1(node.unparentedChildren))
-
-  val unifyColors3 =
-    pass(once = true, strategy = pass.bottomUp)
-      .rules:
-        on(tok2).rewrite: node =>
-          splice(tok1(node.unparentedChildren))
-
-  // test sanity condition
-  test("all trees are equal".fail):
-    treePairs.foreach: (bi, mono) =>
-      assertEquals(bi, mono)
 
   test("treePairs unifyColors1"):
     treePairs.foreach: (bi, mono) =>
       atNode(bi)(unifyColors1).perform()
-      assertEquals(bi, mono)
-
-  test("treePairs unifyColors2"):
-    treePairs.foreach: (bi, mono) =>
-      atNode(bi)(unifyColors2).perform()
-      assertEquals(bi, mono)
-
-  test("treePairs unifyColors3"):
-    treePairs.foreach: (bi, mono) =>
-      atNode(bi)(unifyColors3).perform()
       assertEquals(bi, mono)
 
   test("unifyColors1 on a single node"):
@@ -96,6 +73,91 @@ class ManipTests extends munit.FunSuite:
     val mono = Node.Top(tok1())
     atNode(bi)(unifyColors1).perform()
     assertEquals(bi, mono)
+
+  val unifyColors2 =
+    pass(once = false)
+      .rules:
+        on(tok2).rewrite: node =>
+          splice(tok1(node.unparentedChildren))
+
+  test("treePairs unifyColors2"):
+    treePairs.foreach: (bi, mono) =>
+      atNode(bi)(unifyColors2).perform()
+      assertEquals(bi, mono)
+
+  val unifyColors3 =
+    pass(once = true, strategy = pass.bottomUp)
+      .rules:
+        on(tok2).rewrite: node =>
+          splice(tok1(node.unparentedChildren))
+
+  test("treePairs unifyColors3"):
+    treePairs.foreach: (bi, mono) =>
+      atNode(bi)(unifyColors3).perform()
+      assertEquals(bi, mono)
+
+  val unifyColors4 =
+    pass(once = true, strategy = pass.bottomUp)
+      .rules:
+        on(repeated1(tok2)).rewrite: nodes =>
+          splice(nodes.map(node => tok1(node.unparentedChildren)))
+
+  test("treePairs unifyColors4"):
+    treePairs.foreach: (bi, mono) =>
+      atNode(bi)(unifyColors4).perform()
+      assertEquals(bi, mono)
+
+  val unifyColors5 =
+    pass(once = true, strategy = pass.bottomUp)
+      .rules:
+        on(nodeSpanMatchedBy(repeated1(tok2).void)).rewrite: span =>
+          splice(
+            span.map(node => tok1(node.asInstanceOf[Node].unparentedChildren))
+          )
+
+  test("treePairs unifyColors5"):
+    treePairs.foreach: (bi, mono) =>
+      atNode(bi)(unifyColors5).perform()
+      assertEquals(bi, mono)
+
+  val unifyColors6 =
+    pass(once = true, strategy = pass.bottomUp)
+      .rules:
+        on(nodeSpanMatchedBy(repeated1(anyChild <* not(tok1)).void)).rewrite:
+          span =>
+            splice(
+              span.map(node => tok1(node.asInstanceOf[Node].unparentedChildren))
+            )
+
+  test("treePairs unifyColors6"):
+    treePairs.foreach: (bi, mono) =>
+      atNode(bi)(unifyColors6).perform()
+      assertEquals(bi, mono)
+
+  val unifyColors7 =
+    pass(once = true, strategy = pass.bottomUp)
+      .rules:
+        on(nodeSpanMatchedBy(repeated1(anyChild <* not(repeated1(tok1))).void))
+          .rewrite: span =>
+            splice(
+              span.map(node => tok1(node.asInstanceOf[Node].unparentedChildren))
+            )
+
+  test("treePairs unifyColors7"):
+    treePairs.foreach: (bi, mono) =>
+      atNode(bi)(unifyColors7).perform()
+      assertEquals(bi, mono)
+
+  val unifyColors8 =
+    pass(once = true, strategy = pass.bottomUp)
+      .rules:
+        on(tok(tok2) *> repeated1(tok2)).rewrite: nodes =>
+          splice(nodes.map(node => tok1(node.unparentedChildren)))
+
+  test("treePairs unifyColors8"):
+    treePairs.foreach: (bi, mono) =>
+      atNode(bi)(unifyColors8).perform()
+      assertEquals(bi, mono)
 
 object ManipTests:
   object tok1 extends Token

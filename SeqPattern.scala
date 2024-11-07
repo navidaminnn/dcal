@@ -18,7 +18,7 @@ import cats.syntax.all.given
 import dsl.*
 import scala.collection.IndexedSeqView
 
-final class SeqPattern[+T](val manip: Manip[(Manip.Handle, Boolean, T)])
+final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]])
     extends AnyVal:
   import SeqPattern.*
 
@@ -27,24 +27,25 @@ final class SeqPattern[+T](val manip: Manip[(Manip.Handle, Boolean, T)])
 
   def productAtRightSibling[U](other: SeqPattern[U]): SeqPattern[(T, U)] =
     SeqPattern:
-      manip.lookahead.flatMap: (handle, matched, t) =>
-        atHandle(handle):
-          if matched
-          then
-            atRightSibling:
-              other.map((t, _)).manip
-          else other.map((t, _)).manip
+      manip.lookahead.flatMap:
+        case Result.Top(_, _) => backtrack
+        case Result.Look(_, idx, t) =>
+          atIdx(idx)(other.map((t, _)).manip)
+        case Result.Match(_, idx, t) =>
+          atIdx(idx + 1)(other.map((t, _)).manip)
 
   def restrict[U](fn: PartialFunction[T, U]): SeqPattern[U] =
     SeqPattern:
       manip.restrict:
-        case (handle, matched, fn(u)) => (handle, matched, u)
+        case Result.Top(top, fn(u))           => Result.Top(top, u)
+        case Result.Look(parent, idx, fn(u))  => Result.Look(parent, idx, u)
+        case Result.Match(parent, idx, fn(u)) => Result.Match(parent, idx, u)
 
   def filter(pred: T => Boolean): SeqPattern[T] =
-    SeqPattern(manip.filter(p => pred(p._3)))
+    SeqPattern(manip.filter(res => pred(res.value)))
 
   def asManip: Manip[T] =
-    manip.map(_._3)
+    manip.map(_.value)
 
   @scala.annotation.targetName("fieldsConcat")
   def ~[Tpl1 <: Tuple, Tpl2 <: Tuple](using
@@ -83,70 +84,101 @@ object SeqPattern:
 
   given applicative: cats.Applicative[SeqPattern] with
     override val unit: SeqPattern[Unit] = pure(())
-    def pure[A](x: A): SeqPattern[A] = SeqPattern(getHandle.map((_, false, x)))
+    def pure[A](x: A): SeqPattern[A] = SeqPattern:
+      getHandle.map:
+        case Manip.Handle.AtTop(top) =>
+          Result.Top(top, x)
+        case handle: (Manip.Handle.Sentinel | Manip.Handle.AtChild) =>
+          Result.Look(handle.parent, handle.idx, x)
     override def map[A, B](fa: SeqPattern[A])(f: A => B): SeqPattern[B] =
       SeqPattern:
-        fa.manip.map: pair =>
-          val (handle, matched, a) = pair
-          val b = f(a)
-          // optimization: if it's literally the same object, don't remake the tuple
-          if a.asInstanceOf[AnyRef] eq b.asInstanceOf[AnyRef]
-          then pair.asInstanceOf[(Manip.Handle, Boolean, B)]
-          else (handle, matched, b)
+        fa.manip.map: result =>
+          result.withValue(f(result.value))
     def ap[A, B](ff: SeqPattern[A => B])(fa: SeqPattern[A]): SeqPattern[B] =
       SeqPattern:
-        (ff.manip, fa.manip).mapN:
-          case ((handle1, matched1, ff), (handle2, matched2, fa)) =>
-            val matched = matched1 || matched2
-            val value = ff(fa)
-            if handle1 eq handle2
-            then (handle1, matched, value)
-            else
-              import Manip.Handle
-              (handle1, handle2) match
-                case (Handle.AtTop(top1), Handle.AtTop(top2)) =>
-                  assert(top1 eq top2)
-                  (handle1, matched, value)
-                case (
-                      Handle.AtChild(parent1, idx1, child1),
-                      Handle.AtChild(parent2, idx2, child2)
-                    ) =>
-                  assert(parent1 eq parent2)
-                  if idx1 < idx2
-                  then (handle2, matched, value)
-                  else (handle1, matched, value)
-                case (
-                      Handle.AtChild(parent1, idx1, _),
-                      Handle.Sentinel(parent2, idx2)
-                    ) =>
-                  assert(parent1 eq parent2)
-                  assert(idx1 < idx2)
-                  (handle2, matched, value)
-                case (
-                      Handle.Sentinel(parent1, idx1),
-                      Handle.AtChild(parent2, idx2, _)
-                    ) =>
-                  assert(parent1 eq parent2)
-                  assert(idx1 > idx2)
-                  (handle1, matched, value)
-                case (
-                      Handle.Sentinel(parent1, idx1),
-                      Handle.Sentinel(parent2, idx2)
-                    ) =>
-                  assert(parent1 eq parent2)
-                  assert(idx1 == idx2)
-                  (handle1, matched, value)
-                case _ =>
-                  assert(false); ???
+        (ff.manip, fa.manip).mapN: (result1, result2) =>
+          result1.combine(result2)(_.apply(_))
 
   given semigroupk: cats.SemigroupK[SeqPattern] with
     def combineK[A](x: SeqPattern[A], y: SeqPattern[A]): SeqPattern[A] =
       SeqPattern(x.manip | y.manip)
 
+  enum Result[+T]:
+    val value: T
+
+    case Top(top: Node.Top, value: T)
+    case Look(parent: Node.Parent, idx: Int, value: T)
+    case Match(parent: Node.Parent, idx: Int, value: T)
+
+    def isLook: Boolean =
+      this match
+        case _: Look[?] => true
+        case _          => false
+
+    def isMatch: Boolean =
+      this match
+        case _: Match[?] => true
+        case _           => false
+
+    def withValue[U](value: U): Result[U] =
+      if this.value.asInstanceOf[AnyRef] eq value.asInstanceOf[AnyRef]
+      then this.asInstanceOf
+      else
+        this match
+          case Top(top, _)           => Top(top, value)
+          case Look(parent, idx, _)  => Look(parent, idx, value)
+          case Match(parent, idx, _) => Match(parent, idx, value)
+
+    def combine[U, V](other: Result[U])(fn: (T, U) => V): Result[V] =
+      def result = fn(value, other.value)
+      (this, other) match
+        case (Top(top1, _), Top(top2, _)) =>
+          assert(top1 eq top2)
+          Top(top1, result)
+        case (Top(_, _), _) | (_, Top(_, _)) =>
+          throw NodeError(
+            "one part of the same pattern matched top while the other did not"
+          )
+        case (lhs: (Look[T] | Match[T]), rhs: (Look[U] | Match[U])) =>
+          assert(rhs.parent eq rhs.parent)
+          val parent = lhs.parent
+          def mkLook(idx: Int): Result[V] =
+            Look(parent, idx, result)
+          def mkMatch(idx: Int): Result[V] =
+            Match(parent, idx, result)
+
+          (lhs, rhs) match
+            case (Look(_, idx1, _), Look(_, idx2, _)) =>
+              mkLook(idx1.max(idx2))
+            case (Look(_, idx1, _), Match(_, idx2, _)) if idx1 <= idx2 =>
+              mkMatch(idx2)
+            case (Look(_, idx1, _), Match(_, idx2, _)) =>
+              assert(idx1 > idx2)
+              mkLook(idx1)
+            case (Match(_, idx1, _), Look(_, idx2, _)) if idx1 < idx2 =>
+              mkLook(idx2)
+            case (Match(_, idx1, _), Look(_, idx2, _)) =>
+              assert(idx1 >= idx2)
+              mkMatch(idx1)
+            case (Match(_, idx1, _), Match(_, idx2, _)) =>
+              mkMatch(idx1.max(idx2))
+
+  object Result:
+    extension [T](result: Result.Look[T] | Result.Match[T])
+      def parent: Node.Parent =
+        result match
+          case Result.Look(parent, _, _)  => parent
+          case Result.Match(parent, _, _) => parent
+      def idx: Int =
+        result match
+          case Result.Look(_, idx, _)  => idx
+          case Result.Match(_, idx, _) => idx
+
   final case class NodeTokensRestriction(tokens: Set[Token])
-      extends Manip.Restriction[Node.All, Node]:
+      extends Manip.Restriction[Node.All, Result[Node]]:
     protected val impl = {
-      case node: Node if tokens(node.token) => node
+      case node: Node if tokens(node.token) =>
+        Result.Match(node.parent.get, node.idxInParent, node)
     }
 
   import scala.language.implicitConversions
@@ -172,7 +204,7 @@ object SeqPattern:
   object ops:
     def refine[T](manip: Manip[T]): SeqPattern[T] =
       SeqPattern:
-        (getHandle, Manip.pure(false), manip).tupled
+        (SeqPattern.unit.manip, manip).mapN(_.withValue(_))
 
     @scala.annotation.targetName("deferSeqPattern")
     def defer[T](pattern: => SeqPattern[T]): SeqPattern[T] =
@@ -191,85 +223,60 @@ object SeqPattern:
 
     def anyNode(using DebugInfo): SeqPattern[Node] =
       SeqPattern:
-        (
-          getHandle,
-          Manip.pure(true),
-          getNode.restrict { case node: Node => node }
-        ).tupled
+        getNode.restrict:
+          case node: Node =>
+            Result.Match(node.parent.get, node.idxInParent, node)
 
     def anyChild(using DebugInfo): SeqPattern[Node.Child] =
       SeqPattern:
-        (
-          getHandle,
-          Manip.pure(true),
-          getNode.restrict { case child: Node.Child => child }
-        ).tupled
+        getNode.restrict:
+          case child: Node.Child =>
+            Result.Match(child.parent.get, child.idxInParent, child)
 
     def tok(using DebugInfo)(tokens: Token*): SeqPattern[Node] =
       SeqPattern:
-        (
-          getHandle,
-          Manip.pure(true),
-          getNode.restrict(NodeTokensRestriction(tokens.toSet))
-        ).tupled
+        getNode.restrict(NodeTokensRestriction(tokens.toSet))
 
     def atEnd(using DebugInfo): SeqPattern[Unit] =
       SeqPattern:
         getHandle.restrict:
-          case handle @ Manip.Handle.Sentinel(_, _) => (handle, false, ())
+          case Manip.Handle.Sentinel(parent, idx) =>
+            Result.Look(parent, idx, ())
 
     def atBegin(using DebugInfo): SeqPattern[Unit] =
       SeqPattern:
         getHandle.restrict:
-          case handle @ Manip.Handle.Sentinel(_, 0)   => (handle, false, ())
-          case handle @ Manip.Handle.AtChild(_, 0, _) => (handle, false, ())
+          case Manip.Handle.Sentinel(parent, 0) =>
+            Result.Look(parent, 0, ())
+          case Manip.Handle.AtChild(parent, 0, _) =>
+            Result.Look(parent, 0, ())
 
     def nodeSpanMatchedBy(using DebugInfo)(
-        pattern: SeqPattern[Unit]
+        pattern: SeqPattern[?]
     ): SeqPattern[IndexedSeqView[Node.Child]] =
-      def mkSlice(
-          parent: Node.Parent,
-          startIdx: Int,
-          endIdx: Int,
-          didMatchAtEnd: Boolean
-      ): IndexedSeqView[Node.Child] =
-        val adjustedEndIdx = if didMatchAtEnd then endIdx + 1 else endIdx
-        parent.children.view.slice(startIdx, endIdx)
-
       SeqPattern:
-        SeqPattern(
-          getHandle
-            .restrict:
-              case handle @ Manip.Handle.Sentinel(parent, idx) =>
-                (handle, false, (parent, idx))
-              case handle @ Manip.Handle.AtChild(parent, idx, _) =>
-                (handle, false, (parent, idx))
-        )
-          .product(pattern)
-          .manip
+        getHandle
+          .restrict:
+            case handle: (Manip.Handle.Sentinel | Manip.Handle.AtChild) =>
+              (handle.parent, handle.idx)
+          .product(pattern.void.manip)
           .restrict:
             case (
-                  handle @ Manip.Handle.Sentinel(parent2, endIdx),
-                  matchedHere,
-                  ((parent, startIdx), ())
+                  (parent, startIdx),
+                  patResult: (Result.Look[Unit] | Result.Match[Unit])
                 ) =>
-              assert(parent eq parent2)
-              (
-                handle,
-                matchedHere,
-                mkSlice(parent, startIdx, endIdx, matchedHere)
-              )
-            case (
-                  handle @ Manip.Handle.AtChild(parent2, endIdx, _),
-                  matchedHere,
-                  ((parent, startIdx), ())
-                ) =>
-              assert(parent eq parent2)
-              (
-                handle,
-                matchedHere,
-                mkSlice(parent, startIdx, endIdx, matchedHere)
-              )
+              assert(patResult.parent eq parent)
+              patResult.withValue:
+                parent.children.view.slice(
+                  from = startIdx,
+                  until =
+                    // Endpoint is exclusive.
+                    // If we matched idx, add 1 to include it.
+                    // Otherwise, default is fine.
+                    if patResult.isMatch
+                    then patResult.idx + 1
+                    else patResult.idx
+                )
 
     export SeqPattern.{FieldsEndMarker as eof, FieldsTrailingMarker as trailing}
 
@@ -313,13 +320,14 @@ object SeqPattern:
     def theTop(using DebugInfo): SeqPattern[Node.Top] =
       SeqPattern:
         getHandle.restrict:
-          case handle @ Manip.Handle.AtTop(top) => (handle, true, top)
+          case Manip.Handle.AtTop(top) =>
+            Result.Top(top, top)
 
     def theFirstChild(using DebugInfo): SeqPattern[Node.Child] =
       SeqPattern:
         getHandle.restrict:
-          case handle @ Manip.Handle.AtChild(_, 0, child) =>
-            (handle, true, child)
+          case Manip.Handle.AtChild(parent, 0, child) =>
+            Result.Match(parent, 0, child)
 
     def children[T](using DebugInfo)(pattern: SeqPattern[T]): SeqPattern[T] =
       refine(atFirstChild(pattern.asManip))
@@ -341,9 +349,10 @@ object SeqPattern:
           pattern: SeqPattern[T]
       ): SeqPattern[T] =
         SeqPattern:
-          parentPattern.manip.lookahead.flatMap: (handle, matched, parent) =>
+          parentPattern.manip.lookahead.flatMap: result =>
+            val parent = result.value
             atNode(parent)(atFirstChild(pattern.asManip))
-              .map((handle, matched, _))
+              .map(result.withValue)
 
     extension (nodePattern: SeqPattern[Node])
       def src(using DebugInfo)(sourceRange: SourceRange): SeqPattern[Node] =

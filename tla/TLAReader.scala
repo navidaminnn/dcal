@@ -365,20 +365,49 @@ object TLAReader extends Reader:
             (on(tok(ModuleGroup)).check
             *> consumeMatch: m =>
               addChild(EqSeq(m))
-                *> atParent(moduleSearch))
-            | consumeMatch: m =>
-              addChild(
-                Builtin.Error(
-                  "unexpected end of module",
-                  Builtin.SourceMarker(m)
+              *> locally:
+                atParent(on(theTop).check *> moduleSearch)
+            )
+              | atParent(tokens)
+              | consumeMatch: m =>
+                addChild(
+                  Builtin.Error(
+                    "unexpected end of module",
+                    Builtin.SourceMarker(m)
+                  )
                 )
-              )
-                *> on(ancestor(theTop)).value.here(moduleSearch)
+                  *> on(ancestor(theTop)).value.here(moduleSearch)
         .onSeq("----"):
           bytes.selectManyLike(Set('-')):
             consumeMatch: m =>
               addChild(DashSeq(m))
-                *> tokens
+              *> locally:
+                val handleNestedModule =
+                  atFirstChild(
+                    atIdxFromRight(3):
+                      on(
+                        field(DashSeq)
+                          ~ field(tok(Alpha).src("MODULE"))
+                          ~ field(Alpha)
+                          ~ field(DashSeq)
+                          ~ eof
+                      ).value.tapEffect: (initDashes, mod, name, endDashes) =>
+                        val parent = initDashes.parent.get
+                        parent.children.patchInPlace(
+                          initDashes.idxInParent,
+                          Iterator.single(
+                            ModuleGroup(
+                              initDashes.unparent(),
+                              mod.unparent(),
+                              name.unparent(),
+                              endDashes.unparent()
+                            )
+                          ),
+                          replaced = 4
+                        )
+                  ) *> atLastChild(tokens)
+
+                handleNestedModule | tokens
         .on('"')(stringLiteral)
         .onSeq("(*")(multiComment)
         .onSeq("\\*")(lineComment)

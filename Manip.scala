@@ -16,8 +16,6 @@ package distcompiler
 
 import cats.syntax.all.given
 import util.{++, toShortString}
-import distcompiler.Manip.ops.pass.resultRef
-import distcompiler.SeqPattern.ops.theFirstChild
 
 enum Manip[+T]:
   private inline given DebugInfo = DebugInfo.poison
@@ -680,6 +678,14 @@ object Manip:
         case AtChild(parent, _, _) => Handle.idxIntoParent(parent, idx)
         case Sentinel(parent, _)   => Handle.idxIntoParent(parent, idx)
 
+    def atIdxFromRight(idx: Int): Option[Handle] =
+      assertCoherence()
+      this match
+        case AtTop(_) => None
+        case handle: (Sentinel | AtChild) =>
+          val parent = handle.parent
+          Handle.idxIntoParent(parent, parent.children.size - 1 - idx)
+
     def keepIdx: Option[Handle] =
       this match
         case AtTop(_)                => Some(this)
@@ -722,6 +728,15 @@ object Manip:
       else if idx == parent.children.length
       then Some(Sentinel(parent, idx))
       else None
+
+    extension (handle: Handle.Sentinel | Handle.AtChild)
+      def idx: Int = handle match
+        case Sentinel(_, idx)   => idx
+        case AtChild(_, idx, _) => idx
+
+      def parent: Node.Parent = handle match
+        case Sentinel(parent, _)   => parent
+        case AtChild(parent, _, _) => parent
 
   object ops:
     def defer[T](manip: => Manip[T]): Manip[T] =
@@ -790,6 +805,14 @@ object Manip:
           case None         => backtrack
           case Some(handle) => Manip.Handle.ref.updated(_ => handle)(manip)
 
+    def atIdxFromRight[T](using
+        DebugInfo
+    )(idx: Int)(manip: Manip[T]): Manip[T] =
+      getHandle.lookahead.flatMap: handle =>
+        handle.atIdxFromRight(idx) match
+          case None         => backtrack
+          case Some(handle) => Manip.Handle.ref.updated(_ => handle)(manip)
+
     def atFirstChild[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       getHandle.lookahead.flatMap: handle =>
         handle.findFirstChild match
@@ -830,11 +853,11 @@ object Manip:
         case _ => backtrack
 
     final class on[T](val pattern: SeqPattern[T]):
-      def raw: Manip[(Manip.Handle, Boolean, T)] =
+      def raw: Manip[SeqPattern.Result[T]] =
         pattern.manip
 
       def value: Manip[T] =
-        raw.map(_._3)
+        raw.map(_.value)
 
       def check: Manip[Unit] =
         raw.void
@@ -843,39 +866,41 @@ object Manip:
           action: on.Ctx ?=> T => Rules
       ): Rules =
         (raw, getHandle, getTracer, Manip.GetRefMap).tupled
-          .flatMap:
-            case ((endHandle, matched, value), handle, tracer, refMap) =>
-              handle.assertCoherence()
-              val (parent, idx) =
-                handle match
-                  case Handle.AtTop(top) =>
-                    throw NodeError(
-                      s"tried to rewrite top ${top.toShortString()}"
-                    )
-                  case Handle.AtChild(parent, idx, _) => (parent, idx)
-                  case Handle.Sentinel(parent, idx)   => (parent, idx)
-              val didMatchAdjust = if matched then 1 else 0
-              val matchedCount =
-                endHandle match
-                  case Handle.AtTop(top) =>
-                    throw NodeError(
-                      s"ended pattern at top ${top.toShortString()}"
-                    )
-                  case Handle.AtChild(endParent, endIdx, _) =>
-                    assert(parent eq endParent)
-                    endIdx - idx + didMatchAdjust
-                  case Handle.Sentinel(endParent, endIdx) =>
-                    assert(parent eq endParent)
-                    endIdx - idx + didMatchAdjust
+          .flatMap: (patResult, handle, tracer, refMap) =>
+            handle.assertCoherence()
+            val value = patResult.value
+            val (parent, startIdx) =
+              handle match
+                case Handle.AtTop(top) =>
+                  throw NodeError(
+                    s"tried to rewrite top ${top.toShortString()}"
+                  )
+                case Handle.AtChild(parent, idx, _) => (parent, idx)
+                case Handle.Sentinel(parent, idx)   => (parent, idx)
+            val matchedCount =
+              patResult match
+                case SeqPattern.Result.Top(top, _) =>
+                  throw NodeError(
+                    s"ended pattern at top ${top.toShortString()}"
+                  )
+                case patResult: (SeqPattern.Result.Look[T] |
+                      SeqPattern.Result.Match[T]) =>
+                  assert(patResult.parent eq parent)
+                  if patResult.isMatch
+                  then patResult.idx - startIdx + 1
+                  else patResult.idx - startIdx
 
-              assert(matchedCount >= 1, s"can't rewrite a match of 0 elements")
-              tracer.onRewriteMatch(
-                summon[DebugInfo],
-                parent,
-                idx,
-                matchedCount
-              )(using refMap)
-              action(using on.Ctx(matchedCount))(value)
+            assert(
+              matchedCount >= 1,
+              "can't rewrite based on a pattern that matched nothing"
+            )
+            tracer.onRewriteMatch(
+              summon[DebugInfo],
+              parent,
+              startIdx,
+              matchedCount
+            )(using refMap)
+            action(using on.Ctx(matchedCount))(value)
 
     object on:
       final case class Ctx(matchedCount: Int) extends AnyVal
@@ -953,7 +978,7 @@ object Manip:
       passCtx.strategy.atNext(manip)
 
     def endPass(using DebugInfo): Rules =
-      resultRef.get
+      pass.resultRef.get
 
     def skipMatch(using
         DebugInfo

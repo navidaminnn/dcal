@@ -132,14 +132,15 @@ val wellformed: Wellformed =
         t.Assumption,
         t.Theorem,
         t.Instance,
+        t.Module,
         t.ModuleDefinition
       )
     )
 
     t.Local ::= choice(
       t.Operator,
-      t.Instance
-      // ModuleDefinition,
+      t.Instance,
+      t.ModuleDefinition
     )
 
     t.Recursive ::= choice(
