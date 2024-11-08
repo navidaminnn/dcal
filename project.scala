@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//> using scala 3
+//> using scala 3.5.2
 //> using options -Werror -deprecation -feature -Yexplicit-nulls -Xcheck-macros
 //> using dep com.lihaoyi::os-lib:0.11.3
 //> using dep com.lihaoyi::sourcecode:0.4.2
