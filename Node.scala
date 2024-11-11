@@ -149,10 +149,8 @@ final class Node(val token: Token)(
         )
 
   override def hasErrors: Boolean =
-    val count1 = _errorRefCount > 0
-    val count2 = errors.nonEmpty
-    assert(count1 == count2, s"mismatched hasErrors $count1 != $count2")
-    count1
+    assertErrorRefCounts()
+    _errorRefCount > 0
 
   override def errors: List[Node] =
     val errorsAcc = mutable.ListBuffer.empty[Node]
