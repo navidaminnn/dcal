@@ -15,33 +15,25 @@
 package distcompiler
 
 import sourcecode.*
+import cats.data.NonEmptyChain
 
-enum DebugInfo:
-  case Single(file: String, line: Int, by: Option[DebugInfo])
-  case Multi(left: DebugInfo, right: DebugInfo)
-
+final case class DebugInfo(records: NonEmptyChain[DebugInfo.Record]):
   override def toString(): String =
-    def getSingles(info: DebugInfo): Iterator[DebugInfo.Single] =
-      info match
-        case single: DebugInfo.Single => Iterator.single(single)
-        case Multi(left, right) =>
-          getSingles(left) ++ getSingles(right)
-
-    def singleToString(single: DebugInfo.Single): String =
-      s"${single.file}:${single.line}${single.by match
-          case None       => ""
-          case Some(info) => " by " ++ info.toString()
-        }"
-
-    getSingles(this).map(singleToString).mkString("\nand ")
+    records.iterator
+      .map(_.toString())
+      .mkString("\nand ")
 
   @scala.annotation.targetName("concat")
   def ++(other: DebugInfo): DebugInfo =
-    DebugInfo.Multi(this, other)
+    DebugInfo(records ++ other.records)
 
 object DebugInfo:
-  given instance(using file: File, line: Line): DebugInfo =
-    DebugInfo.Single(file.value, line.value, None)
+  final case class Record(file: String, fileName: String, line: Int):
+    override def toString(): String =
+      s"$file:$line"
+
+  given instance(using file: File, fileName: FileName, line: Line): DebugInfo =
+    DebugInfo(NonEmptyChain(Record(file.value, fileName.value, line.value)))
 
   inline def apply()(using DebugInfo): DebugInfo = summon[DebugInfo]
 
@@ -55,4 +47,8 @@ object DebugInfo:
   // to work again, shadow the poison given with another inline given that expands to this.
   inline def notPoison: DebugInfo =
     import scala.compiletime.summonInline
-    instance(using file = summonInline[File], line = summonInline[Line])
+    instance(using
+      file = summonInline[File],
+      fileName = summonInline[FileName],
+      line = summonInline[Line]
+    )

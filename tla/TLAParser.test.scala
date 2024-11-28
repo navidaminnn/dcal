@@ -29,7 +29,7 @@ class TLAParserTests extends munit.FunSuite, test.WithTLACorpus:
     assume(!top.hasErrors, top)
 
     TLAParser(
-      top // , tracer = Manip.RewriteDebugTracer(os.pwd / "dbg_passes")
+      top // , tracer = DebugAdapter("localhost", 4711) // , tracer = Manip.RewriteDebugTracer(os.pwd / "dbg_passes")
     )
 
     // re-enable if interesting:
