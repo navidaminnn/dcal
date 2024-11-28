@@ -174,13 +174,6 @@ object SeqPattern:
           case Result.Look(_, idx, _)  => idx
           case Result.Match(_, idx, _) => idx
 
-  final case class NodeTokensRestriction(tokens: Set[Token])
-      extends Manip.Restriction[Node.All, Result[Node]]:
-    protected val impl = {
-      case node: Node if tokens(node.token) =>
-        Result.Match(node.parent.get, node.idxInParent, node)
-    }
-
   import scala.language.implicitConversions
   implicit def tokenAsTok(token: Token): SeqPattern[Node] =
     tok(token)
@@ -235,7 +228,10 @@ object SeqPattern:
 
     def tok(using DebugInfo)(tokens: Token*): SeqPattern[Node] =
       SeqPattern:
-        getNode.restrict(NodeTokensRestriction(tokens.toSet))
+        val tokenSet = tokens.toSet
+        getNode.restrict:
+          case node: Node if tokenSet(node.token) =>
+            Result.Match(node.parent.get, node.idxInParent, node)
 
     def atEnd(using DebugInfo): SeqPattern[Unit] =
       SeqPattern:
