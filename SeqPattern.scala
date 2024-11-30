@@ -175,7 +175,7 @@ object SeqPattern:
           case Result.Match(_, idx, _) => idx
 
   import scala.language.implicitConversions
-  implicit def tokenAsTok(token: Token): SeqPattern[Node] =
+  implicit def tokenAsTok(using DebugInfo)(token: Token): SeqPattern[Node] =
     tok(token)
 
   final class Fields[T](val fields: T) extends AnyVal
