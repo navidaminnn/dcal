@@ -5,36 +5,63 @@ import Builtin.{Error, SourceMarker}
 
 class CalcReaderTests extends munit.FunSuite:
   extension (str: String)
-    def evaluate: Int = CalcReader.evaluate(CalcReader.tokenize(str))
+    def parse: Node.Top =
+      calc.parse.fromSourceRange(SourceRange.entire(Source.fromString(str)))
 
-  // TODO:
-    // support negative numbers
-    // support brackets for precedence
+    def evaluate: Int = 
+      val top = calc.parse.fromSourceRange(SourceRange.entire(Source.fromString(str)))
+      CalcReader.evaluate(top)
+
+  test("empty string"):
+    assertEquals("".parse, Node.Top())
+
+  test("only whitespace"):
+    assertEquals("    \n\t".parse, Node.Top())
+
+  test("error: invalid character"):
+    assertEquals("k".parse, Node.Top(Error("invalid byte", SourceMarker("k"))))
 
   test("single number"):
-    assertEquals("42".evaluate, 42)
+    assertEquals(
+      "5".parse, 
+      Node.Top(
+        tokens.Atom("5")
+      )
+    )
 
   test("simple addition"):
-    assertEquals("10 + 5".evaluate, 15)
+    assertEquals(
+      "5 + 11".parse, 
+      Node.Top(
+        tokens.Atom("5"),
+        tokens.Atom("+"),
+        tokens.Atom("11")
+      )
+    )
 
-  test("multi-digit subtraction"):
-    assertEquals("5 - 3 - 2".evaluate, 0)
+  test("addition calculation"):
+    assertEquals("5 + 11".evaluate, 16)
 
-  test("multi-digit multiplication"):
-    assertEquals("5 * 2 * 11".evaluate, 110)
+  test("calculation"):
+    assertEquals("10 - 7 + 4".evaluate, 7)
 
-  test("simple division"):
-    assertEquals("10 / 2".evaluate, 5)
+  test("error: incorrect format"):
+    intercept[IllegalArgumentException] (
+      "10 - 10 7".evaluate
+    )
 
-  test("multiplication + division"):
-    assertEquals("10 * 5 / 2".evaluate, 25)
+  test("multiplication calculation"):
+    assertEquals("12 * 5 / 2".evaluate, 30)
 
-  test("invalid character error"):
+  test("error: divide by zero"):
+    intercept[ArithmeticException] (
+      "16 * 2 / 0".evaluate
+    )
+
+  test("error: invalid character error"):
     intercept[IllegalArgumentException] (
       "5k * 10".evaluate
     )
 
-  test("divide by zero error"):
-    intercept[ArithmeticException] (
-      "5 / 0".evaluate
-    )
+  test("full calculation"):
+    assertEquals("10 + 7 * 5 - 9 / 3".evaluate, 42)

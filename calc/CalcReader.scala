@@ -6,74 +6,140 @@ import distcompiler.*
 import distcompiler.Builtin.{Error, SourceMarker}
 import Reader.*
 
-object CalcReader:
+object CalcReader extends Reader:
+  import distcompiler.dsl.*
+  import distcompiler.Builtin.{Error, SourceMarker}
+  import Reader.*
+
+  def wellformed: Wellformed = distcompiler.calc.wellformed
+
   private val digit: Set[Char] = ('0' to '9').toSet
-  private val operations: Set[Char] = Set('+', '-', '*', '/')
+  private val operation: Set[Char] = Set('*', '/', '+', '-')
   private val whitespace: Set[Char] = Set(' ', '\n', '\t')
 
-  sealed trait ParsedToken
-  case class Num(value: Int) extends ParsedToken
-  case class Operation(value: Char) extends ParsedToken
+  private lazy val unexpectedEOF: Manip[SourceRange] =
+    consumeMatch: m =>
+      addChild(Error("unexpected EOF", SourceMarker(m)))
+        *> Manip.pure(m)
 
-  def tokenize(input: String): List[ParsedToken] = {
-    val (tokens, leftoverBuffer) = input.foldLeft(List.empty[ParsedToken] -> new StringBuilder) {
-      case ((tokenList, numberBuffer), char) if digit.contains(char) =>
-        (tokenList, numberBuffer.append(char))
+  protected lazy val rules: Manip[SourceRange] =
+    commit:
+      bytes
+        .selecting[SourceRange]
+        .onOneOf(whitespace):
+          extendThisNodeWithMatch(rules)
+        .onOneOf(digit):
+          numberMode
+        .onOneOf(operation):
+          operationMode
+        .fallback:
+          bytes.selectCount(1):
+            consumeMatch: m =>
+              addChild(Error("invalid byte", SourceMarker(m)))
+                *> rules
+          | consumeMatch: m =>
+            on(theTop).check
+              *> Manip.pure(m)
+          | unexpectedEOF
 
-      case ((tokenList, numberBuffer), char) if operations.contains(char) =>
-        val tokensWithNumbers = if (numberBuffer.nonEmpty)
-          tokenList :+ Num(numberBuffer.toString().toInt)
-        else tokenList
-        (tokensWithNumbers :+ Operation(char), new StringBuilder)
+  private lazy val numberMode: Manip[SourceRange] =
+    commit:
+      bytes
+        .selecting[SourceRange]
+        .onOneOf(digit)(numberMode)
+        .fallback:
+          consumeMatch: m =>
+            m.decodeString().toIntOption match
+              case Some(value) =>
+                addChild(tokens.Atom(m))
+                  *> rules
+              case None =>
+                addChild(Error("invalid number format", SourceMarker(m)))
+                  *> rules
 
-      case((tokenList, numberBuffer), char) if whitespace.contains(char) =>
-        val tokensWithNumbers = if (numberBuffer.nonEmpty)
-          tokenList :+ Num(numberBuffer.toString().toInt)
-        else tokenList
-        (tokensWithNumbers, new StringBuilder)
+  private lazy val operationMode: Manip[SourceRange] =
+    commit:
+      consumeMatch: m =>
+        addChild(tokens.Atom(m))
+          *> rules
 
-      case _ => throw IllegalArgumentException("Invalid character")
-    }
+  def evaluate(top: Node.Top): Int =
+    val tokens = top.children.iterator.map(n => 
+      n.asNode.sourceRange.decodeString().trim
+    ).toList
 
-    tokens ++ (if (leftoverBuffer.nonEmpty) List(Num(leftoverBuffer.toString().toInt)) else Nil)
-  }
-
-  def evaluate(tokens: List[ParsedToken]): Int = {
-    def precedence(operator: Char): Int = operator match {
-      case '*' | '/'  => 1
-      case '+' | '-'  => 0
-    }
-
-    def applyOperation(a: Int, b: Int, op: Char): Int = op match {
-      case '+' => a + b
-      case '-' => a - b
-      case '*' => a * b
-      case '/' => if (b != 0) a / b else throw ArithmeticException("Division by zero")
-    }
-
-    val (values, ops) = (
-      new scala.collection.mutable.Stack[Int](),
-      new scala.collection.mutable.Stack[Char]()
-    )
-
-    tokens.foreach {
-      case Num(value) => 
-        values.push(value)
+    def validateTokens(tokens: List[String]): Unit =
+      if tokens.isEmpty then 
+        throw IllegalArgumentException("Empty expression")
       
-      case Operation(op) =>
-        while (ops.nonEmpty && precedence(ops.top) >= precedence(op)) {
-          val b = values.pop()
-          val a = values.pop()
-          values.push(applyOperation(a, b, ops.pop()))
-        }
-        ops.push(op)
-    }
+      if !tokens.head.forall(_.isDigit) then 
+        throw IllegalArgumentException("Expression must start with a number")
+      
+      if !tokens.last.forall(_.isDigit) then 
+        throw IllegalArgumentException("Expression must end with a number")
+      
+      val isValid = tokens.zipWithIndex.forall { case (token, i) =>
+        if i % 2 == 0 then 
+          token.forall(_.isDigit)
+        else 
+          Set("+", "-", "*", "/").contains(token)
+      }
+      
+      if !isValid then 
+        throw IllegalArgumentException("Invalid expression: must alternate between numbers and operators")
 
-    while (ops.nonEmpty) {
-      val b = values.pop()
-      val a = values.pop()
-      values.push(applyOperation(a, b, ops.pop()))
-    }
+    def evalOp(left: Int, op: String, right: Int): Int = op match
+      case "*" => left * right
+      case "/" => 
+        if right == 0 then throw new ArithmeticException("Division by zero")
+        left / right
+      case "+" => left + right
+      case "-" => left - right
+      case _ => throw new IllegalArgumentException(s"Invalid operator: $op")
 
-    values.pop()
-  }
+    def evaluateWithPrecedence(tokens: List[String]): Int =
+      def evalMulDiv(tokens: List[String]): List[String] =
+        def isNumber(s: String) = s.forall(_.isDigit)
+        
+        tokens match
+          case num1 :: "*" :: num2 :: rest if isNumber(num1) && isNumber(num2) =>
+            val result = evalOp(num1.toInt, "*", num2.toInt)
+            evalMulDiv(result.toString :: rest)
+          
+          case num1 :: "/" :: num2 :: rest if isNumber(num1) && isNumber(num2) =>
+            val result = evalOp(num1.toInt, "/", num2.toInt)
+            evalMulDiv(result.toString :: rest)
+          
+          // if not multiplication or division, keep first token and process rest
+          case firstToken :: remainingTokens => 
+            firstToken :: evalMulDiv(remainingTokens)
+          
+          case Nil => Nil
+
+      val afterMulDiv = evalMulDiv(tokens)
+      afterMulDiv.sliding(3, 2).foldLeft(afterMulDiv.head.toInt) {
+        case (acc, List(_, "+", right)) => acc + right.toInt
+        case (acc, List(_, "-", right)) => acc - right.toInt
+        case (acc, _) => acc
+      }
+
+    validateTokens(tokens)
+    evaluateWithPrecedence(tokens)
+
+  // def evaluate(top: Node.Top): Int =
+  //   def evalNode(nodes: Iterator[Node.Child]): Int =
+  //     if !nodes.hasNext then 0
+  //     else
+  //       var result = nodes.next().asNode.sourceRange.decodeString().trim.toInt
+  //       while nodes.hasNext do
+  //         val op = nodes.next().asNode.sourceRange.decodeString().trim.head
+  //         if !nodes.hasNext then
+  //           throw new IllegalArgumentException("Expression ends with an operator")
+  //         val next = nodes.next().asNode.sourceRange.decodeString().trim.toInt
+  //         op match
+  //           case '+' => result = result + next
+  //           case '-' => result = result - next
+  //           case _ => throw new IllegalArgumentException("Invalid equation provided")
+  //       result
+
+  //   evalNode(top.children.iterator)
