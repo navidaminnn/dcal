@@ -8,14 +8,30 @@ import distcompiler.*
 import dsl.*
 
 object tokens:
-  object Atom extends Token:
+  object Operation extends Token
+
+  object Number extends Token:
     override def showSource: Boolean = true
+
+  object Operator extends Token:
+    override def showSource: Boolean = true
+
+  object Result extends Token:
+    override val symbolTableFor: Set[Token] = 
+      Set(Number)
 
 val wellformed: Wellformed =
   Wellformed:
-    val listContents = repeated(choice(tokens.Atom))
-    Node.Top ::= listContents
-    tokens.Atom ::= Atom
+    Node.Top ::= repeated(choice(tokens.Number, tokens.Operator))
+    
+    tokens.Number ::= Atom
+    tokens.Operator ::= Atom
+    
+    tokens.Operation ::= fields(
+      tokens.Number,
+      tokens.Operator,
+      tokens.Number
+    )
 
 object parse:
   def fromSourceRange(sourceRange: SourceRange): Node.Top =
