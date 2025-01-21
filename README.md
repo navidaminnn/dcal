@@ -7,6 +7,7 @@ This repository is public for collaboration purposes, and makes no promises of c
 This message will be replaced when the compiler prototype has reached some degree of completion.
 
 For now, repository contains:
+
 - `Node`: a generic AST class inspired by the Trieste project. AST nodes are tagged with Token objects, whose pointer identity makes for easy pattern matching. The structure is mutable, and is designed to have well defined behavior despite this fact (should be hard to create corrupt trees).
 - `Manip`: an _applicative functor_ that is used for tree traversal and modification. Manip supports context-passing, backtracking search with commit points, and flatMap for occasions when monadic behavior is needed.
 - `SeqPattern`: a wrapper around Manip that handles pattern matching sequences of sibling nodes in an AST. Used with `dsl.on(...)` and `dsl.pass`, patterns let you express rewrite rulesets.
@@ -16,5 +17,60 @@ For now, repository contains:
   2. can serialize your AST to and from s-expressions, either to look at it, or for interchange.
 
 Outside of those notable classes and some utilities, there are 2 important subfolders:
+
 - `sexpr`: facilities for reading and writing S-Expressions. Mostly for use by Wellformed, but tested on a necessary-seeming subset of the original proposed RFC.
 - `tla`: under-construction parser for the TLA+ modeling language, which has been invaluable in stress-testing all the generic machinery. The test suite involves trying to parse the full TLA+ Examples folder.
+
+# Getting Started
+
+Follow these steps to setup and test the project:
+
+1. **Clone the Repository**  
+   Clone this repository to your local machine:
+
+```bash
+git clone <https://github.com/DistCompiler/dcal.git>
+```
+
+2. **Install Scala CLI**
+   Windows: Install Scala CLI using Winget:
+
+```bash
+winget install virtuslab.scalacli
+```
+
+Linux: Install Scala CLI using curl:
+
+```bash
+curl -sSLf https://scala-cli.virtuslab.org/get | sh
+```
+
+MacOS: Install Scala CLI using Homebrew:
+
+```bash
+brew install Virtuslab/scala-cli/scala-cli
+```
+
+3. **Verify Installation**
+   After installation, close and reopen your terminal, then verify Scala CLI is installed by running:
+
+```bash
+scala-cli version
+```
+
+4. **Building the System**
+   After veryifying installation, build the compiler by running:
+
+```bash
+scala-cli
+```
+
+5. **Run Tests**
+   To ensure everything is working correctly, run the tests using:
+
+```bash
+scala-cli test .
+```
+
+6. **Debugging**
+   Use the debug adapter for troubleshooting and debugging. Refer to the documentation for setup and usage instructions.
