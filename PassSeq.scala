@@ -1,4 +1,4 @@
-// Copyright 2024 DCal Team
+// Copyright 2025 DCal Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ transparent trait PassSeq:
   private var entriesSealed = false
 
   protected def prevWellformed(using BuildCtx): Wellformed =
-    require(entries.nonEmpty, "there is no previous Wellformed")
+    require(entries.nonEmpty, "there is not previous Wellformed")
     entries.last.wellformed
 
   protected object wellformed:
