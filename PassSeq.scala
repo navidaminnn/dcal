@@ -28,7 +28,7 @@ transparent trait PassSeq:
   private var entriesSealed = false
 
   protected def prevWellformed(using BuildCtx): Wellformed =
-    require(entries.nonEmpty, "there is not previous Wellformed")
+    require(entries.nonEmpty, "there is no previous Wellformed")
     entries.last.wellformed
 
   protected object wellformed:
