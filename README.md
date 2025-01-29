@@ -9,26 +9,26 @@ Follow these steps to setup and test the project:
 git clone <https://github.com/DistCompiler/dcal.git>
 ```
 
-2. **Install Scala CLI**
+2. **Install Scala CLI:**
    Install Scala CLI using the using this [link](https://scala-cli.virtuslab.org/install/)
-3. **Install Scala(Metals)**
+3. **Install Plugin:**
    Install the Scala(Metals) plugin by Scalameta in VSCode.
 
-4. **Verify Installation**
+4. **Verify Installation:**
    After installation, close and reopen your terminal, then verify Scala CLI is installed by running:
 
 ```bash
 scala-cli version
 ```
 
-5. **Run Tests**
+5. **Run Tests:**
    After veryifying installation, build and run the tests using:
 
 ```bash
 scala-cli test .
 ```
 
-6. **Debugging**
+6. **Debugging:**
    Use the debug adapter for troubleshooting and debugging. Refer to the documentation for setup and usage instructions.
 
 # DCal Compiler Project
