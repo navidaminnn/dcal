@@ -39,7 +39,9 @@ transparent trait PassSeq:
   protected final class BuildCtx:
     var wellformedOpt: Option[Wellformed] = None
 
-  final def passDef(using DebugInfo)(
+  final def passDef(using
+      DebugInfo
+  )(
       fn: BuildCtx ?=> Manip[Unit]
   ): PassSeq.Entry =
     require(!entriesSealed, "tried to add a pass after PassSeq was constructed")

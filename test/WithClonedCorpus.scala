@@ -40,8 +40,10 @@ transparent trait WithClonedCorpus:
         foundAnything = true
         test(corpusFile.relativeTo(clonesDir).toString)(fn(corpusFile))
 
-    test("sanity"):
+    test("sanity") {
       assert(
         foundAnything,
         s"must find at least one test file in $checkoutFolder"
       )
+    }
+  end testWithCorpusFile

@@ -79,7 +79,9 @@ class WellformedTests extends munit.FunSuite:
       val deser = wf.deserializeTree(ser)
       assertEquals(deser, orig)
 
-  def expectNoErrors(using munit.Location)(wf: Wellformed)(
+  def expectNoErrors(using
+      munit.Location
+  )(wf: Wellformed)(
       ast: Node.Top
   ): Unit =
     wf.markErrors(ast)

@@ -21,7 +21,9 @@ class SeqPatternTests extends munit.FunSuite:
   import PatternTests.*
 
   extension [T](pat: on[T])
-    def onChildren(using munit.Location)(name: String)(children: Node.Child*)(
+    def onChildren(using
+        munit.Location
+    )(name: String)(children: Node.Child*)(
         expected: T
     ): pat.type =
       val top = Node.Top(children)
