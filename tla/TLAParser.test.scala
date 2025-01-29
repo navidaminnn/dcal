@@ -1,4 +1,4 @@
-// Copyright 2024 DCal Team
+// Copyright 2024-2025 DCal Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ class TLAParserTests extends munit.FunSuite, test.WithTLACorpus:
     assume(!top.hasErrors, top)
 
     TLAParser(
-      top // , tracer = DebugAdapter("localhost", 4711) // , tracer = Manip.RewriteDebugTracer(os.pwd / "dbg_passes")
+      top, tracer = DebugAdapter("localhost", 4711) // , tracer = Manip.RewriteDebugTracer(os.pwd / "dbg_passes")
     )
 
     // re-enable if interesting:
