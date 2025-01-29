@@ -324,7 +324,9 @@ object Node:
           val msg = err(Builtin.Error.Message)
           val ast = err(Builtin.Error.AST)
 
-          s"${msg.sourceRange.decodeString()} at ${ast.sourceRange.presentationStringLong}\n${if debug then ast.toShortString() else ""}"
+          s"${msg.sourceRange.decodeString()} at ${ast.sourceRange.presentationStringLong}\n${
+              if debug then ast.toShortString() else ""
+            }"
         .mkString("\n")
 
     final def serializedBy(wf: Wellformed): This =

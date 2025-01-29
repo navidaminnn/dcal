@@ -198,7 +198,9 @@ object Manip:
       Manip.RefInit(this, () => init, manip)
     final def get(using DebugInfo): Manip[T] =
       Manip.RefGet(this, summon[DebugInfo])
-    final def updated[U](using DebugInfo)(fn: T => T)(
+    final def updated[U](using
+        DebugInfo
+    )(fn: T => T)(
         manip: Manip[U]
     ): Manip[U] = Manip.RefUpdated(this, fn, manip, summon[DebugInfo])
     final def doEffect[U](using DebugInfo)(fn: T => U): Manip[U] =
@@ -728,7 +730,9 @@ object Manip:
       def check: Manip[Unit] =
         raw.void
 
-      def rewrite(using DebugInfo)(
+      def rewrite(using
+          DebugInfo
+      )(
           action: on.Ctx ?=> T => Rules
       ): Rules =
         (raw, getHandle, getTracer, Manip.GetRefMap).tupled
@@ -771,7 +775,11 @@ object Manip:
     object on:
       final case class Ctx(matchedCount: Int) extends AnyVal
 
-    def spliceThen(using DebugInfo)(using onCtx: on.Ctx)(
+    def spliceThen(using
+        DebugInfo
+    )(using
+        onCtx: on.Ctx
+    )(
         nodes: Iterable[Node.Child]
     )(
         manip: on.Ctx ?=> Rules
@@ -805,17 +813,28 @@ object Manip:
           )
         )
 
-    def spliceThen(using DebugInfo, on.Ctx)(nodes: Node.Child*)(
+    def spliceThen(using
+        DebugInfo,
+        on.Ctx
+    )(nodes: Node.Child*)(
         manip: on.Ctx ?=> Rules
     ): Rules =
       spliceThen(nodes)(manip)
 
-    def spliceThen(using DebugInfo, on.Ctx)(nodes: IterableOnce[Node.Child])(
+    def spliceThen(using
+        DebugInfo,
+        on.Ctx
+    )(nodes: IterableOnce[Node.Child])(
         manip: on.Ctx ?=> Rules
     ): Rules =
       spliceThen(nodes.iterator.toArray)(manip)
 
-    def splice(using DebugInfo)(using onCtx: on.Ctx, passCtx: pass.Ctx)(
+    def splice(using
+        DebugInfo
+    )(using
+        onCtx: on.Ctx,
+        passCtx: pass.Ctx
+    )(
         nodes: Iterable[Node.Child]
     ): Rules =
       spliceThen(nodes):
@@ -829,7 +848,11 @@ object Manip:
     def splice(using DebugInfo, on.Ctx, pass.Ctx)(nodes: Node.Child*): Rules =
       splice(nodes)
 
-    def splice(using DebugInfo, on.Ctx, pass.Ctx)(
+    def splice(using
+        DebugInfo,
+        on.Ctx,
+        pass.Ctx
+    )(
         nodes: IterableOnce[Node.Child]
     ): Rules =
       splice(nodes.iterator.toArray)

@@ -415,8 +415,7 @@ object TLAParser extends PassSeq:
                     field(tok(Alpha) | tok(defns.Operator.instances*))
                       ~ skip(`<-`)
                       ~ field(rawExpression)
-                      ~ trailing
-                  )
+                      ~ trailing)
                   ~ trailing
               )
             )

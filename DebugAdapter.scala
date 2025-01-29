@@ -542,8 +542,7 @@ object DebugAdapter:
                           "variablesReference" -> state.refOf(child),
                           "namedVariables" -> (child match
                             case parent: Node.Parent => parent.children.size + 1
-                            case _                   => 1
-                          )
+                            case _                   => 1)
                         )
                       )
                     )
