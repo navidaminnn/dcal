@@ -15,6 +15,7 @@
 package distcompiler.sexpr
 
 import java.io.ByteArrayOutputStream
+import distcompiler.util.newlineUtils.*
 
 import distcompiler.*
 
@@ -40,7 +41,7 @@ class serializeTests extends munit.FunSuite:
     assertEquals(
       eg1.serializePretty,
       """(foo
-        |  bar)""".stripMargin
+        |  bar)""".stripMargin.ensureLf
     )
 
   val eg2 = Node.Top(
@@ -56,5 +57,5 @@ class serializeTests extends munit.FunSuite:
       """(
         |  ()
         |  ()
-        |  (()))""".stripMargin
+        |  (()))""".stripMargin.ensureLf
     )

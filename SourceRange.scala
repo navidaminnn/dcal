@@ -147,13 +147,14 @@ final class SourceRange(
     s"$presentationStringShort:\n$showInSource"
 
   def showInSource: String =
-    extension (rng: SourceRange)
-      def trimNl: SourceRange =
-        if rng.endsWith(List('\r', '\n'))
-        then rng.dropRight(2)
-        else if rng.lastOption.contains('\n')
-        then rng.dropRight(1)
-        else rng
+    extension (it: Iterator[Byte])
+      // When we print a line, we don't want the trailing newline.
+      // We also don't want platform specific variants like \r.
+      def removeCrLf: Iterator[Byte] =
+        it.filter(ch => ch != '\r' && ch != '\n')
+
+      def decodeString: String =
+        String(it.toArray, StandardCharsets.UTF_8)
 
     val entireSource = SourceRange.entire(source)
     val builder = StringBuilder()
@@ -165,22 +166,37 @@ final class SourceRange(
 
     if line1Idx == line2Idx
     then
-      builder.addAll(
-        entireSource.slice(line1Start, line1AfterEnd).trimNl.decodeString()
-      )
+      val lineFrag = entireSource.slice(line1Start, line1AfterEnd)
+      builder.addAll(lineFrag.iterator.removeCrLf.decodeString)
       builder += '\n'
-      (0 until startCol).foreach(_ => builder += ' ')
+      lineFrag
+        .slice(0, startCol)
+        .iterator
+        .removeCrLf
+        .foreach(_ => builder += ' ')
       if startCol == endCol
       then builder += '^'
-      else (startCol until endCol).foreach(_ => builder += '^')
+      else
+        lineFrag
+          .slice(startCol, endCol)
+          .iterator
+          .removeCrLf
+          .foreach(_ => builder += '^')
     else
-      (0 until startCol).foreach(_ => builder += ' ')
+      val line1Frag = entireSource.slice(line1Start, line1AfterEnd)
+      line1Frag
+        .slice(0, startCol)
+        .iterator
+        .removeCrLf
+        .foreach(_ => builder += ' ')
       val line1EndCol = line1AfterEnd - line1Start
-      (startCol until line1EndCol).foreach(_ => builder += 'v')
+      line1Frag
+        .slice(startCol, line1EndCol)
+        .iterator
+        .removeCrLf
+        .foreach(_ => builder += 'v')
       builder += '\n'
-      builder.addAll(
-        entireSource.slice(line1Start, line1AfterEnd).trimNl.decodeString()
-      )
+      builder.addAll(line1Frag.iterator.removeCrLf.decodeString)
 
       if line2Idx - line1Idx > 1
       then builder.addAll("\n...\n")
@@ -188,11 +204,14 @@ final class SourceRange(
 
       val line2Start = source.lines.lineStartOffset(line2Idx)
       val line2AfterEnd = source.lines.lineStartOffset(line2Idx + 1)
-      builder.addAll(
-        entireSource.slice(line2Start, line2AfterEnd).trimNl.decodeString()
-      )
+      val line2Frag = entireSource.slice(line2Start, line2AfterEnd)
+      builder.addAll(line2Frag.iterator.removeCrLf.decodeString)
       builder += '\n'
-      (0 until endCol).foreach(_ => builder += '^')
+      line2Frag
+        .slice(0, endCol)
+        .iterator
+        .removeCrLf
+        .foreach(_ => builder += '^')
 
     builder.result()
 

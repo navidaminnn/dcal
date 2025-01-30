@@ -14,7 +14,9 @@
 
 package distcompiler
 
-import os.read.bytes
+import scala.collection.StringOps
+import java.nio.charset.StandardCharsets
+import distcompiler.util.newlineUtils.*
 
 class SourceRangeTests extends munit.FunSuite:
   val ipsum =
@@ -39,71 +41,123 @@ class SourceRangeTests extends munit.FunSuite:
       val bytes = str.getBytes()
       src.take(src.indexOfSlice(bytes) + bytes.size)
 
-  val ipsumSrc = SourceRange.entire(Source.fromString(ipsum))
+  private trait MarginStripper:
+    extension (str: String) def stripMargin: String
 
-  test("highlight entire first line"):
-    assertEquals(
-      ipsumSrc.takeLine.showInSource,
-      """Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-        |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
-    )
+  test("sanity: crlf and lf normalization"):
+    assertEquals("a\nb\nc".ensureLf, "a\nb\nc")
+    assertEquals("a\r\nb\r\nc".ensureLf, "a\nb\nc")
+    assertEquals("a\nb\nc".ensureCrLf, "a\r\nb\r\nc")
+    assertEquals("a\r\nb\r\nc".ensureCrLf, "a\r\nb\r\nc")
 
-  test("highlight entire second line"):
-    assertEquals(
-      ipsumSrc.dropLine.takeLine.showInSource,
-      """incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
-        |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
-    )
+  locally:
+    given MarginStripper with
+      extension (str: String)
+        def stripMargin: String =
+          StringOps(str).stripMargin.ensureLf
+    mkTests("[lf]", ipsum.ensureLf)
 
-  test("highlight last line"):
-    assertEquals(
-      ipsumSrc.lastLine.showInSource,
-      """anim id est laborum.
-        |^^^^^^^^^^^^^^^^^^^^""".stripMargin
-    )
+  locally:
+    given MarginStripper with
+      extension (str: String)
+        def stripMargin: String =
+          StringOps(
+            str
+          ).stripMargin.ensureLf // output is standardized to use \n only
+    mkTests("[crlf]", ipsum.ensureCrLf)
 
-  test("highlight second 2 lines"):
-    assertEquals(
-      (ipsumSrc.dropLine.takeLine <+> ipsumSrc.dropLine.dropLine.takeLine).showInSource,
-      """vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-        |incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
-        |exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure
-        |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
-    )
+  extension (str: String)
+    // This helps debug weird control character issues by making them explicit.
+    private def toHexView: String =
+      val bytes = str.getBytes(StandardCharsets.UTF_8)
+      bytes
+        .sliding(8, step = 8)
+        .map: octet =>
+          val chars = octet
+            .map:
+              case '\n' => "\\n"
+              case '\r' => "\\r"
+              case ch   => s" ${ch.toChar}"
+            .mkString
+          val hexs = octet.map(b => f"$b%02X").mkString(" ")
+          s"${chars.padTo(16, ' ')} | ${hexs}"
+        .mkString("\n")
 
-  test("highlight second 3 lines"):
-    assertEquals(
-      (ipsumSrc.dropLine.takeLine <+> ipsumSrc.dropLine.dropLine.dropLine.takeLine).showInSource,
-      """vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-        |incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
-        |...
-        |dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
-        |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
-    )
+  private def mkTests(mode: String, ipsum: String)(using MarginStripper): Unit =
+    val ipsumSrc = SourceRange.entire(Source.fromString(ipsum))
 
-  test("highlight all but 1st line"):
-    assertEquals(
-      ipsumSrc.dropLine.showInSource,
-      """vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-        |incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
-        |...
-        |anim id est laborum.
-        |^^^^^^^^^^^^^^^^^^^^""".stripMargin
-    )
+    def assertHexEquals(expectedStr: String, actualStr: String)(using
+        munit.Location
+    ): Unit =
+      assertEquals(
+        s"$expectedStr\n\n${expectedStr.toHexView}",
+        s"$actualStr\n\n${actualStr.toHexView}"
+      )
 
-  test("highlight amet to nisi"):
-    assertEquals(
-      ipsumSrc.startingFrom("amet").upTo("nisi").showInSource,
-      """                      vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-        |Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-        |...
-        |exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure
-        |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
-    )
+    test(s"highlight entire first line $mode"):
+      assertHexEquals(
+        ipsumSrc.takeLine.showInSource,
+        """Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
+          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
+      )
 
-  test("highlight just nisi"):
-    assertEquals(
-      ipsumSrc.startingFrom("nisi").take("nisi".size).showInSource,
-      """exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure
-        |                             ^^^^""".stripMargin
-    )
+    test(s"highlight entire second line $mode"):
+      assertHexEquals(
+        ipsumSrc.dropLine.takeLine.showInSource,
+        """incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
+          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
+      )
+
+    test(s"highlight last line $mode"):
+      assertHexEquals(
+        ipsumSrc.lastLine.showInSource,
+        """anim id est laborum.
+          |^^^^^^^^^^^^^^^^^^^^""".stripMargin
+      )
+
+    test(s"highlight second 2 lines $mode"):
+      assertHexEquals(
+        (ipsumSrc.dropLine.takeLine <+> ipsumSrc.dropLine.dropLine.takeLine).showInSource,
+        """vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+          |incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
+          |exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure
+          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
+      )
+
+    test(s"highlight second 3 lines $mode"):
+      assertHexEquals(
+        (ipsumSrc.dropLine.takeLine <+> ipsumSrc.dropLine.dropLine.dropLine.takeLine).showInSource,
+        """vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+          |incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
+          |...
+          |dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
+          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
+      )
+
+    test(s"highlight all but 1st line $mode"):
+      assertHexEquals(
+        ipsumSrc.dropLine.showInSource,
+        """vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+          |incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
+          |...
+          |anim id est laborum.
+          |^^^^^^^^^^^^^^^^^^^^""".stripMargin
+      )
+
+    test(s"highlight amet to nisi $mode"):
+      assertHexEquals(
+        ipsumSrc.startingFrom("amet").upTo("nisi").showInSource,
+        """                      vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+          |Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
+          |...
+          |exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure
+          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
+      )
+
+    test(s"highlight just nisi $mode"):
+      assertHexEquals(
+        ipsumSrc.startingFrom("nisi").take("nisi".size).showInSource,
+        """exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure
+          |                             ^^^^""".stripMargin
+      )
+  end mkTests
