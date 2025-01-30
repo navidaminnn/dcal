@@ -16,6 +16,7 @@ package distcompiler
 
 import scala.collection.StringOps
 import java.nio.charset.StandardCharsets
+import distcompiler.util.newlineUtils.*
 
 class SourceRangeTests extends munit.FunSuite:
   val ipsum =
@@ -42,12 +43,6 @@ class SourceRangeTests extends munit.FunSuite:
 
   private trait MarginStripper:
     extension (str: String) def stripMargin: String
-
-  extension (str: String)
-    def ensureLf: String =
-      str.split("\r\n").mkString("\n")
-    def ensureCrLf: String =
-      str.ensureLf.split("\n").mkString("\r\n")
 
   test("sanity: crlf and lf normalization"):
     assertEquals("a\nb\nc".ensureLf, "a\nb\nc")
