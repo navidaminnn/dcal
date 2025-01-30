@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//> using scala 3.5.2
+//> using scala 3
 //> using options -Werror -deprecation -feature -Yexplicit-nulls -Xcheck-macros
 //> using dep com.lihaoyi::os-lib:0.11.3
 //> using dep com.lihaoyi::sourcecode:0.4.2
-//> using dep org.typelevel::cats-core:2.12.0
-//> using dep dev.zio::izumi-reflect:2.3.10
-//> using dep com.lihaoyi::ujson:4.0.2
-//> using test.dep org.scalameta::munit:1.0.2
+//> using dep org.typelevel::cats-core:2.13.0
+//> using dep dev.zio::izumi-reflect:3.0.0
+//> using dep com.lihaoyi::ujson::4.1.0
+//> using test.dep org.scalameta::munit:1.1.0
 
 //> using javaProp distcompiler.Node.assertErrorRefCorrectness=no
 
