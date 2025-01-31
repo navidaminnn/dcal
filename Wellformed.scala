@@ -19,6 +19,7 @@ import scala.collection.mutable
 import izumi.reflect.Tag
 import scala.util.control.TailCalls.*
 import util.TailCallsUtils.*
+import distcompiler.util.toShortString
 
 final class Wellformed private (
     val assigns: Map[Token, Wellformed.Shape],
@@ -418,6 +419,28 @@ final class Wellformed private (
 
     impl(tree).result
   end deserializeTree
+
+  def asNode: Node =
+    val result = sexpr.tokens.List(
+      sexpr.tokens.Atom("wellformed"),
+      sexpr.tokens.List(
+        sexpr.tokens.Atom("top"),
+        topShape.asNode
+      )
+    )
+    result.children.addAll:
+      assigns.toArray
+        .sortInPlaceBy(_._1.name)
+        .iterator
+        .map: (tok, shape) =>
+          sexpr.tokens.List(
+            sexpr.tokens.Atom(tok.name),
+            shape.asNode
+          )
+    result
+
+  override def toString(): String =
+    sexpr.serialize.toPrettyString(Node.Top(asNode))
 end Wellformed
 
 object Wellformed:
@@ -538,6 +561,41 @@ object Wellformed:
     case Choice(choices: Set[Token | EmbedMeta[?]])
     case Repeat(choice: Shape.Choice, minCount: Int)
     case Fields(fields: List[Shape.Choice])
+
+    def asNode: Node =
+      this match
+        case Atom     => sexpr.tokens.Atom("atom")
+        case AnyShape => sexpr.tokens.Atom("anyShape")
+        case Choice(choices) if choices.sizeIs == 1 =>
+          choices.head match
+            case token: Token        => sexpr.tokens.Atom(token.name)
+            case embed: EmbedMeta[?] => sexpr.tokens.Atom(embed.canonicalName)
+        case Choice(choices) =>
+          val result = sexpr.tokens.List(
+            sexpr.tokens.Atom("choice")
+          )
+          result.children.addAll:
+            choices.iterator
+              .map:
+                case token: Token => sexpr.tokens.Atom(token.name)
+                case embed: EmbedMeta[?] =>
+                  sexpr.tokens.Atom(embed.canonicalName)
+          result
+        case Repeat(choice, minCount) =>
+          sexpr.tokens.List(
+            sexpr.tokens.Atom("repeat"),
+            choice.asNode,
+            sexpr.tokens.List(
+              sexpr.tokens.Atom("minCount"),
+              sexpr.tokens.Atom(minCount.toString())
+            )
+          )
+        case Fields(fields) =>
+          val result = sexpr.tokens.List(
+            sexpr.tokens.Atom("fields")
+          )
+          result.children.addAll(fields.iterator.map(_.asNode))
+          result
 
   object Shape:
     extension (choice: Shape.Choice)
