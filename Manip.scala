@@ -440,8 +440,8 @@ object Manip:
       )
 
     private def takeDiff()(using RefMap): Unit =
-      val prevLines = os.read.lines(prevPath).toList.asJava
-      val currLines = os.read.lines(currPath).toList.asJava
+      val prevLines = os.read.lines(prevPath).asJava
+      val currLines = os.read.lines(currPath).asJava
       val patch = DiffUtils.diff(prevLines, currLines)
       val unifiedDiff = UnifiedDiffUtils.generateUnifiedDiff(
         prevPath.toString(),
