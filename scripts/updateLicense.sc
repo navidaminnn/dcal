@@ -1,5 +1,5 @@
 #!/usr/bin/env -S scala-cli shebang
-// Copyright 2024 DCal Team
+// Copyright 2024-2025 DCal Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ val shouldRewrite =
       false
 
 val licenseTemplate =
-  """ Copyright ____ DCal Team
+  """ Copyright 2024-____ DCal Team
     |
     | Licensed under the Apache License, Version 2.0 (the "License");
     | you may not use this file except in compliance with the License.
@@ -62,7 +62,7 @@ var checkFailed = false
 os.walk(os.pwd)
   .iterator
   .filterNot(_.segments.exists(_.startsWith(".")))
-  .filter(_.last.endsWith(".scala"))
+  .filter(p => p.last.endsWith(".scala") || p.last.endsWith(".sc"))
   .foreach: sourceFile =>
     val contents = os.read(sourceFile)
 

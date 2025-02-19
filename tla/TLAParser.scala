@@ -1,4 +1,4 @@
-// Copyright 2024 DCal Team
+// Copyright 2024-2025 DCal Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -415,8 +415,7 @@ object TLAParser extends PassSeq:
                     field(tok(Alpha) | tok(defns.Operator.instances*))
                       ~ skip(`<-`)
                       ~ field(rawExpression)
-                      ~ trailing
-                  )
+                      ~ trailing)
                   ~ trailing
               )
             )

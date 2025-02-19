@@ -1,4 +1,4 @@
-// Copyright 2024 DCal Team
+// Copyright 2024-2025 DCal Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ transparent trait PassSeq:
   private var entriesSealed = false
 
   protected def prevWellformed(using BuildCtx): Wellformed =
-    require(entries.nonEmpty, "there is not previous Wellformed")
+    require(entries.nonEmpty, "there is no previous Wellformed")
     entries.last.wellformed
 
   protected object wellformed:
@@ -39,7 +39,9 @@ transparent trait PassSeq:
   protected final class BuildCtx:
     var wellformedOpt: Option[Wellformed] = None
 
-  final def passDef(using DebugInfo)(
+  final def passDef(using
+      DebugInfo
+  )(
       fn: BuildCtx ?=> Manip[Unit]
   ): PassSeq.Entry =
     require(!entriesSealed, "tried to add a pass after PassSeq was constructed")

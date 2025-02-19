@@ -1,4 +1,4 @@
-// Copyright 2024 DCal Team
+// Copyright 2024-2025 DCal Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,7 +21,9 @@ class SeqPatternTests extends munit.FunSuite:
   import PatternTests.*
 
   extension [T](pat: on[T])
-    def onChildren(using munit.Location)(name: String)(children: Node.Child*)(
+    def onChildren(using
+        munit.Location
+    )(name: String)(children: Node.Child*)(
         expected: T
     ): pat.type =
       val top = Node.Top(children)

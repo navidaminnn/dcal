@@ -1,4 +1,4 @@
-// Copyright 2024 DCal Team
+// Copyright 2024-2025 DCal Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 package distcompiler
 
 import dsl.*
+import distcompiler.util.newlineUtils.ensureLf
 
 class WellformedTests extends munit.FunSuite:
   import WellformedTests.*
@@ -79,7 +80,9 @@ class WellformedTests extends munit.FunSuite:
       val deser = wf.deserializeTree(ser)
       assertEquals(deser, orig)
 
-  def expectNoErrors(using munit.Location)(wf: Wellformed)(
+  def expectNoErrors(using
+      munit.Location
+  )(wf: Wellformed)(
       ast: Node.Top
   ): Unit =
     wf.markErrors(ast)
@@ -95,6 +98,44 @@ class WellformedTests extends munit.FunSuite:
     Node.Top ::= tok2
     tok2 ::= fields(tok3, tok3)
     tok3 ::= Atom
+
+  test("wf1 asNode"):
+    assertEquals(
+      wf1.asNode,
+      sexpr.tokens.List(
+        sexpr.tokens.Atom("wellformed"),
+        sexpr.tokens.List(
+          sexpr.tokens.Atom("top"),
+          sexpr.tokens.Atom("distcompiler.WellformedTests.tok2")
+        ),
+        sexpr.tokens.List(
+          sexpr.tokens.Atom("distcompiler.WellformedTests.tok2"),
+          sexpr.tokens.List(
+            sexpr.tokens.Atom("fields"),
+            sexpr.tokens.Atom("distcompiler.WellformedTests.tok3"),
+            sexpr.tokens.Atom("distcompiler.WellformedTests.tok3")
+          )
+        ),
+        sexpr.tokens.List(
+          sexpr.tokens.Atom("distcompiler.WellformedTests.tok3"),
+          sexpr.tokens.Atom("atom")
+        )
+      )
+    )
+
+  test("wf1 toString"):
+    assertEquals(
+      wf1.toString(),
+      """(wellformed
+        |  (top
+        |    distcompiler.WellformedTests.tok2)
+        |  (distcompiler.WellformedTests.tok2
+        |    (fields
+        |      distcompiler.WellformedTests.tok3
+        |      distcompiler.WellformedTests.tok3))
+        |  (distcompiler.WellformedTests.tok3
+        |    atom))""".stripMargin.ensureLf
+    )
 
   test("fields: correct"):
     expectNoErrors(wf1):

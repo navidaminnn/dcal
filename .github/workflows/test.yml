@@ -1,15 +1,14 @@
 on:
-  push:
-    branches:
-    - main
   pull_request:
+  push:
+    branches: ['main']
 
 jobs:
   tests:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: ['ubuntu-latest', 'macos-latest'] # 'windows-latest' // TODO: why does it break scala-cli?
+        os: ['ubuntu-latest', 'macos-latest', 'windows-latest']
         jvm: ['temurin:21', 'temurin:11']
     steps:
       - uses: actions/checkout@v4

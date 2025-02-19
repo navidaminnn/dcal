@@ -1,4 +1,4 @@
-// Copyright 2024 DCal Team
+// Copyright 2024-2025 DCal Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -50,7 +50,9 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]])
   @scala.annotation.targetName("fieldsConcat")
   def ~[Tpl1 <: Tuple, Tpl2 <: Tuple](using
       T <:< Fields[Tpl1]
-  )(using DebugInfo)(
+  )(using
+      DebugInfo
+  )(
       other: SeqPattern[Fields[Tpl2]]
   ): SeqPattern[Fields[Tuple.Concat[Tpl1, Tpl2]]] =
     this
@@ -59,7 +61,9 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]])
         Fields(flds1.fields ++ flds2.fields)
 
   @scala.annotation.targetName("fieldsEnd")
-  def ~[Tpl <: Tuple, T2](using T <:< Fields[Tpl])(using
+  def ~[Tpl <: Tuple, T2](using
+      T <:< Fields[Tpl]
+  )(using
       maybeStrip: Fields.MaybeStripTuple1[Tpl, T2]
   )(using DebugInfo)(other: eof.type): SeqPattern[T2] =
     this.productAtRightSibling(atEnd).map(flds => maybeStrip(flds._1.fields))
@@ -67,7 +71,9 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]])
   @scala.annotation.targetName("fieldsTrailing")
   def ~[Tpl <: Tuple, T2](using
       T <:< Fields[Tpl]
-  )(using maybeStrip: Fields.MaybeStripTuple1[Tpl, T2])(
+  )(using
+      maybeStrip: Fields.MaybeStripTuple1[Tpl, T2]
+  )(
       other: trailing.type
   ): SeqPattern[T2] =
     this.map(flds => maybeStrip(flds.fields))
@@ -174,15 +180,8 @@ object SeqPattern:
           case Result.Look(_, idx, _)  => idx
           case Result.Match(_, idx, _) => idx
 
-  final case class NodeTokensRestriction(tokens: Set[Token])
-      extends Manip.Restriction[Node.All, Result[Node]]:
-    protected val impl = {
-      case node: Node if tokens(node.token) =>
-        Result.Match(node.parent.get, node.idxInParent, node)
-    }
-
   import scala.language.implicitConversions
-  implicit def tokenAsTok(token: Token): SeqPattern[Node] =
+  implicit def tokenAsTok(using DebugInfo)(token: Token): SeqPattern[Node] =
     tok(token)
 
   final class Fields[T](val fields: T) extends AnyVal
@@ -235,7 +234,10 @@ object SeqPattern:
 
     def tok(using DebugInfo)(tokens: Token*): SeqPattern[Node] =
       SeqPattern:
-        getNode.restrict(NodeTokensRestriction(tokens.toSet))
+        val tokenSet = tokens.toSet
+        getNode.restrict:
+          case node: Node if tokenSet(node.token) =>
+            Result.Match(node.parent.get, node.idxInParent, node)
 
     def atEnd(using DebugInfo): SeqPattern[Unit] =
       SeqPattern:
@@ -251,7 +253,9 @@ object SeqPattern:
           case Manip.Handle.AtChild(parent, 0, _) =>
             Result.Look(parent, 0, ())
 
-    def nodeSpanMatchedBy(using DebugInfo)(
+    def nodeSpanMatchedBy(using
+        DebugInfo
+    )(
         pattern: SeqPattern[?]
     ): SeqPattern[IndexedSeqView[Node.Child]] =
       SeqPattern:
@@ -283,12 +287,16 @@ object SeqPattern:
     def not[T](using DebugInfo)(pattern: SeqPattern[T]): SeqPattern[Unit] =
       SeqPattern(Manip.Negated(pattern.manip, summon[DebugInfo]) *> unit.manip)
 
-    def optional[T](using DebugInfo)(
+    def optional[T](using
+        DebugInfo
+    )(
         pattern: SeqPattern[T]
     ): SeqPattern[Option[T]] =
       pattern.map(Some(_)) | pure(None)
 
-    def repeated[T](using DebugInfo)(
+    def repeated[T](using
+        DebugInfo
+    )(
         pattern: SeqPattern[T]
     ): SeqPattern[List[T]] =
       lazy val impl: SeqPattern[List[T]] =
@@ -298,7 +306,9 @@ object SeqPattern:
 
       impl
 
-    def repeated1[T](using DebugInfo)(
+    def repeated1[T](using
+        DebugInfo
+    )(
         pattern: SeqPattern[T]
     ): SeqPattern[List[T]] =
       (field(pattern) ~ field(repeated(pattern)) ~ trailing).map(_ :: _)
@@ -311,7 +321,9 @@ object SeqPattern:
       ) ~ trailing)
         .map(_ :: _)
 
-    def repeatedSepBy[T](using DebugInfo)(sep: SeqPattern[?])(
+    def repeatedSepBy[T](using
+        DebugInfo
+    )(sep: SeqPattern[?])(
         pattern: SeqPattern[T]
     ): SeqPattern[List[T]] =
       repeatedSepBy1(sep)(pattern)
@@ -345,7 +357,9 @@ object SeqPattern:
       refine(atLastChild(on(pattern).value))
 
     extension [P <: Node.Parent](parentPattern: SeqPattern[P])
-      def withChildren[T](using DebugInfo)(
+      def withChildren[T](using
+          DebugInfo
+      )(
           pattern: SeqPattern[T]
       ): SeqPattern[T] =
         SeqPattern:

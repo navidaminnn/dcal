@@ -12,3 +12,4 @@ target/
 *.log
 dbg_*/
 scala-doc/
+*.vsix

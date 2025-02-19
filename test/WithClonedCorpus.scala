@@ -1,4 +1,4 @@
-// Copyright 2024 DCal Team
+// Copyright 2024-2025 DCal Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -40,8 +40,10 @@ transparent trait WithClonedCorpus:
         foundAnything = true
         test(corpusFile.relativeTo(clonesDir).toString)(fn(corpusFile))
 
-    test("sanity"):
+    test("sanity") {
       assert(
         foundAnything,
         s"must find at least one test file in $checkoutFolder"
       )
+    }
+  end testWithCorpusFile

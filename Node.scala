@@ -1,4 +1,4 @@
-// Copyright 2024 DCal Team
+// Copyright 2024-2025 DCal Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -324,7 +324,9 @@ object Node:
           val msg = err(Builtin.Error.Message)
           val ast = err(Builtin.Error.AST)
 
-          s"${msg.sourceRange.decodeString()} at ${ast.sourceRange.presentationStringLong}\n${if debug then ast.toShortString() else ""}"
+          s"${msg.sourceRange.decodeString()} at ${ast.sourceRange.presentationStringLong}\n${
+              if debug then ast.toShortString() else ""
+            }"
         .mkString("\n")
 
     final def serializedBy(wf: Wellformed): This =

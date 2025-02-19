@@ -1,4 +1,4 @@
-// Copyright 2024 DCal Team
+// Copyright 2024-2025 DCal Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -177,7 +177,9 @@ object Reader:
                 Branch(map, Some(fallback.fold(manip)(_ | manip)))
               case Leaf(manip) => Leaf(manip | manip)
 
-    def selectManyLike[T](using DebugInfo)(bytes: Set[Byte])(
+    def selectManyLike[T](using
+        DebugInfo
+    )(bytes: Set[Byte])(
         manip: Manip[T]
     ): Manip[T] =
       lazy val impl: Manip[T] =
@@ -190,7 +192,9 @@ object Reader:
       impl
 
     @targetName("selectManyLikeChars")
-    def selectManyLike[T](using DebugInfo)(chars: Set[Char])(
+    def selectManyLike[T](using
+        DebugInfo
+    )(chars: Set[Char])(
         manip: Manip[T]
     ): Manip[T] =
       selectManyLike(chars.map(_.toByte))(manip)

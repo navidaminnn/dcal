@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package distcompiler.test
+package distcompiler.util
 
-transparent trait WithTLACorpus extends WithClonedCorpus:
-  self: munit.FunSuite =>
-  val repoURL: String = "https://github.com/tlaplus/Examples.git"
-  val intoName: String = "Examples"
-
-  def isCorpusFile(file: os.Path): Boolean = file.last.endsWith(".tla")
+object newlineUtils:
+  extension (str: String)
+    def ensureLf: String =
+      str.split("\r\n").mkString("\n")
+    def ensureCrLf: String =
+      str.ensureLf.split("\n").mkString("\r\n")
