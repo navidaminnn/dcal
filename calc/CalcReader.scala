@@ -6,22 +6,25 @@ import distcompiler.*
 import dsl.*
 import distcompiler.Builtin.{Error, SourceMarker}
 import Reader.*
+import distcompiler.calc.tokens.*
 
 object CalcReader extends Reader:
   override lazy val wellformed = Wellformed:
-    Node.Top ::= repeated(choice(tokens.Number, tokens.Operator))
+    Node.Top ::= repeated(choice(tokens.Number, tokens.Expression, tokens.LowPrecOp, tokens.HighPrecOp))
     
-    tokens.Number ::= Atom
-    tokens.Operator ::= Atom
-    
-    tokens.Operation ::= fields(
-      tokens.Number,
-      tokens.Operator,
-      tokens.Number
+    Number ::= Atom
+    LowPrecOp ::= Atom
+    HighPrecOp ::= Atom
+
+    Expression ::= fields(
+      choice(tokens.Number, tokens.Expression),
+      choice(tokens.LowPrecOp, tokens.HighPrecOp),
+      choice(tokens.Number, tokens.Expression),
     )
 
   private val digit: Set[Char] = ('0' to '9').toSet
-  private val operation: Set[Char] = Set('*', '/', '+', '-')
+  private val lowPrecOperation: Set[Char] = Set('+', '-')
+  private val highPrecOperation: Set[Char] = Set('*', '/')
   private val whitespace: Set[Char] = Set(' ', '\n', '\t')
 
   private lazy val unexpectedEOF: Manip[SourceRange] =
@@ -37,10 +40,12 @@ object CalcReader extends Reader:
           extendThisNodeWithMatch(rules)
         .onOneOf(digit):
           numberMode
-        .onOneOf(operation):
-          operationMode
+        .onOneOf(lowPrecOperation):
+          lowPrecOpMode
+        .onOneOf(highPrecOperation):
+          highPrecOpMode
         .fallback:
-          bytes.selectCount(1):
+          bytes.selectOne:
             consumeMatch: m =>
               addChild(Error("invalid byte", SourceMarker(m)))
                 *> rules
@@ -58,14 +63,20 @@ object CalcReader extends Reader:
           consumeMatch: m =>
             m.decodeString().toIntOption match
               case Some(value) =>
-                addChild(tokens.Number(m))
+                addChild(Number(m))
                   *> rules
               case None =>
                 addChild(Error("invalid number format", SourceMarker(m)))
                   *> rules
 
-  private lazy val operationMode: Manip[SourceRange] =
+  private lazy val lowPrecOpMode: Manip[SourceRange] =
     commit:
       consumeMatch: m =>
-        addChild(tokens.Operator(m))
+        addChild(LowPrecOp(m))
+          *> rules
+
+  private lazy val highPrecOpMode: Manip[SourceRange] =
+    commit:
+      consumeMatch: m =>
+        addChild(HighPrecOp(m))
           *> rules

@@ -10,7 +10,15 @@ class CalcReaderTests extends munit.FunSuite:
 
     def evaluate: Node.Top =
       val top = parse
-      CalcParser(top)
+
+      CalcParser(top, tracer = Manip.RewriteDebugTracer(os.pwd / "dbg_calc_passes"))
+
+      os.write.over(
+        os.pwd / "dbg_calc_parser" / "test_output.dbg",
+        top.toPrettyWritable(CalcReader.wellformed),
+        createFolders = true
+      )
+
       top
 
   test("empty string"):
@@ -35,34 +43,69 @@ class CalcReaderTests extends munit.FunSuite:
       "5 + 11".parse, 
       Node.Top(
         tokens.Number("5"),
-        tokens.Operator("+"),
+        tokens.LowPrecOp("+"),
+        tokens.Number("11")
+      )
+    )
+
+  test("simple multiplication"):
+    assertEquals(
+      "5 * 11".parse, 
+      Node.Top(
+        tokens.Number("5"),
+        tokens.HighPrecOp("*"),
         tokens.Number("11")
       )
     )
 
   test("addition calculation"):
-    assertEquals("5 + 11".evaluate, Node.Top(tokens.Number("16")))
+    assertEquals(
+      "5 + 11".evaluate,
+      Node.Top(
+        tokens.Number("16")
+      ))
 
-  // test("calculation"):
-  //   assertEquals("10 - 7 + 4".evaluate, 7)
+  test("multiplication calculation"):
+    assertEquals(
+      "5 * 11".evaluate,
+      Node.Top(
+        tokens.Number("55")
+      ))
+
+  test("full calculation"):
+    assertEquals(
+      "5 + 11 * 4".evaluate,
+      Node.Top(
+        tokens.Number("49")
+      ))
+
+  test("full calculation 2"):
+    assertEquals(
+      "5 * 4 + 4 / 2".evaluate,
+      Node.Top(
+        tokens.Number("22")
+      ))
+
+  test("full calculation 3"):
+    assertEquals(
+      "5 * 4 + 4 / 2 - 6".evaluate,
+      Node.Top(
+        tokens.Number("16")
+      ))
+
+  test("full calculation 4"):
+    assertEquals(
+      "5 * 4 + 4 / 2 - 6 * 2".evaluate,
+      Node.Top(
+        tokens.Number("10")
+      ))
 
   // test("error: incorrect format"):
   //   intercept[IllegalArgumentException] (
   //     "10 - 10 7".evaluate
   //   )
 
-  // test("multiplication calculation"):
-  //   assertEquals("12 * 5 / 2".evaluate, 30)
-
   // test("error: divide by zero"):
   //   intercept[ArithmeticException] (
   //     "16 * 2 / 0".evaluate
   //   )
-
-  // test("error: invalid character error"):
-  //   intercept[IllegalArgumentException] (
-  //     "5k * 10".evaluate
-  //   )
-
-  // test("full calculation"):
-  //   assertEquals("10 + 7 * 5 - 9 / 3".evaluate, 42)

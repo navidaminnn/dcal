@@ -5,60 +5,87 @@ import cats.syntax.all.given
 import distcompiler.*
 import dsl.*
 import distcompiler.Builtin.{Error, SourceMarker}
+import distcompiler.calc.tokens.*
 
 object CalcParser extends PassSeq:
   import distcompiler.dsl.*
-  import distcompiler.Builtin.{Error, SourceMarker}
   import Reader.*
+  import CalcReader.*
 
   def inputWellformed: Wellformed = CalcReader.wellformed
 
-  private lazy val mulDivPass = passDef:
+  private val mulDivPass = passDef:
+    wellformed := inputWellformed.makeDerived:
+      Node.Top ::=! repeated(choice(Number, Expression, LowPrecOp))
+    
+    pass(once = true, strategy = pass.topDown)
+      .rules:
+        on(
+          field(tok(Number, Expression))
+          ~ field(tok(HighPrecOp))
+          ~ field(tok(Number, Expression))
+          ~ trailing
+        ).rewrite: (left, operator, right) =>
+          splice(
+            Expression(
+              left.unparent(),
+              operator.unparent(),
+              right.unparent()
+            )
+          )
+
+  private val addSubPass = passDef:
     wellformed := prevWellformed.makeDerived:
-      Node.Top ::=! repeated(choice(tokens.Operation, tokens.Number))
+      Node.Top ::=! repeated(choice(Number, Expression))
+
+    pass(once = true, strategy = pass.topDown)
+      .rules:
+        on(
+          field(tok(Number, Expression))
+          ~ field(tok(LowPrecOp))
+          ~ field(tok(Number, Expression))
+          ~ trailing
+        ).rewrite: (left, operator, right) =>
+          splice(
+            Expression(
+              left.unparent(),
+              operator.unparent(),
+              right.unparent()
+            )
+          )
+
+  private val simplifyPass = passDef:
+    wellformed := prevWellformed.makeDerived:
+      Node.Top ::=! fields(Number)
+
+    def evaluateOperation(left: Node, op: Node, right: Node): Int =
+      val leftNum = left.sourceRange.decodeString().toInt
+      val rightNum = right.sourceRange.decodeString().toInt
+      val operation = op.sourceRange.decodeString()
+      
+      operation match
+        case "+" => leftNum + rightNum
+        case "-" => leftNum - rightNum
+        case "*" => leftNum * rightNum
+        case "/" => leftNum / rightNum
+        case _ => throw IllegalArgumentException("Unknown operator")
 
     pass(once = false, strategy = pass.topDown)
       .rules:
         on(
-          tok(tokens.Operation).filter(node => 
-            Set("*", "/").contains(node.sourceRange.decodeString().trim)
-          ).withChildren(
-            field(tokens.Number)
-              ~ field(tokens.Operator) 
-              ~ field(tokens.Number)
-              ~ trailing
+          tok(Expression) *> children(
+            field(tok(Number))
+            ~ field(tok(LowPrecOp, HighPrecOp))
+            ~ field(tok(Number))
+            ~ trailing
           )
         ).rewrite: (left, op, right) =>
-          val l = left.sourceRange.decodeString().toInt
-          val r = right.sourceRange.decodeString().toInt
-          val result = op.sourceRange.decodeString().trim match
-            case "*" => l * r
-            case "/" => 
-              if r == 0 then throw ArithmeticException("Division by zero")
-              l / r
-          
-          splice(tokens.Number(result.toString))
-
-  private lazy val addSubPass = passDef:
-    wellformed := prevWellformed.makeDerived:
-      Node.Top ::=! fields(tokens.Number)
-
-    pass(once = false, strategy = pass.topDown)
-      .rules:
-        on(
-          tok(tokens.Operation).filter(node =>
-            Set("+", "-").contains(node.sourceRange.decodeString().trim)  
-          ).withChildren(
-            field(tokens.Number)
-              ~ field(tokens.Operator)
-              ~ field(tokens.Number)
-              ~ trailing
+          splice(
+            Number(
+              evaluateOperation(
+                left.unparent(),
+                op.unparent(),
+                right.unparent()
+              ).toString
+            )
           )
-        ).rewrite: (left, op, right) =>
-          val l = left.sourceRange.decodeString().toInt
-          val r = right.sourceRange.decodeString().toInt
-          val result = op.sourceRange.decodeString().trim match
-            case "+" => l + r
-            case "-" => l - r
-          
-          splice(tokens.Number(result.toString))

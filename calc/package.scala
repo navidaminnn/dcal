@@ -6,31 +6,33 @@ import scala.collection.mutable
 
 import distcompiler.*
 import dsl.*
+import distcompiler.calc.tokens.*
 
 object tokens:
-  object Operation extends Token
+  object LowPrecOp extends Token:
+    override def showSource: Boolean = true
+
+  object HighPrecOp extends Token:
+    override def showSource: Boolean = true
+
+  object Expression extends Token:
+    override def showSource: Boolean = true
 
   object Number extends Token:
     override def showSource: Boolean = true
 
-  object Operator extends Token:
-    override def showSource: Boolean = true
-
-  object Result extends Token:
-    override val symbolTableFor: Set[Token] = 
-      Set(Number)
-
 val wellformed: Wellformed =
   Wellformed:
-    Node.Top ::= repeated(choice(tokens.Number, tokens.Operator))
+    Node.Top ::= repeated(choice(tokens.Number, tokens.Expression, tokens.LowPrecOp, tokens.HighPrecOp))
     
     tokens.Number ::= Atom
-    tokens.Operator ::= Atom
-    
-    tokens.Operation ::= fields(
-      tokens.Number,
-      tokens.Operator,
-      tokens.Number
+    tokens.LowPrecOp ::= Atom
+    tokens.HighPrecOp ::= Atom
+
+    tokens.Expression ::= fields(
+      choice(tokens.Number, tokens.Expression),
+      choice(tokens.LowPrecOp, tokens.HighPrecOp),
+      choice(tokens.Number, tokens.Expression),
     )
 
 object parse:
