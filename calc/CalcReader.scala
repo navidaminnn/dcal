@@ -10,21 +10,43 @@ import distcompiler.calc.tokens.*
 
 object CalcReader extends Reader:
   override lazy val wellformed = Wellformed:
-    Node.Top ::= repeated(choice(tokens.Number, tokens.Expression, tokens.LowPrecOp, tokens.HighPrecOp))
+    Node.Top ::= repeated(choice(Number, AddOp, SubOp, MulOp, DivOp))
     
     Number ::= Atom
-    LowPrecOp ::= Atom
-    HighPrecOp ::= Atom
+    AddOp ::= Atom
+    SubOp ::= Atom
+    MulOp ::= Atom
+    DivOp ::= Atom
 
-    Expression ::= fields(
-      choice(tokens.Number, tokens.Expression),
-      choice(tokens.LowPrecOp, tokens.HighPrecOp),
-      choice(tokens.Number, tokens.Expression),
+    Add ::= fields(
+      choice(Number, Expression),
+      choice(Number, Expression)
+    )
+
+    Sub ::= fields(
+      choice(Number, Expression),
+      choice(Number, Expression)
+    )
+
+    Mul ::= fields(
+      choice(Number, Expression),
+      choice(Number, Expression)
+    )
+    
+    Div ::= fields(
+      choice(Number, Expression),
+      choice(Number, Expression)
+    )
+
+    Expression ::= choice(
+      Add,
+      Sub,
+      Mul,
+      Div
     )
 
   private val digit: Set[Char] = ('0' to '9').toSet
-  private val lowPrecOperation: Set[Char] = Set('+', '-')
-  private val highPrecOperation: Set[Char] = Set('*', '/')
+  private val operator: Set[Char] = Set('+', '-', '*', '/')
   private val whitespace: Set[Char] = Set(' ', '\n', '\t')
 
   private lazy val unexpectedEOF: Manip[SourceRange] =
@@ -40,10 +62,8 @@ object CalcReader extends Reader:
           extendThisNodeWithMatch(rules)
         .onOneOf(digit):
           numberMode
-        .onOneOf(lowPrecOperation):
-          lowPrecOpMode
-        .onOneOf(highPrecOperation):
-          highPrecOpMode
+        .onOneOf(operator):
+          operatorMode
         .fallback:
           bytes.selectOne:
             consumeMatch: m =>
@@ -69,14 +89,27 @@ object CalcReader extends Reader:
                 addChild(Error("invalid number format", SourceMarker(m)))
                   *> rules
 
-  private lazy val lowPrecOpMode: Manip[SourceRange] =
+  private lazy val operatorMode: Manip[SourceRange] =
     commit:
       consumeMatch: m =>
-        addChild(LowPrecOp(m))
-          *> rules
-
-  private lazy val highPrecOpMode: Manip[SourceRange] =
-    commit:
-      consumeMatch: m =>
-        addChild(HighPrecOp(m))
-          *> rules
+        m.decodeString() match
+          case "+" =>
+            addChild(
+              AddOp()
+            )
+              *> rules
+          case "-" =>
+            addChild(
+              SubOp()
+            )
+              *> rules
+          case "*" =>
+            addChild(
+              MulOp()
+            )
+              *> rules
+          case "/" =>
+            addChild(
+              DivOp()
+            )
+              *> rules

@@ -16,76 +16,70 @@ object CalcParser extends PassSeq:
 
   private val mulDivPass = passDef:
     wellformed := inputWellformed.makeDerived:
-      Node.Top ::=! repeated(choice(Number, Expression, LowPrecOp))
+      Node.Top ::=! repeated(choice(Number, Expression, AddOp, SubOp))
     
-    pass(once = true, strategy = pass.topDown)
+    pass(once = false, strategy = pass.topDown)
       .rules:
         on(
           field(tok(Number, Expression))
-          ~ field(tok(HighPrecOp))
+          ~ skip(tok(MulOp))
           ~ field(tok(Number, Expression))
           ~ trailing
-        ).rewrite: (left, operator, right) =>
+        ).rewrite: (left, right) =>
           splice(
             Expression(
-              left.unparent(),
-              operator.unparent(),
-              right.unparent()
+              Mul(
+                left.unparent(),
+                right.unparent()
+              )
+            )
+          )
+        | on(
+          field(tok(Number, Expression))
+          ~ skip(tok(DivOp))
+          ~ field(tok(Number, Expression))
+          ~ trailing
+        ).rewrite: (left, right) =>
+          splice(
+            Expression(
+              Div(
+                left.unparent(),
+                right.unparent()
+              )
             )
           )
 
   private val addSubPass = passDef:
     wellformed := prevWellformed.makeDerived:
-      Node.Top ::=! repeated(choice(Number, Expression))
-
-    pass(once = true, strategy = pass.topDown)
-      .rules:
-        on(
-          field(tok(Number, Expression))
-          ~ field(tok(LowPrecOp))
-          ~ field(tok(Number, Expression))
-          ~ trailing
-        ).rewrite: (left, operator, right) =>
-          splice(
-            Expression(
-              left.unparent(),
-              operator.unparent(),
-              right.unparent()
-            )
-          )
-
-  private val simplifyPass = passDef:
-    wellformed := prevWellformed.makeDerived:
-      Node.Top ::=! fields(Number)
-
-    def evaluateOperation(left: Node, op: Node, right: Node): Int =
-      val leftNum = left.sourceRange.decodeString().toInt
-      val rightNum = right.sourceRange.decodeString().toInt
-      val operation = op.sourceRange.decodeString()
-      
-      operation match
-        case "+" => leftNum + rightNum
-        case "-" => leftNum - rightNum
-        case "*" => leftNum * rightNum
-        case "/" => leftNum / rightNum
-        case _ => throw IllegalArgumentException("Unknown operator")
+      Node.Top ::=! repeated(Expression)
 
     pass(once = false, strategy = pass.topDown)
       .rules:
         on(
-          tok(Expression) *> children(
-            field(tok(Number))
-            ~ field(tok(LowPrecOp, HighPrecOp))
-            ~ field(tok(Number))
-            ~ trailing
-          )
-        ).rewrite: (left, op, right) =>
+          field(tok(Number, Expression))
+          ~ skip(tok(AddOp))
+          ~ field(tok(Number, Expression))
+          ~ trailing
+        ).rewrite: (left, right) =>
           splice(
-            Number(
-              evaluateOperation(
+            Expression(
+              Add(
                 left.unparent(),
-                op.unparent(),
                 right.unparent()
-              ).toString
+              )
+            )
+          )
+        | on(
+          field(tok(Number, Expression))
+          ~ skip(tok(SubOp))
+          ~ field(tok(Number, Expression))
+          ~ trailing
+        ).rewrite: (left, right) =>
+          splice(
+            Expression(
+              Sub(
+                left.unparent(),
+                right.unparent()
+              )
             )
           )
