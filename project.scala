@@ -21,6 +21,7 @@
 //> using dep com.lihaoyi::ujson::4.1.0
 //> using dependency "io.github.java-diff-utils:java-diff-utils:4.15"
 //> using test.dep org.scalameta::munit:1.1.0
+//> using dep edu.berkeley.cs.jqf:jqf-fuzz:2.0
 
 //> using javaProp distcompiler.Node.assertErrorRefCorrectness=no
 
