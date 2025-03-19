@@ -18,35 +18,7 @@ object CalcReader extends Reader:
     MulOp ::= Atom
     DivOp ::= Atom
 
-    Add ::= fields(
-      choice(Number, Expression),
-      choice(Number, Expression)
-    )
-
-    Sub ::= fields(
-      choice(Number, Expression),
-      choice(Number, Expression)
-    )
-
-    Mul ::= fields(
-      choice(Number, Expression),
-      choice(Number, Expression)
-    )
-    
-    Div ::= fields(
-      choice(Number, Expression),
-      choice(Number, Expression)
-    )
-
-    Expression ::= choice(
-      Add,
-      Sub,
-      Mul,
-      Div
-    )
-
   private val digit: Set[Char] = ('0' to '9').toSet
-  private val operator: Set[Char] = Set('+', '-', '*', '/')
   private val whitespace: Set[Char] = Set(' ', '\n', '\t')
 
   private lazy val unexpectedEOF: Manip[SourceRange] =
@@ -62,8 +34,18 @@ object CalcReader extends Reader:
           extendThisNodeWithMatch(rules)
         .onOneOf(digit):
           numberMode
-        .onOneOf(operator):
-          operatorMode
+        .on('+'):
+          addChild(AddOp())
+            *> rules
+        .on('-'):
+          addChild(SubOp())
+            *> rules
+        .on('*'):
+          addChild(MulOp())
+            *> rules
+        .on('/'):
+          addChild(DivOp())
+            *> rules
         .fallback:
           bytes.selectOne:
             consumeMatch: m =>
@@ -88,28 +70,3 @@ object CalcReader extends Reader:
               case None =>
                 addChild(Error("invalid number format", SourceMarker(m)))
                   *> rules
-
-  private lazy val operatorMode: Manip[SourceRange] =
-    commit:
-      consumeMatch: m =>
-        m.decodeString() match
-          case "+" =>
-            addChild(
-              AddOp()
-            )
-              *> rules
-          case "-" =>
-            addChild(
-              SubOp()
-            )
-              *> rules
-          case "*" =>
-            addChild(
-              MulOp()
-            )
-              *> rules
-          case "/" =>
-            addChild(
-              DivOp()
-            )
-              *> rules

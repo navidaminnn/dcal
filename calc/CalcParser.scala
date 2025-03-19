@@ -12,7 +12,7 @@ object CalcParser extends PassSeq:
   import Reader.*
   import CalcReader.*
 
-  def inputWellformed: Wellformed = CalcReader.wellformed
+  def inputWellformed: Wellformed = distcompiler.calc.wellformed
 
   private val mulDivPass = passDef:
     wellformed := inputWellformed.makeDerived:

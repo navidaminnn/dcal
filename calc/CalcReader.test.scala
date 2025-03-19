@@ -201,13 +201,3 @@ class CalcReaderTests extends munit.FunSuite:
       Node.Top(
         tokens.Number("10")
       ))
-
-  // test("error: incorrect format"):
-  //   intercept[IllegalArgumentException] (
-  //     "10 - 10 7".evaluate
-  //   )
-
-  // test("error: divide by zero"):
-  //   intercept[ArithmeticException] (
-  //     "16 * 2 / 0".evaluate
-  //   )
