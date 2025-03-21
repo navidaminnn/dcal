@@ -1,3 +1,17 @@
+// Copyright 2024-2025 DCal Team
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package distcompiler.calc
 
 import cats.syntax.all.given
@@ -12,19 +26,47 @@ object CalcParser extends PassSeq:
   import Reader.*
   import CalcReader.*
 
-  def inputWellformed: Wellformed = distcompiler.calc.wellformed
+  def inputWellformed: Wellformed =
+    CalcReader.wellformed.makeDerived:
+      Add ::= fields(
+        Expression,
+        Expression
+      )
+
+      Sub ::= fields(
+        Expression,
+        Expression
+      )
+
+      Mul ::= fields(
+        Expression,
+        Expression
+      )
+
+      Div ::= fields(
+        Expression,
+        Expression
+      )
+
+      Expression ::=! choice(
+        Number,
+        Add,
+        Sub,
+        Mul,
+        Div
+      )
 
   private val mulDivPass = passDef:
     wellformed := inputWellformed.makeDerived:
-      Node.Top ::=! repeated(choice(Number, Expression, AddOp, SubOp))
-    
+      Node.Top ::=! repeated(choice(Expression, AddOp, SubOp))
+
     pass(once = false, strategy = pass.topDown)
       .rules:
         on(
-          field(tok(Number, Expression))
-          ~ skip(tok(MulOp))
-          ~ field(tok(Number, Expression))
-          ~ trailing
+          field(tok(Expression))
+            ~ skip(tok(MulOp))
+            ~ field(tok(Expression))
+            ~ trailing
         ).rewrite: (left, right) =>
           splice(
             Expression(
@@ -35,10 +77,10 @@ object CalcParser extends PassSeq:
             )
           )
         | on(
-          field(tok(Number, Expression))
-          ~ skip(tok(DivOp))
-          ~ field(tok(Number, Expression))
-          ~ trailing
+          field(tok(Expression))
+            ~ skip(tok(DivOp))
+            ~ field(tok(Expression))
+            ~ trailing
         ).rewrite: (left, right) =>
           splice(
             Expression(
@@ -56,10 +98,10 @@ object CalcParser extends PassSeq:
     pass(once = false, strategy = pass.topDown)
       .rules:
         on(
-          field(tok(Number, Expression))
-          ~ skip(tok(AddOp))
-          ~ field(tok(Number, Expression))
-          ~ trailing
+          field(tok(Expression))
+            ~ skip(tok(AddOp))
+            ~ field(tok(Expression))
+            ~ trailing
         ).rewrite: (left, right) =>
           splice(
             Expression(
@@ -70,10 +112,10 @@ object CalcParser extends PassSeq:
             )
           )
         | on(
-          field(tok(Number, Expression))
-          ~ skip(tok(SubOp))
-          ~ field(tok(Number, Expression))
-          ~ trailing
+          field(tok(Expression))
+            ~ skip(tok(SubOp))
+            ~ field(tok(Expression))
+            ~ trailing
         ).rewrite: (left, right) =>
           splice(
             Expression(
