@@ -118,7 +118,5 @@ object CalcEvaluator extends PassSeq:
               ~ eof
         ).rewrite: (number) =>
           splice(
-            Number(
-              number.unparent().sourceRange.decodeString()
-            )
+            number.unparent()
           )
