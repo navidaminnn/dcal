@@ -1,0 +1,17 @@
+{
+	"name": "DCal",
+	"build": {
+		"dockerfile": "Dockerfile"
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"scalameta.metals",
+				"github.vscode-github-actions",
+				"scala-lang.scala",
+				"ms-azuretools.vscode-docker"
+			]
+		}
+	}
+	//"postCreateCommand": "scala-cli clean . && scala-cli run . --main-class setup_sc"
+}
