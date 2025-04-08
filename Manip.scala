@@ -94,7 +94,8 @@ enum Manip[+T]:
         backtrack: Backtrack[U],
         refMap: RefMap
     ): TailRec[U] =
-      self match
+      import distcompiler.util.fastMatch
+      self.fastMatch:
         case Backtrack(debugInfo) =>
           tracer.onBacktrack(debugInfo)
           tailcall(backtrack(debugInfo))
@@ -179,8 +180,8 @@ enum Manip[+T]:
           tailcall(continue(tracer))
         case Disjunction(first, second) =>
           given Backtrack[U] = debugInfo1 =>
-            given Backtrack[U] = debugInfo2 =>
-              tailcall(backtrack(debugInfo1 ++ debugInfo2))
+            given Backtrack[U] =
+              debugInfo2 => tailcall(backtrack(debugInfo1 ++ debugInfo2))
             tailcall(impl(second))
           impl(first)
         case Deferred(fn) => impl(fn())
