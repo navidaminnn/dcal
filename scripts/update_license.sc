@@ -1,4 +1,3 @@
-#!/usr/bin/env -S scala-cli shebang
 // Copyright 2024-2025 DCal Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//> using dep com.lihaoyi::os-lib:0.11.3
 import scala.util.matching.Regex
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter

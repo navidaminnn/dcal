@@ -159,6 +159,28 @@ class ManipTests extends munit.FunSuite:
       atNode(bi)(unifyColors8).perform()
       assertEquals(bi, mono)
 
+  test("error node is skipped"):
+    val example = Node.Top:
+      tok2(
+        tok2(tok1()),
+        tok1(Builtin.Error("???", tok2()))
+      )
+    val expected = Node.Top:
+      tok1(
+        tok1(tok1()),
+        tok1(Builtin.Error("???", tok2()))
+      )
+
+    // topDown
+    val result1 = example.clone()
+    atNode(result1)(unifyColors1).perform()
+    assertEquals(result1, expected)
+
+    // bottomUp
+    val result2 = example.clone()
+    atNode(result2)(unifyColors3).perform()
+    assertEquals(result2, expected)
+
 object ManipTests:
   object tok1 extends Token
   object tok2 extends Token

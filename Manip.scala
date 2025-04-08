@@ -937,9 +937,14 @@ object Manip:
           .flatMap: (tracer, refMap) =>
             effect(tracer.afterPass(summon[DebugInfo])(using refMap))
 
+        // TODO: consider optimizing the ancestor check if it becomes a bottleneck
+        def exceptInError[T](manip: Manip[T])(using DebugInfo): Manip[T] =
+          import SeqPattern.ops.*
+          on(not(ancestor(Builtin.Error))).check *> manip
+
         lazy val loop: Manip[RulesResult] =
           commit:
-            rules(using pass.Ctx(strategy, defer(loop)))
+            exceptInError(rules(using pass.Ctx(strategy, defer(loop))))
               | strategy.atNext(defer(loop))
 
         wrapFn:

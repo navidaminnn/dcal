@@ -12,6 +12,6 @@
 				"ms-azuretools.vscode-docker"
 			]
 		}
-	}
-	//"postCreateCommand": "scala-cli clean . && scala-cli run . --main-class setup_sc"
+	},
+	"postCreateCommand": "scala-cli clean ."
 }
