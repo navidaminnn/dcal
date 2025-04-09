@@ -73,7 +73,7 @@ To learn how to use the calculator, ```CalcReader.test.scala``` contains methods
 
 
 ## Example
-The following images demonstrates the state of the AST after each pass with the input "5 + 3 * 4". 
+The following images demonstrates the state of the AST after each pass with the input "5 + 3 * 4". Viewing the state of the AST after each pass can also be done by running calculator test cases with the tracer enabled. 
 
 ![example1](img/example1.jpg)
 ![exampel2](img/example2.jpg)
