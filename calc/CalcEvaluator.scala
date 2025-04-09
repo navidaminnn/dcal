@@ -29,7 +29,8 @@ object CalcEvaluator extends PassSeq:
   def inputWellformed: Wellformed = distcompiler.calc.wellformed
 
   private val simplifyPass = passDef:
-    wellformed := inputWellformed
+    wellformed := inputWellformed.makeDerived:
+      Node.Top ::=! Expression
 
     pass(once = false, strategy = pass.bottomUp)
       .rules:
@@ -107,8 +108,8 @@ object CalcEvaluator extends PassSeq:
           )
 
   private val removeLayerPass = passDef:
-    wellformed := inputWellformed.makeDerived:
-      Node.Top ::=! fields(Number)
+    wellformed := prevWellformed.makeDerived:
+      Node.Top ::=! Number
 
     pass(once = true, strategy = pass.topDown)
       .rules:
