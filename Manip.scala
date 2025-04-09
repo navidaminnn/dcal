@@ -94,7 +94,8 @@ enum Manip[+T]:
         backtrack: Backtrack[U],
         refMap: RefMap
     ): TailRec[U] =
-      self match
+      import distcompiler.util.fastMatch
+      self.fastMatch:
         case Backtrack(debugInfo) =>
           tracer.onBacktrack(debugInfo)
           tailcall(backtrack(debugInfo))
@@ -179,8 +180,8 @@ enum Manip[+T]:
           tailcall(continue(tracer))
         case Disjunction(first, second) =>
           given Backtrack[U] = debugInfo1 =>
-            given Backtrack[U] = debugInfo2 =>
-              tailcall(backtrack(debugInfo1 ++ debugInfo2))
+            given Backtrack[U] =
+              debugInfo2 => tailcall(backtrack(debugInfo1 ++ debugInfo2))
             tailcall(impl(second))
           impl(first)
         case Deferred(fn) => impl(fn())
@@ -937,9 +938,14 @@ object Manip:
           .flatMap: (tracer, refMap) =>
             effect(tracer.afterPass(summon[DebugInfo])(using refMap))
 
+        // TODO: consider optimizing the ancestor check if it becomes a bottleneck
+        def exceptInError[T](manip: Manip[T])(using DebugInfo): Manip[T] =
+          import SeqPattern.ops.*
+          on(not(ancestor(Builtin.Error))).check *> manip
+
         lazy val loop: Manip[RulesResult] =
           commit:
-            rules(using pass.Ctx(strategy, defer(loop)))
+            exceptInError(rules(using pass.Ctx(strategy, defer(loop))))
               | strategy.atNext(defer(loop))
 
         wrapFn:
