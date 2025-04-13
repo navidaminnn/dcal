@@ -49,8 +49,7 @@ sealed abstract class Manip[+T]:
     end impl
 
     if Manip.useReferenceTracer
-    then
-      instrumentWithTracerReentrant(ManipReferenceTracer(this))(impl)
+    then instrumentWithTracerReentrant(ManipReferenceTracer(this))(impl)
     else impl
 end Manip
 
@@ -519,7 +518,7 @@ object Manip:
     case Progress, NoProgress
 
   val unit: Manip[Unit] = ().pure
-  //export dsl.defer
+  // export dsl.defer
   export applicative.pure
 
   given applicative: cats.Applicative[Manip] with
