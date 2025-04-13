@@ -16,8 +16,11 @@ package distcompiler
 
 import cats.syntax.all.given
 import dsl.*
+import scala.concurrent.duration.{Duration, MINUTES}
 
 class ManipTests extends munit.FunSuite:
+  // or CI will kill us for taking slightly over 30s
+  override val munitTimeout = Duration(5, MINUTES)
   import ManipTests.*
 
   def repeat(breadth: Int, iterFn: () => Iterator[Node]): Iterator[List[Node]] =

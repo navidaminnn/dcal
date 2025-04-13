@@ -258,7 +258,7 @@ object Node:
 
     final def inspect[T](manip: Manip[T]): Option[T] =
       import dsl.*
-      atNode(this)(manip.map(Some(_)) | Manip.pure(None))
+      initNode(this)(manip.map(Some(_)) | Manip.pure(None))
         .perform()
 
     def asNode: Node =
