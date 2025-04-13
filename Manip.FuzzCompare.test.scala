@@ -39,7 +39,7 @@ final class ManipFuzzCompareTests extends FuzzTestSuite:
   @Fuzz
   def fuzzManipPerform(@From(classOf[ManipGenerator]) manip: Manip[?]): Unit =
     Using.resource(ManipReferenceTracer(manip)): tracer =>
-      Manip.ops.instrumentWithTracer(tracer):
+      instrumentWithTracer(tracer):
         try manip.perform()
         catch
           case bt: Manip.UnrecoveredBacktrackException =>

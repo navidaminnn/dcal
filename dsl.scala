@@ -14,10 +14,8 @@
 
 package distcompiler
 
-object dsl:
+object dsl extends Manip.Ops, SeqPattern.Ops, Wellformed.Shape.Ops:
   export SourceRange.src
   export Manip.Rules
-  export Manip.ops.*
-  export SeqPattern.ops.*
   export Wellformed.Shape
-  export Wellformed.Shape.{fields, repeated, Atom, AnyShape, choice, embedded}
+  export Wellformed.Shape.{Atom, AnyShape}

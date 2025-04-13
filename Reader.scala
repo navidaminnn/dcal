@@ -15,6 +15,7 @@
 package distcompiler
 
 import cats.syntax.all.given
+import dsl.*
 import scala.annotation.targetName
 import java.nio.charset.{StandardCharsets, Charset}
 import java.nio.CharBuffer
@@ -30,7 +31,7 @@ trait Reader:
     val top = Node.Top()
 
     val manip =
-      Manip.ops.initNode(top):
+      initNode(top):
         Reader.srcRef.init(sourceRange):
           Reader.matchedRef.init(sourceRange.take(0)):
             rules.flatMap: _ =>

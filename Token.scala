@@ -15,7 +15,7 @@
 package distcompiler
 
 import scala.collection.mutable
-import distcompiler.Manip.ops.backtrack
+import dsl.*
 
 trait Token extends Equals, Named:
   require(!Token._nameSet.contains(name), s"duplicate name $name")

@@ -208,14 +208,14 @@ object SeqPattern:
   case object FieldsEndMarker
   case object FieldsTrailingMarker
 
-  object ops:
+  trait Ops:
     def refine[T](manip: Manip[T]): SeqPattern[T] =
       SeqPattern:
         (SeqPattern.unit.manip, manip).mapN(_.withValue(_))
 
     @scala.annotation.targetName("deferSeqPattern")
     def defer[T](pattern: => SeqPattern[T]): SeqPattern[T] =
-      SeqPattern(Manip.ops.defer(pattern.manip))
+      SeqPattern(dsl.defer(pattern.manip))
 
     def field[T](pattern: SeqPattern[T]): SeqPattern[Fields[Tuple1[T]]] =
       pattern.map(t => Fields(Tuple1(t)))

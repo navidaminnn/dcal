@@ -16,6 +16,7 @@ package distcompiler.sexpr
 
 import cats.syntax.all.given
 import distcompiler.*
+import distcompiler.dsl.*
 
 object tokens:
   object List extends Token
@@ -23,7 +24,6 @@ object tokens:
     override def showSource: Boolean = true
 
 val wellformed: Wellformed =
-  import dsl.*
   Wellformed:
     val listContents = repeated(choice(tokens.Atom, tokens.List))
     Node.Top ::= listContents

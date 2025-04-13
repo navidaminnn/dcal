@@ -601,23 +601,26 @@ object Wellformed:
       def |(other: Shape.Choice): Shape.Choice =
         Shape.Choice(choice.choices ++ other.choices)
 
-    def choice(tokens: (Token | EmbedMeta[?])*): Shape.Choice =
-      Shape.Choice(tokens.toSet)
+    trait Ops:
+      def choice(tokens: (Token | EmbedMeta[?])*): Shape.Choice =
+        Shape.Choice(tokens.toSet)
 
-    def choice(tokens: Set[Token | EmbedMeta[?]]): Shape.Choice =
-      Shape.Choice(tokens)
+      def choice(tokens: Set[Token | EmbedMeta[?]]): Shape.Choice =
+        Shape.Choice(tokens)
 
-    def repeated(choice: Shape.Choice, minCount: Int = 0): Shape.Repeat =
-      Shape.Repeat(choice, minCount)
+      def repeated(choice: Shape.Choice, minCount: Int = 0): Shape.Repeat =
+        Shape.Repeat(choice, minCount)
 
-    inline def embedded[T: EmbedMeta]: Shape.Choice =
-      Shape.Choice(Set(summon[EmbedMeta[T]]))
+      inline def embedded[T: EmbedMeta]: Shape.Choice =
+        Shape.Choice(Set(summon[EmbedMeta[T]]))
 
-    def fields(fields: Shape.Choice*): Shape.Fields =
-      Shape.Fields(fields.toList)
+      def fields(fields: Shape.Choice*): Shape.Fields =
+        Shape.Fields(fields.toList)
 
-    import scala.language.implicitConversions
-    // TODO: once `into` keyword works, use that
-    implicit def tokenAsChoice(token: Token): Shape.Choice =
-      Shape.Choice(Set(token))
+      import scala.language.implicitConversions
+      // TODO: once `into` keyword works, use that
+      implicit def tokenAsChoice(token: Token): Shape.Choice =
+        Shape.Choice(Set(token))
+    end Ops
+  end Shape
 end Wellformed

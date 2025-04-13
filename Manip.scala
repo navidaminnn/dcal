@@ -15,6 +15,7 @@
 package distcompiler
 
 import cats.syntax.all.given
+import dsl.*
 import util.{++, toShortString}
 import com.github.difflib.{DiffUtils, UnifiedDiffUtils}
 import scala.jdk.CollectionConverters._
@@ -49,7 +50,7 @@ sealed abstract class Manip[+T]:
 
     if Manip.useReferenceTracer
     then
-      Manip.ops.instrumentWithTracerReentrant(ManipReferenceTracer(this))(impl)
+      instrumentWithTracerReentrant(ManipReferenceTracer(this))(impl)
     else impl
 end Manip
 
@@ -477,7 +478,6 @@ object Manip:
         manip: Manip[U]
     ): Manip[U] = Manip.RefUpdated(this, fn, manip, summon[DebugInfo])
     final def doEffect[U](using DebugInfo)(fn: T => U): Manip[U] =
-      import ops.{lookahead, effect}
       get.lookahead.flatMap: v =>
         effect(fn(v))
 
@@ -519,7 +519,7 @@ object Manip:
     case Progress, NoProgress
 
   val unit: Manip[Unit] = ().pure
-  export ops.defer
+  //export dsl.defer
   export applicative.pure
 
   given applicative: cats.Applicative[Manip] with
@@ -927,7 +927,7 @@ object Manip:
         case Sentinel(parent, _)   => parent
         case AtChild(parent, _, _) => parent
 
-  object ops:
+  trait Ops:
     def instrumentWithTracer[T](tracer: Tracer)(fn: => T): T =
       require(
         tracerVar.get() eq null,
@@ -1116,7 +1116,7 @@ object Manip:
             action(using on.Ctx(matchedCount))(value)
 
     object on:
-      final case class Ctx(matchedCount: Int) extends AnyVal
+      final case class Ctx(matchedCount: Int)
 
     def spliceThen(using
         DebugInfo.Ctx
@@ -1274,7 +1274,6 @@ object Manip:
 
         // TODO: consider optimizing the ancestor check if it becomes a bottleneck
         def exceptInError[T](manip: Manip[T])(using DebugInfo.Ctx): Manip[T] =
-          import SeqPattern.ops.*
           on(not(ancestor(Builtin.Error))).check *> manip
 
         lazy val loop: Manip[RulesResult] =
@@ -1332,12 +1331,12 @@ object Manip:
           commit:
             atFirstChild(next)
               | atRightSibling(next)
-              | (on(SeqPattern.ops.atEnd).check
+              | (on(atEnd).check
                 *> atParent(
                   commit(
                     // going right finds either real sibling or sentinel, unless at top
                     atRightSibling(next)
-                      | on(SeqPattern.ops.theTop).check *> endPass
+                      | on(theTop).check *> endPass
                   )
                 ))
 
@@ -1371,8 +1370,8 @@ object Manip:
               // up one layer, far left, knowing we looked at all reachable children
               | atParent(atFirstSibling(next))
               // special case: parent is top
-              | atParent(on(SeqPattern.ops.theTop).check *> next)
+              | atParent(on(theTop).check *> next)
               // onward from top --> done
-              | on(SeqPattern.ops.theTop).check *> endPass
-  end ops
+              | on(theTop).check *> endPass
+  end Ops
 end Manip
