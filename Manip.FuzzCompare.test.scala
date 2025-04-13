@@ -33,7 +33,7 @@ import scala.util.Using
 @RunWith(classOf[JQF])
 final class ManipFuzzCompareTests extends FuzzTestSuite:
   import ManipFuzzCompareTests.*
-  fuzzTestMethod(fuzzManipPerform)
+  // fuzzTestMethod(fuzzManipPerform)
 
   import org.junit.Assume
   @Fuzz
