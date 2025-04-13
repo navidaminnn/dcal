@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //> using scala 3
-//> using options -Werror -deprecation -feature -Yexplicit-nulls -Xcheck-macros
+//> using options -Werror -deprecation -feature -Yexplicit-nulls -Xcheck-macros -Werror -Wunused:strict-no-implicit-warn
 //> using dep com.lihaoyi::os-lib:0.11.4
 //> using dep com.lihaoyi::sourcecode:0.4.2
 //> using dep org.typelevel::cats-core:2.13.0
@@ -31,6 +31,8 @@
 //> using test.dep org.scalameta::munit:1.1.0
 
 //> using javaProp distcompiler.Node.assertErrorRefCorrectness=no
-//> using test.javaProp distcompiler.Manip.useReferenceTracer=yes
+
+// TODO: this is super inefficient, and needs tail-call impl
+////> using test.javaProp distcompiler.Manip.useReferenceTracer=yes
 
 // discarded flags: -Yrequire-targetName

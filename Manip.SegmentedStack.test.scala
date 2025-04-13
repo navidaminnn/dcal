@@ -16,7 +16,6 @@ package distcompiler
 
 import cats.syntax.all.given
 import dsl.*
-import munit.Assertions
 import munit.diff.DiffOptions
 import munit.Location
 
@@ -27,7 +26,7 @@ class ManipSegmentedStackTests extends munit.FunSuite:
   given munit.Compare[Integer | Null, Int] with
     def isEqual(obtained: Integer | Null, expected: Int): Boolean =
       obtained match
-        case null => false
+        case null         => false
         case int: Integer => int == expected
   given munit.Compare[Int, Integer] with
     def isEqual(obtained: Int, expected: Integer): Boolean =
@@ -65,7 +64,7 @@ class ManipSegmentedStackTests extends munit.FunSuite:
 
     test(s"consumeInReverse 0-$count"):
       val stack = Manip.SegmentedStack[Integer]()
-      
+
       (0 to count).foreach: num =>
         stack.push(num)
       var idx = 0

@@ -1,7 +1,6 @@
 package distcompiler
 
 import distcompiler.dsl.*
-import distcompiler.Manip.RefMap
 
 import distcompiler.util.FuzzTestSuite
 
@@ -20,7 +19,7 @@ import scala.util.Using
 @RunWith(classOf[JQF])
 final class ManipFuzzCompareTests extends FuzzTestSuite:
   import ManipFuzzCompareTests.*
-  // fuzzTestMethod(fuzzManipPerform)
+  fuzzTestMethod(fuzzManipPerform)
 
   import org.junit.Assume
   @Fuzz
@@ -28,9 +27,10 @@ final class ManipFuzzCompareTests extends FuzzTestSuite:
     Using.resource(ManipReferenceTracer(manip)): tracer =>
       Manip.ops.instrumentWithTracer(tracer):
         try manip.perform()
-        catch case bt: Manip.UnrecoveredBacktrackException =>
-          // these are fine but kinda trivial
-          Assume.assumeTrue(false)
+        catch
+          case bt: Manip.UnrecoveredBacktrackException =>
+            // these are fine but kinda trivial
+            Assume.assumeTrue(false)
 
 object ManipFuzzCompareTests:
   final class ManipGenerator extends Generator[Manip[Any]](classOf[Manip[Any]]):
@@ -43,7 +43,10 @@ object ManipFuzzCompareTests:
       if range.max().nonEmpty
       then min = range.max().toInt
 
-    def generate(random: SourceOfRandomness, status: GenerationStatus): Manip[Any] =
+    def generate(
+        random: SourceOfRandomness,
+        status: GenerationStatus
+    ): Manip[Any] =
       require(min >= 0 && max >= min, s"failed 0 <= $min <= $max")
       val treeSize = random.nextInt(min, max)
       ManipGenerator.generateAny(treeSize)(using ManipGenerator.Ctx(random))
@@ -62,7 +65,10 @@ object ManipFuzzCompareTests:
       def pickOne(using ctx: Ctx): Ref[Any] =
         refs(ctx.random.nextInt(refs.length))
 
-    final class Ctx(val random: SourceOfRandomness, val requireFn: Boolean = false):
+    final class Ctx(
+        val random: SourceOfRandomness,
+        val requireFn: Boolean = false
+    ):
       def withRequireFn: Ctx =
         Ctx(random, requireFn = true)
 
@@ -72,15 +78,16 @@ object ManipFuzzCompareTests:
       def getValue(): Any =
         val num = random.nextInt()
         def fn: Any => Any = {
-          case n: Int => num + n
+          case n: Int       => num + n
           case fn: (? => ?) => fn
-          case _: Tracer => num
-          case _: RefMap => num
+          case _: Tracer    => num
+          case _: RefMap    => num
         }
         if requireFn then fn
-        else random.nextBoolean() match
-          case true => num
-          case false => fn
+        else
+          random.nextBoolean() match
+            case true  => num
+            case false => fn
 
     sealed abstract class ManipGenImpl[T]:
       def shouldSkip = false
@@ -111,7 +118,7 @@ object ManipFuzzCompareTests:
       val minTreeSize = 1
       def generate(treeSize: Int)(using ctx: Ctx): Backtrack =
         Backtrack(DebugInfo())
-        
+
     given ManipGenImpl[Pure[Any]] with
       val minTreeSize = 1
       def generate(treeSize: Int)(using ctx: Ctx): Pure[Any] =
@@ -137,24 +144,31 @@ object ManipFuzzCompareTests:
         val (subTreeSizeL, subTreeSizeR) = splitSubTreeSize(treeSize - 1)
         val result1 = generateAny(subTreeSizeR)
         val result2 = generateAny(subTreeSizeR)
-        FlatMap(generateAny(subTreeSizeL)(using ctx.withoutRequireFn), {
-          case _: Int => result1
-          case _: (? => ?) => result2
-          case _: RefMap => result1
-          case _: Tracer => result2
-        })
+        FlatMap(
+          generateAny(subTreeSizeL)(using ctx.withoutRequireFn),
+          {
+            case _: Int      => result1
+            case _: (? => ?) => result2
+            case _: RefMap   => result1
+            case _: Tracer   => result2
+          }
+        )
 
     given ManipGenImpl[Restrict[Any, Any]] with
       val minTreeSize = 2
       def generate(treeSize: Int)(using ctx: Ctx): Restrict[Any, Any] =
         val max = ctx.random.nextInt()
         val keepFn = ctx.random.nextBoolean()
-        Restrict(generateAny(treeSize - 1), {
-          case num: Int if num <= max => num
-          case fn: (? => ?) if keepFn => fn
-          case tracer: Tracer if keepFn => tracer
-          case refMap: RefMap if keepFn => refMap
-        }, DebugInfo())
+        Restrict(
+          generateAny(treeSize - 1),
+          {
+            case num: Int if num <= max   => num
+            case fn: (? => ?) if keepFn   => fn
+            case tracer: Tracer if keepFn => tracer
+            case refMap: RefMap if keepFn => refMap
+          },
+          DebugInfo()
+        )
 
     given ManipGenImpl[Effect[Any]] with
       val minTreeSize = 1
@@ -174,7 +188,7 @@ object ManipFuzzCompareTests:
       def generate(treeSize: Int)(using ctx: Ctx): Finally[Any] =
         Finally(
           generateAny(treeSize - 1),
-          () => (),
+          () => ()
         )
 
     given ManipGenImpl[KeepLeft[Any]] with
@@ -183,7 +197,7 @@ object ManipFuzzCompareTests:
         val (subTreeSizeL, subTreeSizeR) = splitSubTreeSize(treeSize - 1)
         KeepLeft(
           generateAny(subTreeSizeL),
-          generateAny(subTreeSizeR)(using ctx.withoutRequireFn),
+          generateAny(subTreeSizeR)(using ctx.withoutRequireFn)
         )
 
     given ManipGenImpl[KeepRight[Any]] with
@@ -192,7 +206,7 @@ object ManipFuzzCompareTests:
         val (subTreeSizeL, subTreeSizeR) = splitSubTreeSize(treeSize - 1)
         KeepRight(
           generateAny(subTreeSizeL)(using ctx.withoutRequireFn),
-          generateAny(subTreeSizeR),
+          generateAny(subTreeSizeR)
         )
 
     given ManipGenImpl[Commit[Any]] with
@@ -204,7 +218,12 @@ object ManipFuzzCompareTests:
       val minTreeSize = 2
       def generate(treeSize: Int)(using ctx: Ctx): Manip.RefInit[Any, Any] =
         val v = ctx.getValue()
-        RefInit(SimRefs.pickOne, () => v, generateAny(treeSize - 1), DebugInfo())
+        RefInit(
+          SimRefs.pickOne,
+          () => v,
+          generateAny(treeSize - 1),
+          DebugInfo()
+        )
 
     given ManipGenImpl[RefGet[Any]] with
       // not technically true, but because we can't prove we stored a fn,
@@ -224,7 +243,12 @@ object ManipFuzzCompareTests:
       val minTreeSize = 2
       def generate(treeSize: Int)(using ctx: Ctx): RefUpdated[Any, Any] =
         val v = ctx.getValue()
-        RefUpdated(SimRefs.pickOne, (_ => v), generateAny(treeSize - 1), DebugInfo())
+        RefUpdated(
+          SimRefs.pickOne,
+          (_ => v),
+          generateAny(treeSize - 1),
+          DebugInfo()
+        )
 
     given ManipGenImpl[GetRefMap.type] with
       override val fixedResultType = true
@@ -244,7 +268,11 @@ object ManipFuzzCompareTests:
       val minTreeSize = 3
       def generate(treeSize: Int)(using ctx: Ctx): Disjunction[Any] =
         val (subTreeSizeL, subTreeSizeR) = splitSubTreeSize(treeSize - 1)
-        Disjunction(generateAny(subTreeSizeL), generateAny(subTreeSizeR), DebugInfo())
+        Disjunction(
+          generateAny(subTreeSizeL),
+          generateAny(subTreeSizeR),
+          DebugInfo()
+        )
 
     given ManipGenImpl[Deferred[Any]] with
       val minTreeSize = 2
@@ -263,24 +291,26 @@ object ManipFuzzCompareTests:
       val minTreeSize = 2
       def generate(treeSize: Int)(using ctx: Ctx): RestrictHandle[Any] = ???
 
-    private inline def findGenOptions(using mirror: Mirror.Of[Manip[Any]]): Array[ManipGenImpl[Manip[Any]]] =
-      summonAll[Tuple.Map[mirror.MirroredElemTypes, ManipGenImpl]]
-        .toArray
+    private inline def findGenOptions(using
+        mirror: Mirror.Of[Manip[Any]]
+    ): Array[ManipGenImpl[Manip[Any]]] =
+      summonAll[Tuple.Map[mirror.MirroredElemTypes, ManipGenImpl]].toArray
         .map(_.asInstanceOf[ManipGenImpl[Manip[Any]]])
 
-    val generatorsByMinTreeSize: Array[Array[ManipGenImpl[Manip[Any]]]] = locally:
-      val generators = findGenOptions
-      val builder = Array.newBuilder[Array[ManipGenImpl[Manip[Any]]]]
-      var lastAddition = generators.filter(_.minTreeSize <= 1)
-      builder += lastAddition
-      var minTreeSize = 1
-      var proposedAddition = generators.filter(_.minTreeSize <= minTreeSize)
-      while proposedAddition.length > lastAddition.length do
-        builder += proposedAddition
-        minTreeSize += 1
-        lastAddition = proposedAddition
-        proposedAddition = generators.filter(_.minTreeSize <= minTreeSize)
-      builder.result()
+    val generatorsByMinTreeSize: Array[Array[ManipGenImpl[Manip[Any]]]] =
+      locally:
+        val generators = findGenOptions
+        val builder = Array.newBuilder[Array[ManipGenImpl[Manip[Any]]]]
+        var lastAddition = generators.filter(_.minTreeSize <= 1)
+        builder += lastAddition
+        var minTreeSize = 1
+        var proposedAddition = generators.filter(_.minTreeSize <= minTreeSize)
+        while proposedAddition.length > lastAddition.length do
+          builder += proposedAddition
+          minTreeSize += 1
+          lastAddition = proposedAddition
+          proposedAddition = generators.filter(_.minTreeSize <= minTreeSize)
+        builder.result()
     end generatorsByMinTreeSize
   end ManipGenerator
 end ManipFuzzCompareTests

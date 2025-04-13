@@ -16,10 +16,8 @@ package distcompiler
 
 import cats.syntax.all.given
 import scala.collection.mutable
-import izumi.reflect.Tag
 import scala.util.control.TailCalls.*
 import util.TailCallsUtils.*
-import distcompiler.util.toShortString
 
 final class Wellformed private (
     val assigns: Map[Token, Wellformed.Shape],

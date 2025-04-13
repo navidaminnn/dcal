@@ -85,7 +85,8 @@ private def fastMatchImpl[T <: Enum: Type, U: Type](
                   None,
                   dummyMatch(cse)
                 )
-          case cse @ CaseDef(StripBind(id: Term), None, _) if tRepr.typeSymbol.children.contains(id.tpe.termSymbol) =>
+          case cse @ CaseDef(StripBind(id: Term), None, _)
+              if tRepr.typeSymbol.children.contains(id.tpe.termSymbol) =>
             CaseDef(
               Literal(IntConstant(getOrdinal(id.tpe.termSymbol, id.pos))),
               None,

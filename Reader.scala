@@ -21,7 +21,7 @@ import java.nio.CharBuffer
 
 trait Reader:
   def wellformed: Wellformed
-  
+
   protected def traceLimit: Int = -1
   protected def rules: Manip[SourceRange]
 

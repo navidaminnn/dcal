@@ -20,13 +20,16 @@ import scala.collection.IndexedSeqView
 import scala.util.NotGiven
 
 final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]]):
-  private inline given poison(using NotGiven[DebugInfo.Ctx]): DebugInfo = DebugInfo.poison
+  private inline given poison(using NotGiven[DebugInfo.Ctx]): DebugInfo =
+    DebugInfo.poison
   import SeqPattern.*
 
   def |[U >: T](using DebugInfo.Ctx)(other: SeqPattern[U]): SeqPattern[U] =
     SeqPattern(manip.combineK(other.manip))
 
-  def productAtRightSibling[U](using DebugInfo.Ctx)(other: SeqPattern[U]): SeqPattern[(T, U)] =
+  def productAtRightSibling[U](using
+      DebugInfo.Ctx
+  )(other: SeqPattern[U]): SeqPattern[(T, U)] =
     SeqPattern:
       manip.lookahead.flatMap:
         case Result.Top(_, _) => backtrack
@@ -35,7 +38,9 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]]):
         case Result.Match(_, idx, t) =>
           atIdx(idx + 1)(other.map((t, _)).manip)
 
-  def restrict[U](using DebugInfo.Ctx)(fn: PartialFunction[T, U]): SeqPattern[U] =
+  def restrict[U](using
+      DebugInfo.Ctx
+  )(fn: PartialFunction[T, U]): SeqPattern[U] =
     SeqPattern:
       manip.restrict:
         case Result.Top(top, fn(u))           => Result.Top(top, u)
@@ -67,7 +72,7 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]]):
   )(using
       maybeStrip: Fields.MaybeStripTuple1[Tpl, T2]
   )(using DebugInfo.Ctx)(other: eof.type): SeqPattern[T2] =
-      this.productAtRightSibling(atEnd).map(flds => maybeStrip(flds._1.fields))
+    this.productAtRightSibling(atEnd).map(flds => maybeStrip(flds._1.fields))
 
   @scala.annotation.targetName("fieldsTrailing")
   def ~[Tpl <: Tuple, T2](using
@@ -87,7 +92,8 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]]):
     this *> other.void
 
 object SeqPattern:
-  private inline given poison(using NotGiven[DebugInfo.Ctx]): DebugInfo = DebugInfo.poison
+  private inline given poison(using NotGiven[DebugInfo.Ctx]): DebugInfo =
+    DebugInfo.poison
   export applicative.{pure, unit}
 
   given applicative: cats.Applicative[SeqPattern] with
@@ -291,7 +297,7 @@ object SeqPattern:
         ((pattern.manip *> Manip.pure(true)) | Manip.pure(false))
           .restrict:
             case false => ()
-          *> SeqPattern.unit.manip
+        *> SeqPattern.unit.manip
 
     def optional[T](using
         DebugInfo.Ctx

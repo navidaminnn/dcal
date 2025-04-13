@@ -21,9 +21,7 @@ import java.nio.channels.ClosedChannelException
 import java.nio.channels.AsynchronousCloseException
 
 import scala.collection.mutable
-import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
-import java.nio.CharBuffer
 import java.nio.channels.Channels
 import java.io.Closeable
 import distcompiler.Manip.Handle
@@ -123,13 +121,17 @@ final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
   def afterPass(debugInfo: DebugInfo)(using Manip.RefMap): Unit =
     handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.AfterPass)
 
-  def onRead(manip: Manip[?], ref: Ref[?], value: Any, debugInfo: DebugInfo)(using RefMap): Unit =
+  def onRead(manip: Manip[?], ref: Ref[?], value: Any, debugInfo: DebugInfo)(
+      using RefMap
+  ): Unit =
     () // TODO: implement
 
   def onAssign(manip: Manip[?], ref: Ref[?], value: Any)(using RefMap): Unit =
     () // TODO: implement
 
-  def onDel(manip: Manip[?], ref: Ref[?], debugInfo: DebugInfo)(using RefMap): Unit =
+  def onDel(manip: Manip[?], ref: Ref[?], debugInfo: DebugInfo)(using
+      RefMap
+  ): Unit =
     () // TODO: implement
 
   def onRewriteMatch(
@@ -156,13 +158,19 @@ final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
     // TODO: implement
     ()
 
-  def onCommit(manip: Manip[?], debugInfo: DebugInfo)(using Manip.RefMap): Unit =
+  def onCommit(manip: Manip[?], debugInfo: DebugInfo)(using
+      Manip.RefMap
+  ): Unit =
     handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.Commit)
-  
-  def onBacktrack(manip: Manip[?], debugInfo: DebugInfo)(using Manip.RefMap): Unit =
+
+  def onBacktrack(manip: Manip[?], debugInfo: DebugInfo)(using
+      Manip.RefMap
+  ): Unit =
     handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.Backtrack)
 
-  def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo)(using Manip.RefMap): Unit =
+  def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo)(using
+      Manip.RefMap
+  ): Unit =
     handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.FatalError)
 
 object DebugAdapter:

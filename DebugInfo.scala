@@ -15,9 +15,13 @@
 package distcompiler
 
 import sourcecode.*
-import scala.util.NotGiven
 
-final case class DebugInfo(file: String, fileName: String, line: Int, outerOpt: Option[DebugInfo] = None) extends DebugInfo.Ctx:
+final case class DebugInfo(
+    file: String,
+    fileName: String,
+    line: Int,
+    outerOpt: Option[DebugInfo] = None
+) extends DebugInfo.Ctx:
   override def toString(): String =
     outerOpt match
       case None =>
@@ -30,11 +34,20 @@ object DebugInfo:
 
   sealed abstract class Ctx
 
-  inline given instance(using file: File, fileName: FileName, line: Line): DebugInfo =
+  inline given instance(using
+      file: File,
+      fileName: FileName,
+      line: Line
+  ): DebugInfo =
     summonFrom:
       case ctx: Ctx =>
         ctx match
-          case ctx: DebugInfo if (file.value, fileName.value, line.value) != (ctx.file, ctx.fileName, ctx.line) =>
+          case ctx: DebugInfo
+              if (file.value, fileName.value, line.value) != (
+                ctx.file,
+                ctx.fileName,
+                ctx.line
+              ) =>
             DebugInfo(file.value, fileName.value, line.value, Some(ctx))
           case ctx: DebugInfo => ctx
       case _ =>

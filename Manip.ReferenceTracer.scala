@@ -4,23 +4,16 @@ import distcompiler.dsl.*
 import distcompiler.Manip.RefMap
 import scala.collection.mutable
 
-import java.util.concurrent.Exchanger
-import java.util.concurrent.TimeoutException
-import java.time.Duration
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.SynchronousQueue
 import java.io.PrintStream
-import java.io.StringBufferInputStream
 import java.io.ByteArrayOutputStream
+import cats.StackSafeMonad
 
-final class ManipReferenceTracer(manip: Manip[?])(using baseDebugInfo: DebugInfo) extends Manip.Tracer:
+final class ManipReferenceTracer(manip: Manip[?])(using
+    baseDebugInfo: DebugInfo
+) extends Manip.Tracer:
   import ManipReferenceTracer.*
-  private val actionQueue = SynchronousQueue[Action]()
-  private val pushQueue = SynchronousQueue[Unit]()
-
-  private val expectedThread = Thread: () =>
-    referenceEval(manip, baseDebugInfo)(using ReferenceEvalCtx(pushQueue, actionQueue))
-  expectedThread.start()
+  private val referenceActionSrc: () => Action =
+    referenceEval(manip, baseDebugInfo)
 
   private var referenceHasTerminated = false
   private val actionsSoFar = mutable.ListBuffer[Action]()
@@ -55,11 +48,11 @@ final class ManipReferenceTracer(manip: Manip[?])(using baseDebugInfo: DebugInfo
           val out = ByteArrayOutputStream()
           ex.printStackTrace(PrintStream(out))
           outBuf ++= out.toString()
-      
+
     actionsSoFar.foreach: action =>
       showAction(action)
       outBuf += '\n'
-    
+
     outBuf ++= "!! "
     showAction(action)
     outBuf += '\n'
@@ -67,40 +60,48 @@ final class ManipReferenceTracer(manip: Manip[?])(using baseDebugInfo: DebugInfo
     showAction(expectedAction)
     outBuf += '\n'
 
-    val outFile = os.temp(dir = tmpDir, contents = outBuf.toString(), deleteOnExit = false)
-    throw new AssertionError(s"diverged from reference implementation; see $outFile")
+    val outFile =
+      os.temp(dir = tmpDir, contents = outBuf.toString(), deleteOnExit = false)
+    throw new AssertionError(
+      s"diverged from reference implementation; see $outFile"
+    )
+  end reportErr
 
   private def perform(action: Action): Unit =
     if referenceHasTerminated
     then reportErr(action, Action.AfterTerm)
 
-    pushQueue.put(())
-    val expectedAction = actionQueue.take()
+    val expectedAction = referenceActionSrc()
 
     if expectedAction == Action.Terminate
     then referenceHasTerminated = true
     if expectedAction != action
-    then
-      expectedThread.interrupt()
-      reportErr(action, expectedAction)
+    then reportErr(action, expectedAction)
     else actionsSoFar += action
   end perform
 
-  def close(): Unit =
-    expectedThread.interrupt()
-    expectedThread.join()
+  def close(): Unit = ()
 
   def beforePass(debugInfo: DebugInfo)(using RefMap): Unit = ()
 
   def afterPass(debugInfo: DebugInfo)(using RefMap): Unit = ()
 
-  def onRead(manip: Manip[?], ref: Manip.Ref[?], value: Any, debugInfo: DebugInfo)(using RefMap): Unit =
+  def onRead(
+      manip: Manip[?],
+      ref: Manip.Ref[?],
+      value: Any,
+      debugInfo: DebugInfo
+  )(using RefMap): Unit =
     perform(Action.Read(ref, ValueWrapper(value), debugInfo))
 
-  def onAssign(manip: Manip[?], ref: Manip.Ref[?], value: Any)(using RefMap): Unit =
+  def onAssign(manip: Manip[?], ref: Manip.Ref[?], value: Any)(using
+      RefMap
+  ): Unit =
     perform(Action.Assign(ref, ValueWrapper(value)))
 
-  def onDel(manip: Manip[?], ref: Manip.Ref[?], debugInfo: DebugInfo)(using RefMap): Unit =
+  def onDel(manip: Manip[?], ref: Manip.Ref[?], debugInfo: DebugInfo)(using
+      RefMap
+  ): Unit =
     perform(Action.Del(ref, debugInfo))
 
   def onBranch(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit =
@@ -112,11 +113,23 @@ final class ManipReferenceTracer(manip: Manip[?])(using baseDebugInfo: DebugInfo
   def onCommit(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit =
     perform(Action.Commit(debugInfo))
 
-  def onRewriteMatch(debugInfo: DebugInfo, parent: Node.Parent, idx: Int, matchCount: Int)(using RefMap): Unit = ()
+  def onRewriteMatch(
+      debugInfo: DebugInfo,
+      parent: Node.Parent,
+      idx: Int,
+      matchCount: Int
+  )(using RefMap): Unit = ()
 
-  def onRewriteComplete(debugInfo: DebugInfo, parent: Node.Parent, idx: Int, resultCount: Int)(using RefMap): Unit = ()
+  def onRewriteComplete(
+      debugInfo: DebugInfo,
+      parent: Node.Parent,
+      idx: Int,
+      resultCount: Int
+  )(using RefMap): Unit = ()
 
-  def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo)(using RefMap): Unit =
+  def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo)(using
+      RefMap
+  ): Unit =
     perform(Action.Fatal(debugInfo))
 end ManipReferenceTracer
 
@@ -124,20 +137,20 @@ object ManipReferenceTracer:
   private class ValueWrapper(target: Any):
     val value = target match
       case _: mutable.Builder[?, ?] => null
-      case _ => target
+      case _                        => target
     override def equals(that: Any): Boolean =
       that match
         case that: ValueWrapper => value == that.value
-        case _ => false
+        case _                  => false
 
     override def hashCode(): Int =
       value match
-        case null => -1
+        case null  => -1
         case value => value.hashCode()
 
     override def toString(): String =
       value match
-        case null => "null"
+        case null  => "null"
         case value => value.toString()
 
   private enum Action:
@@ -152,61 +165,136 @@ object ManipReferenceTracer:
     case Fatal(debugInfo: DebugInfo)
     case Crash(throwable: Throwable)
 
-  private final class BacktrackException(val debugInfo: DebugInfo) extends RuntimeException(null, null, true, false)
-  private final class ExitException(cause: Throwable | Null) extends RuntimeException(cause):
+  private final class BacktrackException(val debugInfo: DebugInfo)
+      extends RuntimeException(null, null, true, false)
+  private final class ExitException(cause: Throwable | Null)
+      extends RuntimeException(cause):
     def this() =
       this(null)
 
-  private final class ReferenceEvalCtx(val pushQueue: SynchronousQueue[Unit], val actionQueue: SynchronousQueue[Action])
+  private enum Result[+T]:
+    case Backtrack(posInfo: DebugInfo)
+    case Resumable(action: Action, resume: () => Result[T])
+    case Value(value: T)
 
-  private def referenceEval(manip: Manip[?], baseDebugInfo: DebugInfo)(using ctx: ReferenceEvalCtx): Unit =
+    def map[U](fn: T => U): Result[U] =
+      flatMap(v => Value(fn(v)))
+
+    def flatMap[U](fn: T => Result[U]): Result[U] =
+      this match
+        case Backtrack(posInfo) => Backtrack(posInfo)
+        case Resumable(action, resume) =>
+          Resumable(action, () => resume().flatMap(fn))
+        case Value(value) =>
+          fn(value)
+
+    def always(fn: => () => Unit): Result[T] =
+      this match
+        case bt @ Backtrack(_) =>
+          fn()
+          bt
+        case Resumable(action, resume) =>
+          Resumable(action, () => resume().always(fn))
+        case v @ Value(_) =>
+          fn()
+          v
+      this
+
+    def recover[U >: T](fn: DebugInfo => Result[U]): Result[U] =
+      this match
+        case Backtrack(posInfo) => fn(posInfo)
+        case Resumable(action, resume) =>
+          Resumable(action, () => resume().recover(fn))
+        case Value(value) => Value(value)
+
+    def run(): () => Action =
+      var trampoline: () => (Result[?] | Null) = () => this
+      () =>
+        trampoline() match
+          case null =>
+            throw RuntimeException(
+              "tried to get actions from exhausted reference impl"
+            )
+          case Backtrack(posInfo) =>
+            throw RuntimeException(s"unrecovered backtrack $posInfo")
+          case Resumable(action, resume) =>
+            trampoline = resume
+            action
+          case Value(value) =>
+            trampoline = () => null
+            Action.Terminate
+    end run
+
+  private object Result:
+    export monad.pure
+
+    // Note: stack safe _assuming we log regularly_
+    given monad: StackSafeMonad[Result] with
+      def pure[A](x: A): Result[A] = Result.Value(x)
+      def flatMap[A, B](fa: Result[A])(f: A => Result[B]): Result[B] =
+        fa.flatMap(f)
+
+  // FIXME: allow yielding actions without constructing a giant object tree, then we'll be acceptably efficient
+
+  private def referenceEval(
+      manip: Manip[?],
+      baseDebugInfo: DebugInfo
+  ): () => Action =
+    import cats.syntax.all.given
     import Manip.*
 
-    def drainPush(): Unit =
-      ctx.pushQueue.take()
-    def perform(action: Action): Unit =
-      ctx.actionQueue.put(action)
-      drainPush()
+    def perform(action: Action): Result[Unit] =
+      Result.Resumable(action, () => Result.pure(()))
 
-    def impl[T](self: Manip[T])(using refMap: Manip.RefMap): T =
-      def doBacktrack(debugInfo: DebugInfo): Nothing =
+    type BacktrackFn = DebugInfo => Result[Nothing]
+
+    def backtrackFatal(
+        debugInfo: DebugInfo
+    )(posInfo: DebugInfo): Result[Nothing] =
+      for
+        _ <- perform(Action.Fatal(debugInfo))
+        result <- Result.pure(???)
+      yield result
+
+    def impl[T](self: Manip[T])(using refMap: Manip.RefMap): Result[T] =
+      def doBacktrack(debugInfo: DebugInfo): Result[T] =
         perform(Action.Backtrack(debugInfo))
-        throw BacktrackException(debugInfo)
+          *> Result.Backtrack(debugInfo)
 
       self match
         case Backtrack(debugInfo) =>
           doBacktrack(debugInfo)
-        case Pure(value) => value
+        case Pure(value) =>
+          Result.pure(value)
         case Ap(ff, fa) =>
-          val ffVal = impl(ff)
-          val faVal = impl(fa)
-          ffVal(faVal)
+          for
+            ffVal <- impl(ff)
+            faVal <- impl(fa)
+          yield ffVal(faVal)
         case MapOpt(manip, fn) =>
-          fn(impl(manip))
+          impl(manip).map(fn)
         case FlatMap(manip, fn) =>
-          impl(fn(impl(manip)))
+          for
+            value <- impl(manip)
+            result <- impl(fn(value))
+          yield result
         case Restrict(manip, restriction, debugInfo) =>
-          impl(manip) match
-            case restriction(value) => value
-            case badVal => doBacktrack(debugInfo)
+          impl(manip).flatMap:
+            case restriction(value) => Result.pure(value)
+            case badVal             => doBacktrack(debugInfo)
         case Effect(fn) =>
-          fn()
+          Result.pure(fn())
         case Finally(manip, fn) =>
-          try impl(manip)
-          finally fn()
+          impl(manip).always(fn)
         case KeepLeft(left, right) =>
-          val lVal = impl(left)
-          impl(right)
-          lVal
+          impl(left).flatMap: lVal =>
+            impl(right).map(_ => lVal)
         case KeepRight(left, right) =>
-          impl(left)
-          impl(right)
+          impl(left).flatMap: _ =>
+            impl(right)
         case Commit(manip, debugInfo) =>
           perform(Action.Commit(debugInfo))
-          try impl(manip)
-          catch case ex: BacktrackException =>
-            perform(Action.Fatal(debugInfo))
-            throw ExitException(ex)
+            *> impl(manip).recover(backtrackFatal(debugInfo))
         case refInit: RefInit[u, t] =>
           refMap.get(refInit.ref) match
             case Some(_) =>
@@ -216,76 +304,86 @@ object ManipReferenceTracer:
               // On first node init, we are being given a ref to a fresh node.
               // Clone it so we don't step all over the "real one's" work.
               if refInit.ref == Manip.Handle.ref
-              then value.asInstanceOf[Manip.Handle] match
-                case Handle.AtTop(top) =>
-                  value = Handle.AtTop(top.clone()).asInstanceOf[u]
-                case Handle.AtChild(parent, idx, child) =>
-                  val pClone = parent.clone()
-                  value = Handle.AtChild(pClone, idx, pClone.children(idx)).asInstanceOf[u]
-                case Handle.Sentinel(parent, idx) =>
-                  val pClone = parent.clone()
-                  value = Handle.Sentinel(pClone, idx).asInstanceOf[u]
+              then
+                value.asInstanceOf[Manip.Handle] match
+                  case Handle.AtTop(top) =>
+                    value = Handle.AtTop(top.clone()).asInstanceOf[u]
+                  case Handle.AtChild(parent, idx, child) =>
+                    val pClone = parent.clone()
+                    value = Handle
+                      .AtChild(pClone, idx, pClone.children(idx))
+                      .asInstanceOf[u]
+                  case Handle.Sentinel(parent, idx) =>
+                    val pClone = parent.clone()
+                    value = Handle.Sentinel(pClone, idx).asInstanceOf[u]
 
-              perform(Action.Assign(refInit.ref, ValueWrapper(value)))
-              val result = impl(refInit.manip)(using refMap.updated(refInit.ref, value))
-              perform(Action.Del(refInit.ref, refInit.debugInfo))
-              result
+              for
+                _ <- perform(Action.Assign(refInit.ref, ValueWrapper(value)))
+                result <- impl(refInit.manip)(using
+                  refMap.updated(refInit.ref, value)
+                )
+                _ <- perform(Action.Del(refInit.ref, refInit.debugInfo))
+              yield result
         case RefReset(ref, manip, debugInfo) =>
-          val nextRefMap = refMap.get(ref) match
-            case None => refMap
-            case Some(_) =>
-              perform(Action.Del(ref, debugInfo))
-              refMap.removed(ref)
-          impl(manip)(using nextRefMap)
+          for
+            nextRefMap <- refMap.get(ref) match
+              case None => Result.pure(refMap)
+              case Some(_) =>
+                perform(Action.Del(ref, debugInfo))
+                  *> Result.pure(refMap.removed(ref))
+            result <- impl(manip)(using nextRefMap)
+          yield result
         case RefGet(ref, debugInfo) =>
           refMap.get(ref) match
             case None => doBacktrack(debugInfo)
             case Some(value) =>
               perform(Action.Read(ref, ValueWrapper(value), debugInfo))
-              value
+                *> Result.pure(value)
         case RefUpdated(ref, fn, manip, debugInfo) =>
           refMap.get(ref) match
             case None => doBacktrack(debugInfo)
             case Some(oldValue) =>
-              perform(Action.Read(ref, ValueWrapper(oldValue), debugInfo))
-              val value = fn(oldValue)
-              perform(Action.Assign(ref, ValueWrapper(value)))
-              impl(manip)(using refMap.updated(ref, value))
-        case GetRefMap => refMap
-        case GetTracer => Manip.NopTracer
+              for
+                _ <- perform(
+                  Action.Read(ref, ValueWrapper(oldValue), debugInfo)
+                )
+                value = fn(oldValue)
+                _ <- perform(Action.Assign(ref, ValueWrapper(value)))
+                result <- impl(manip)(using refMap.updated(ref, value))
+              yield result
+        case GetRefMap => Result.pure(refMap)
+        case GetTracer => Result.pure(Manip.NopTracer)
         case Disjunction(first, second, debugInfo) =>
           perform(Action.Branch(debugInfo))
-          try impl(first)
-          catch case ex: BacktrackException =>
+          *> impl(first).recover: _ =>
             impl(second)
         case Deferred(fn) =>
           impl(fn())
         case TapEffect(manip, fn) =>
-          val value = impl(manip)
-          fn(value)
-          value
+          for
+            value <- impl(manip)
+            _ = fn(value)
+          yield value
         case RestrictHandle(fn, manip, debugInfo) =>
           refMap.get(Manip.Handle.ref) match
             case None => doBacktrack(debugInfo)
             case Some(oldHandle) =>
-              perform(Action.Read(Manip.Handle.ref, ValueWrapper(oldHandle), debugInfo))
-              oldHandle match
-                case fn(handle) =>
-                  perform(Action.Assign(Manip.Handle.ref, ValueWrapper(handle)))
-                  impl(manip)(using refMap.updated(Manip.Handle.ref, handle))
-                case _ => doBacktrack(debugInfo)
+              perform(
+                Action
+                  .Read(Manip.Handle.ref, ValueWrapper(oldHandle), debugInfo)
+              )
+                *> (oldHandle match
+                  case fn(handle) =>
+                    perform(
+                      Action.Assign(Manip.Handle.ref, ValueWrapper(handle))
+                    )
+                      *> impl(manip)(using
+                        refMap.updated(Manip.Handle.ref, handle)
+                      )
+                  case _ => doBacktrack(debugInfo))
     end impl
 
-    try
-      try
-        drainPush()
-        impl(manip)(using RefMap.empty)
-      catch
-        case ex: BacktrackException =>
-          perform(Action.Fatal(baseDebugInfo))
-        case ex: RuntimeException =>
-          perform(Action.Crash(ex))
-    catch
-      case _: InterruptedException =>
-        // this is a request to end reference eval
+    impl(manip)(using RefMap.empty)
+      .recover(backtrackFatal(baseDebugInfo))
+      .run()
 end ManipReferenceTracer

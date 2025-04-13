@@ -15,9 +15,6 @@
 package distcompiler.sexpr
 
 import cats.syntax.all.given
-
-import scala.collection.mutable
-
 import distcompiler.*
 
 object tokens:

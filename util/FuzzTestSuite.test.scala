@@ -8,7 +8,6 @@ import java.util.Random
 import edu.berkeley.cs.jqf.fuzz.junit.GuidedFuzzing
 import scala.jdk.CollectionConverters.given
 import scala.concurrent.duration.Duration
-import scala.annotation.static
 
 trait FuzzTestSuite extends munit.FunSuite:
   override def munitTimeout: Duration = Duration("5m")
@@ -16,17 +15,21 @@ trait FuzzTestSuite extends munit.FunSuite:
   def trialLimit: Option[Long] = None
   def fuzzTimeout: Duration = Duration("10s")
 
-  protected inline def fuzzTestMethod(inline method: Any)(using loc: munit.Location): Unit =
+  protected inline def fuzzTestMethod(inline method: Any)(using
+      loc: munit.Location
+  ): Unit =
     ${ FuzzTestSuite.fuzzTestMethodImpl('this, 'method, 'loc) }
 
-  protected final def doFuzzTest(className: String, methodName: String)(using munit.Location): Unit =
+  protected final def doFuzzTest(className: String, methodName: String)(using
+      munit.Location
+  ): Unit =
     val buildProc = os.proc(
       "scala-cli",
       "compile",
       "--test",
-      ".",
+      "."
     )
-    //println(s"$$ ${buildProc.commandChunks.mkString(" ")}")
+    // println(s"$$ ${buildProc.commandChunks.mkString(" ")}")
     buildProc.call(cwd = os.pwd, mergeErrIntoOut = true)
 
     val ownClasspath = System.getProperty("java.class.path").split(":")
@@ -47,13 +50,15 @@ trait FuzzTestSuite extends munit.FunSuite:
       methodName,
       "--timeout",
       fuzzTimeout.toMillis,
-      trialLimit.fold[List[os.Shellable]](Nil)(limit => List("--trial-limit", limit)),
+      trialLimit.fold[List[os.Shellable]](Nil)(limit =>
+        List("--trial-limit", limit)
+      )
     )
-    //println(s"$$ ${runProc.commandChunks.mkString(" ")}")
+    // println(s"$$ ${runProc.commandChunks.mkString(" ")}")
     val result = runProc.call(
       cwd = os.pwd,
       check = false,
-      mergeErrIntoOut = true,
+      mergeErrIntoOut = true
       // stdin = os.Inherit,
       // stdout = os.Inherit,
       // stderr = os.Inherit,
@@ -63,7 +68,11 @@ trait FuzzTestSuite extends munit.FunSuite:
 end FuzzTestSuite
 
 object FuzzTestSuite:
-  def fuzzTestMethodImpl[Self <: FuzzTestSuite : Type](selfRef: Expr[Self], methodRef: Expr[Any], sourceLoc: Expr[munit.Location])(using q: Quotes): Expr[Unit] =
+  def fuzzTestMethodImpl[Self <: FuzzTestSuite: Type](
+      selfRef: Expr[Self],
+      methodRef: Expr[Any],
+      sourceLoc: Expr[munit.Location]
+  )(using q: Quotes): Expr[Unit] =
     import q.reflect.*
 
     val methodCallTerm = methodRef match
@@ -75,36 +84,48 @@ object FuzzTestSuite:
         Expr.betaReduce('{ $fn(???, ???) }).asTerm
       case '{ (arg1: t1, arg2: t2, arg3: t3) => $fn(arg1, arg2, arg3): Unit } =>
         Expr.betaReduce('{ $fn(???, ???, ???) }).asTerm
-      case '{ (arg1: t1, arg2: t2, arg3: t3, arg4: t4) => $fn(arg1, arg2, arg3, arg4): Unit } =>
+      case '{ (arg1: t1, arg2: t2, arg3: t3, arg4: t4) =>
+            $fn(arg1, arg2, arg3, arg4): Unit
+          } =>
         Expr.betaReduce('{ $fn(???, ???, ???, ???) }).asTerm
-      case '{ (arg1: t1, arg2: t2, arg3: t3, arg4: t4, arg5: t5) => $fn(arg1, arg2, arg3, arg4, arg5): Unit } =>
+      case '{ (arg1: t1, arg2: t2, arg3: t3, arg4: t4, arg5: t5) =>
+            $fn(arg1, arg2, arg3, arg4, arg5): Unit
+          } =>
         Expr.betaReduce('{ $fn(???, ???, ???, ???, ???) }).asTerm
-      case '{ (arg1: t1, arg2: t2, arg3: t3, arg4: t4, arg5: t5, arg6: t6) => $fn(arg1, arg2, arg3, arg4, arg5, arg6): Unit } =>
+      case '{ (arg1: t1, arg2: t2, arg3: t3, arg4: t4, arg5: t5, arg6: t6) =>
+            $fn(arg1, arg2, arg3, arg4, arg5, arg6): Unit
+          } =>
         Expr.betaReduce('{ $fn(???, ???, ???, ???, ???, ???) }).asTerm
       case _ =>
-        report.errorAndAbort(s"could not identify lambda ${methodRef.show} (note: we only support up to arity 6)")
+        report.errorAndAbort(
+          s"could not identify lambda ${methodRef.show} (note: we only support up to arity 6)"
+        )
 
     object StripIrrelevant:
       def unapply(term: Term): Some[Term] =
         term match
           case Inlined(_, _, StripIrrelevant(term)) => Some(term)
-          case Block(_, StripIrrelevant(term)) => Some(term)
-          case term => Some(term)
+          case Block(_, StripIrrelevant(term))      => Some(term)
+          case term                                 => Some(term)
 
     methodCallTerm match
       case StripIrrelevant(Apply(Select(classExpr, methodName), _)) =>
         classExpr.tpe.classSymbol match
           case None =>
-            report.errorAndAbort(s"can't get the class type of ${classExpr.show}")
+            report.errorAndAbort(
+              s"can't get the class type of ${classExpr.show}"
+            )
           case Some(classSym) =>
             val className = classSym.fullName
             '{
               given munit.Location = $sourceLoc
-              $selfRef.test(${Expr(s"fuzzTest $className#$methodName")}):
-                $selfRef.doFuzzTest(${Expr(className)}, ${Expr(methodName)})
+              $selfRef.test(${ Expr(s"fuzzTest $className#$methodName") }):
+                $selfRef.doFuzzTest(${ Expr(className) }, ${ Expr(methodName) })
             }
       case _ =>
-        report.errorAndAbort(s"could not find method call in ${methodCallTerm.show}")
+        report.errorAndAbort(
+          s"could not find method call in ${methodCallTerm.show}"
+        )
   end fuzzTestMethodImpl
 end FuzzTestSuite
 
@@ -153,7 +174,7 @@ object FuzzTestSuiteMain:
         methodName,
         Thread.currentThread().getContextClassLoader(),
         guidance,
-        System.out,
+        System.out
       )
 
       if !result.wasSuccessful()
