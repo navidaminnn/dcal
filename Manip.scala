@@ -18,405 +18,380 @@ import cats.syntax.all.given
 import util.{++, toShortString}
 import com.github.difflib.{DiffUtils, UnifiedDiffUtils}
 import scala.jdk.CollectionConverters._
+import scala.annotation.tailrec
+import scala.util.NotGiven
+import scala.reflect.ClassTag
 
-enum Manip[+T]:
+sealed abstract class Manip[+T]:
   private inline given DebugInfo = DebugInfo.poison
 
-  case Backtrack(debugInfo: DebugInfo)
-  case Pure(value: T)
-  case Ap[T, U](ff: Manip[T => U], fa: Manip[T]) extends Manip[U]
-  case MapOpt[T, U](manip: Manip[T], fn: T => U) extends Manip[U]
-  case FlatMap[T, U](manip: Manip[T], fn: T => Manip[U]) extends Manip[U]
+  def isBacktrack: Boolean = false
 
-  case Restrict[T, U](
-      manip: Manip[T],
-      restriction: PartialFunction[T, U],
-      debugInfo: DebugInfo
-  ) extends Manip[U]
-
-  case Effect(fn: () => T)
-  case Finally(manip: Manip[T], fn: () => Unit)
-
-  case KeepLeft(left: Manip[T], right: Manip[?])
-  case KeepRight(left: Manip[?], right: Manip[T])
-
-  case Commit(manip: Manip[T], debugInfo: DebugInfo)
-  case Negated(manip: Manip[?], debugInfo: DebugInfo) extends Manip[Unit]
-
-  case RefInit[T, U](ref: Manip.Ref[T], initFn: () => T, manip: Manip[U])
-      extends Manip[U]
-  case RefGet[T](ref: Manip.Ref[T], debugInfo: DebugInfo) extends Manip[T]
-  case RefUpdated[T, U](
-      ref: Manip.Ref[T],
-      fn: T => T,
-      manip: Manip[U],
-      debugInfo: DebugInfo
-  ) extends Manip[U]
-  case GetRefMap extends Manip[Manip.RefMap]
-  case GetTracer extends Manip[Manip.Tracer]
-
-  case Disjunction(first: Manip[T], second: Manip[T])
-  case Deferred(fn: () => Manip[T])
-
-  case TapEffect[T](manip: Manip[T], fn: T => Unit) extends Manip[T]
-  case RestrictHandle(fn: PartialFunction[Manip.Handle, Manip.Handle], manip: Manip[T], debugInfo: DebugInfo)
-
-  def isBacktrack: Boolean =
-    this match
-      case Backtrack(_) => true
-      case _            => false
+  private[Manip] def performImpl(state: Manip.PerformState): Manip.PerformResult
 
   def perform(using DebugInfo)(): T =
-    import distcompiler.util.fastMatch
-    import scala.collection.mutable
-    import Manip.RefMap
+    def impl: T =
+      val state = Manip.PerformState(summon[DebugInfo])
+    
+      var performResult: Manip.PerformResult = this
+      while performResult ne null do
+        assert(state.result == null, s"result ${state.result} should have been null")
+        performResult = performResult.performImpl(state)
+        if performResult eq null
+        then performResult = state.popNextResult()
+      end while
 
-    enum StackRec:
-      case CallManip[T](manip: Manip[T])
-      case CallFinally(fn: () => Unit)
-      case MapResult(fn: Any => Any)
-      case ApLift(fa: Manip[?])
-      case FlatMapLift(fn: Any => Manip[?])
-      case BacktrackImpl(posInfo: DebugInfo)
-      case RestoreCtx(altStackSize: Int, refMapOld: RefMap)
-      case SaveResult
-      case RestrictImpl(restriction: PartialFunction[Any, Any], posInfo: DebugInfo)
-      case AltStackRestore(altStackSize: Int)
-      case TapEffectImpl(fn: Any => Unit)
+      state.result.asInstanceOf[T]
+    end impl
 
-    import StackRec.*
+    if Manip.useReferenceTracer
+    then Manip.ops.instrumentWithTracerReentrant(ManipReferenceTracer(this))(impl)
+    else impl
+end Manip
 
-    final case class AltStackRec(manip: Manip[?], stackSize: Int, refMapOld: RefMap)
+object Manip:
+  private inline given poison(using NotGiven[DebugInfo.Ctx]): DebugInfo = DebugInfo.poison
 
-    var altStackEmptyDbg = summon[DebugInfo]
-    var refMap = Manip.RefMap.empty
-    var altStackEmptyRefMap = refMap
+  final case class UnrecoveredBacktrackException(rootInfo: DebugInfo, debugInfo: DebugInfo) extends RuntimeException(s"unrecovered backtrack caught in ($rootInfo), initiated at $debugInfo")
 
-    def tracer: Manip.Tracer =
-      refMap.get(Manip.tracerRef) match
-        case None => Manip.NopTracer
-        case Some(tracer) => tracer
+  private val useReferenceTracer =
+    val propName = "distcompiler.Manip.useReferenceTracer"
+    System.getProperty(propName) match
+      case null => false
+      case "yes" => true
+      case "no" => false
+      case idk => throw RuntimeException(s"invalid property value \"$idk\" for $propName")
+  private var tracerVar: ThreadLocal[Tracer] = ThreadLocal()
 
-    var stack = Array.ofDim[StackRec](16)
-    var stackSize = 0
-    def stackPush(rec: StackRec): Unit =
+  // TODO: add tailrec detection. could do it by counting how many non-tailrec nodes are pending, if 0 then tailrec
+  //       ... question: if we saved everything re: a given non tailrec already, we can smush the intermediate saves
+  //       so really, there's a tailrec epoch per refMap cell, and if our tailrec level == that epoch, no need to save value
+
+  final class SegmentedStack[T <: AnyRef](using NotGiven[Array[?] <:< T]):
+    inline val stackSegmentSize = 16
+    private var stack = Array.ofDim[AnyRef](stackSegmentSize)
+    private var base = stack
+    private var stackSize = 0
+
+    def consumeInReverse(fn: T => Unit): Unit =
+      var idx = 0
+      while base ne stack do
+        base(idx).nn match
+          case next: Array[AnyRef] if idx == 0 =>
+            idx += 1 // back ref, skip
+          case next: Array[AnyRef] if idx == base.length - 1 =>
+            base = next
+            idx = 0
+          case elem =>
+            fn(elem.asInstanceOf[T])
+            idx += 1
+      end while
+
+      while idx < stackSize do
+        base(idx).nn match
+          case _: Array[AnyRef] if idx == 0 => // skip
+          case elem =>
+            fn(elem.asInstanceOf[T])
+        base(idx) = null.asInstanceOf[AnyRef]
+        idx += 1
+      end while
+      stackSize = 0
+    end consumeInReverse
+
+    def push(rec: T): Unit =
       if stackSize == stack.length
-      then stack = Array.copyOf(stack, stack.length * 2)
+      then
+        val oldStack = stack
+        val prevElem = stack(stackSize - 1)
+        stack = Array.ofDim[AnyRef](stackSegmentSize)
+        oldStack(stackSize - 1) = stack
+        stack(0) = oldStack
+        stack(1) = prevElem
+        stackSize = 2
+
       stack(stackSize) = rec
       stackSize += 1
-    def stackPop(): StackRec | Null =
+
+    @tailrec
+    def pop(): T | Null =
       if stackSize == 0
       then null
       else
         stackSize -= 1
-        val result = stack(stackSize)
-        stack(stackSize) = null.asInstanceOf[StackRec]
-        result
-    def stackRestore(size: Int): Unit =
-      var i = size
-      while i < stackSize
-      do
-        stack(i) = null.asInstanceOf[StackRec]
-        i += 1
-      stackSize = size
+        stack(stackSize) match
+          case lowerStack: Array[AnyRef] =>
+            stack = lowerStack
+            stack(stack.length - 1) = null.asInstanceOf[AnyRef] // drop next-ptr
+            stackSize = stack.length - 1
+            pop()
+          case rec => rec.asInstanceOf[T]
+  end SegmentedStack
 
-    var altStack = Array.ofDim[AltStackRec](16)
-    var altStackSize = 0
-    def altStackPush(rec: AltStackRec): Unit =
-      if altStackSize == altStack.length
-      then altStack = Array.copyOf(altStack, altStack.length * 2)
-      altStack(altStackSize) = rec
-      altStackSize += 1
-    def altStackPop(): AltStackRec | Null =
-      if altStackSize == 0
-      then null
-      else
-        altStackSize -= 1
-        val result = altStack(altStackSize)
-        altStack(altStackSize) = null.asInstanceOf[AltStackRec]
-        result
-    def altStackRestore(size: Int): Unit =
-      var i = size
-      while i < altStackSize
-      do
-        altStack(i) = null.asInstanceOf[AltStackRec]
-        i += 1
-      altStackSize = size
+  private final class PerformState(var rootDebugInfo: DebugInfo):
+    var result: Any | Null = null
+    var refMap = RefMap.empty
+    val committedStack = SegmentedStack[PerformState.StackRec]()
+    val speculateStack = SegmentedStack[PerformState.StackRec]()
 
-    var result: Any = ()
+    val tracer: Tracer = tracerVar.get() match
+      case null => NopTracer
+      case tracer => tracer
 
-    @scala.annotation.tailrec
-    def impl(manip: Manip[?] | Null): Unit =
-      manip match
-        case null =>
-          stackPop() match
-            case null => ()
-            case rec =>
-              rec.fastMatch:
-                case MapResult(fn) =>
-                  result = fn(result)
-                  impl(null)
-                case CallFinally(fn) =>
-                  fn()
-                  impl(null)
-                case ApLift(fa) =>
-                  stackPush(MapResult(result.asInstanceOf))
-                  impl(fa)
-                case FlatMapLift(fn) =>
-                  impl(fn(result))
-                case RestoreCtx(altStackSize, refMapOld) =>
-                  altStackRestore(altStackSize)
-                  refMap = refMapOld
-                  impl(null)
-                case SaveResult =>
-                  // swap stack positions, so the current result overwrites
-                  // the result of the next op
-                  val oldTop = stackPop().nn
-                  stackPush(CallManip(Pure(result)))
-                  stackPush(oldTop)
-                  impl(null)
-                case RestrictImpl(restriction, posInfo) =>
-                  result = restriction.applyOrElse(result, { _ =>
-                    stackPush(BacktrackImpl(posInfo))
-                    ()
-                  })
-                  impl(null)
-                case AltStackRestore(altStackSize) =>
-                  altStackRestore(altStackSize)
-                  impl(null)
-                case BacktrackImpl(posInfo) =>
-                  tracer.onBacktrack(posInfo)(using refMap)
-                  altStackPop() match
-                    case null =>
-                      tracer.onFatal(altStackEmptyDbg, posInfo)(using altStackEmptyRefMap)
-                      throw RuntimeException(
-                        s"unrecovered backtrack at $posInfo, caught at $altStackEmptyDbg, at ${altStackEmptyRefMap.treeDescrShort}"
-                      )
-                    case AltStackRec(manip, stackSize, refMapOld) =>
-                      stackRestore(stackSize)
-                      refMap = refMapOld
-                      result = ()
-                      impl(manip)
-                case CallManip(manip) =>
-                  impl(manip)
-                case TapEffectImpl(fn) =>
-                  fn(result)
-                  impl(null)
-        case manip =>
-          manip.fastMatch:
-            case Backtrack(debugInfo) =>
-              stackPush(BacktrackImpl(debugInfo))
-              impl(null)
-            case Pure(value) =>
-              result = value
-              impl(null)
-            case Ap(ff, fa) =>
-              stackPush(ApLift(fa))
-              stackPush(RestoreCtx(altStackSize, refMap))
-              impl(ff)
-            case MapOpt(manip, fn) =>
-              stackPush(MapResult(fn.asInstanceOf))
-              impl(manip)
-            case FlatMap(manip, fn) =>
-              stackPush(FlatMapLift(fn.asInstanceOf))
-              stackPush(RestoreCtx(altStackSize, refMap))
-              impl(manip)
-            case Restrict(manip, restriction, debugInfo) =>
-              stackPush(RestrictImpl(restriction.asInstanceOf, debugInfo))
-              impl(manip)
-            case Effect(fn) =>
-              result = fn()
-              impl(null)
-            case Finally(manip, fn) =>
-              stackPush(CallFinally(fn))
-              impl(manip)
-            case KeepLeft(left, right) =>
-              stackPush(CallManip(right))
-              stackPush(SaveResult)
-              stackPush(RestoreCtx(altStackSize, refMap))
-              impl(left)
-            case KeepRight(left, right) =>
-              stackPush(CallManip(right))
-              stackPush(RestoreCtx(altStackSize, refMap))
-              impl(left)
-            case Commit(manip, debugInfo) =>
-              tracer.onCommit(debugInfo)(using refMap)
-              altStackRestore(0)
-              altStackEmptyDbg = debugInfo
-              altStackEmptyRefMap = refMap
-              impl(manip)
-            case Negated(manip, debugInfo) =>
-              val altStackSizeOrig = altStackSize
-              // success case: we backtrack, act like a hidden unit Manip
-              altStackPush(AltStackRec(Manip.unit, stackSize, refMap))
-              // fail case: drop all nested backtrack info (incl. case above), backtrack
-              stackPush(BacktrackImpl(debugInfo))
-              stackPush(RestoreCtx(altStackSizeOrig, refMap))
-              // now, try the inner manip
-              impl(manip)
-            case RefInit(ref, initFn, manip) =>
-              refMap = refMap.updated(ref, initFn())
-              impl(manip)
-            case RefGet(ref, debugInfo) =>
-              refMap.get(ref) match
-                case None =>
-                  stackPush(BacktrackImpl(debugInfo))
-                  impl(null)
-                case Some(value) =>
-                  result = value
-                  impl(null)
-            case RefUpdated(ref, fn, manip, debugInfo) =>
-              refMap.get(ref) match
-                case None =>
-                  stackPush(BacktrackImpl(debugInfo))
-                  impl(null)
-                case Some(value) =>
-                  refMap = refMap.updated(ref, fn(value))
-                  impl(manip)
-            case GetRefMap =>
-              result = refMap
-              impl(null)
-            case GetTracer =>
-              result = tracer
-              impl(null)
-            case Disjunction(first, second) =>
-              val origAltStackSize = altStackSize
-              altStackPush(AltStackRec(second, stackSize, refMap))
-              stackPush(AltStackRestore(origAltStackSize))
-              impl(first)
-            case Deferred(fn) =>
-              impl(fn())
-            case RestrictHandle(fn, manip, debugInfo) =>
-              refMap.get(Manip.Handle.ref) match
-                case None =>
-                  stackPush(BacktrackImpl(debugInfo))
-                  impl(null)
-                case Some(handle) =>
-                  fn.lift(handle) match
-                    case None =>
-                      stackPush(BacktrackImpl(debugInfo))
-                      impl(null)
-                    case Some(handle) =>
-                      refMap = refMap.updated(Manip.Handle.ref, handle)
-                      impl(manip)
-            case TapEffect(manip, fn) =>
-              stackPush(TapEffectImpl(fn.asInstanceOf))
-              impl(manip)
+    def backtrack(self: Manip[?], posInfo: DebugInfo): PerformResult =
+      tracer.onBacktrack(self, posInfo)(using refMap)
+      result = null.asInstanceOf
+      var backtrackResult: PerformResult = null
+      while backtrackResult eq null do
+        speculateStack.pop() match
+          case null =>
+            throw UnrecoveredBacktrackException(rootDebugInfo, posInfo)
+          case rec => backtrackResult = rec.performBacktrack(this, posInfo)
+      backtrackResult
 
-    impl(this)
+    def popNextResult(): PerformResult =
+      var popResult: PerformResult = null
+      while popResult eq null do
+        var popped = speculateStack.pop()
+        if popped eq null
+        then popped = committedStack.pop()
 
-    result.asInstanceOf[T]
+        popped match
+          case null => return null
+          case elem =>
+            popResult = elem.performPop(this)
+      popResult
+  end PerformState
 
-    // def impl[T, U](self: Manip[T])(using
-    //     continue: Continue[T, U],
-    //     backtrack: Backtrack[U],
-    //     refMap: RefMap
-    // ): TailRec[U] =
-    //   import distcompiler.util.fastMatch
-    //   self.fastMatch:
-    //     case Backtrack(debugInfo) =>
-    //       tracer.onBacktrack(debugInfo)
-    //       tailcall(backtrack(debugInfo))
-    //     case Pure(value) => tailcall(continue(value))
-    //     case ap: Ap[t, u] =>
-    //       given Continue[t => u, U] = ff =>
-    //         given Continue[t, U] = fa => tailcall(continue(ff(fa)))
-    //         tailcall(impl(ap.fa))
-    //       impl(ap.ff)
-    //     case mapOpt: MapOpt[t, u] =>
-    //       given Continue[t, U] = t => tailcall(continue(mapOpt.fn(t)))
-    //       impl(mapOpt.manip)
-    //     case flatMap: FlatMap[t, u] =>
-    //       given Continue[t, U] = value =>
-    //         given Continue[u, U] = continue
-    //         tailcall(impl(flatMap.fn(value)))
-    //       impl(flatMap.manip)
-    //     case restrict: Restrict[t, u] =>
-    //       given Continue[t, U] = value =>
-    //         restrict.restriction.unapply(value) match
-    //           case None =>
-    //             tracer.onBacktrack(restrict.debugInfo)
-    //             tailcall(backtrack(restrict.debugInfo))
-    //           case Some(value) =>
-    //             tailcall(continue(value))
-    //       impl(restrict.manip)
-    //     case Effect(fn) =>
-    //       val value = fn()
-    //       tailcall(continue(value))
-    //     case Finally(manip, fn) =>
-    //       given Backtrack[U] = info =>
-    //         fn()
-    //         tailcall(backtrack(info))
-    //       given Continue[T, U] = value =>
-    //         fn()
-    //         tailcall(continue(value))
+  object PerformState:
+    sealed trait StackRec:
+      private[Manip] def performPop(state: Manip.PerformState): Manip.PerformResult
+      private[Manip] def performBacktrack(state: Manip.PerformState, posInfo: DebugInfo): Manip.PerformResult
 
-    //       impl(manip)
-    //     case KeepLeft(left, right: Manip[t]) =>
-    //       given Continue[T, U] = value =>
-    //         given Continue[t, U] = _ => tailcall(continue(value))
-    //         tailcall(impl(right))
-    //       impl(left)
-    //     case KeepRight(left: Manip[t], right) =>
-    //       given Continue[t, U] = _ =>
-    //         given Continue[T, U] = continue
-    //         tailcall(impl[T, U](right))
-    //       impl(left)
-    //     case Commit(manip, debugInfo) =>
-    //       tracer.onCommit(debugInfo)
-    //       given Backtrack[U] = emptyBacktrack(debugInfo, refMap)
-    //       impl(manip)
-    //     case Negated(manip: Manip[t], debugInfo) =>
-    //       given Backtrack[U] = _ => tailcall(continue(()))
-    //       given Continue[t, U] = _ =>
-    //         tracer.onBacktrack(debugInfo)
-    //         tailcall(backtrack(debugInfo))
-    //       impl(manip)
-    //     case RefInit(ref, initFn, manip) =>
-    //       given RefMap = refMap.updated(ref, initFn())
-    //       impl(manip)
-    //     case RefGet(ref, debugInfo) =>
-    //       refMap.get(ref) match
-    //         case None =>
-    //           tracer.onBacktrack(debugInfo)
-    //           tailcall(backtrack(debugInfo))
-    //         case Some(value) => tailcall(continue(value))
-    //     case refUpdated: RefUpdated[t, T @unchecked] =>
-    //       refMap.get(refUpdated.ref) match
-    //         case None =>
-    //           tracer.onBacktrack(refUpdated.debugInfo)
-    //           tailcall(backtrack(refUpdated.debugInfo))
-    //         case Some(value) =>
-    //           given RefMap = refMap.updated(
-    //             refUpdated.ref,
-    //             refUpdated.fn(value)
-    //           )
-    //           impl(refUpdated.manip)
-    //     case GetRefMap =>
-    //       tailcall(continue(refMap))
-    //     case GetTracer =>
-    //       tailcall(continue(tracer))
-    //     case Disjunction(first, second) =>
-    //       given Backtrack[U] = debugInfo1 =>
-    //         given Backtrack[U] =
-    //           debugInfo2 => tailcall(backtrack(debugInfo1 ++ debugInfo2))
-    //         tailcall(impl(second))
-    //       impl(first)
-    //     case Deferred(fn) => impl(fn())
+    sealed trait StackRecNopBacktrack extends StackRec:
+      private[Manip] def performBacktrack(state: PerformState, posInfo: DebugInfo): PerformResult = null
 
-    // given Continue[T, T] = done
-    // given RefMap = Manip.RefMap.empty
-    // given Backtrack[T] = emptyBacktrack(summon[DebugInfo], summon[RefMap])
-    // impl[T, T](this).result
-  end perform
-end Manip
+    sealed trait StackRecNopPop extends StackRec:
+      private[Manip] def performPop(state: Manip.PerformState): Manip.PerformResult = null
 
-object Manip:
-  private inline given DebugInfo = DebugInfo.poison
+    final case class ResetRef[T](ref: Ref[T], value: T) extends StackRec:
+      private[Manip] def performBacktrack(state: PerformState, posInfo: DebugInfo): PerformResult =
+        state.refMap = state.refMap.updated(ref, value)
+        null
+      private[Manip] def performPop(state: PerformState): PerformResult =
+        state.refMap = state.refMap.updated(ref, value)
+        null
+    
+    final class MapFn[T, U](fn: T => U) extends StackRecNopBacktrack:
+      private[Manip] def performPop(state: PerformState): PerformResult =
+        state.result = fn(state.result.asInstanceOf[T])
+        null
+      
+  import PerformState.*
+
+  private type PerformResult = Manip[?] | Null
+
+  final case class Backtrack(debugInfo: DebugInfo) extends Manip[Nothing]:
+    override def isBacktrack: Boolean = true
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.backtrack(this, debugInfo)
+  
+  final case class Pure[T](value: T) extends Manip[T]:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.result = value
+      null
+  
+  final case class Ap[T, U](ff: Manip[T => U], fa: Manip[T]) extends Manip[U], StackRecNopBacktrack:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.speculateStack.push(this)
+      ff
+    private[Manip] def performPop(state: PerformState): PerformResult =
+      state.speculateStack.push(PerformState.MapFn(state.result.asInstanceOf[T => U]))
+      state.result = null
+      fa
+  
+  final case class MapOpt[T, U](manip: Manip[T], fn: T => U) extends Manip[U], StackRecNopBacktrack:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.speculateStack.push(this)
+      manip
+    private[Manip] def performPop(state: PerformState): PerformResult =
+      state.result = fn(state.result.asInstanceOf)
+      null
+  
+  final case class FlatMap[T, U](manip: Manip[T], fn: T => Manip[U]) extends Manip[U], StackRecNopBacktrack:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.speculateStack.push(this)
+      manip
+    private[Manip] def performPop(state: PerformState): PerformResult =
+      val next = fn(state.result.asInstanceOf[T])
+      state.result = null
+      next
+
+  final case class Restrict[T, U](
+      manip: Manip[T],
+      restriction: PartialFunction[T, U],
+      debugInfo: DebugInfo
+  ) extends Manip[U], StackRecNopBacktrack:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.speculateStack.push(this)
+      manip
+    private[Manip] def performPop(state: PerformState): PerformResult =
+      val value = state.result.asInstanceOf[T]
+      value match
+        case restriction(result) =>
+          state.result = result
+          null
+        case _ =>
+          state.backtrack(this, debugInfo)
+
+  final case class Effect[T](fn: () => T) extends Manip[T]:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.result = fn()
+      null
+  
+  final case class Finally[T](manip: Manip[T], fn: () => Unit) extends Manip[T], StackRec:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.speculateStack.push(this)
+      manip
+    private[Manip] def performPop(state: PerformState): PerformResult =
+      fn()
+      null
+    private[Manip] def performBacktrack(state: PerformState, posInfo: DebugInfo): PerformResult =
+      fn()
+      null
+
+  final case class KeepLeft[T](left: Manip[T], right: Manip[?]) extends Manip[T], StackRecNopBacktrack:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.speculateStack.push(this)
+      left
+    private[Manip] def performPop(state: PerformState): PerformResult =
+      val storedResult = state.result
+      state.speculateStack.push(PerformState.MapFn(_ => storedResult))
+      state.result = null
+      right
+  
+  final case class KeepRight[T](left: Manip[?], right: Manip[T]) extends Manip[T], StackRecNopBacktrack:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.speculateStack.push(this)
+      left
+    private[Manip] def performPop(state: PerformState): PerformResult =
+      state.result = null
+      right
+
+  final case class Commit[T](manip: Manip[T], debugInfo: DebugInfo) extends Manip[T]:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.tracer.onCommit(this, debugInfo)(using state.refMap)
+      state.rootDebugInfo = debugInfo
+      state.speculateStack.consumeInReverse:
+        case elem: StackRecNopPop => // drop (includes Disjunction)
+        case elem: StackRec => state.committedStack.push(elem)
+      manip
+
+  final case class RefInit[T, U](ref: Manip.Ref[T], initFn: () => T, manip: Manip[U], debugInfo: DebugInfo)
+      extends Manip[U], StackRec:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.refMap.get(ref) match
+        case Some(_) =>
+          state.backtrack(this, debugInfo)
+        case None =>
+          val initValue = initFn()
+          state.tracer.onAssign(this, ref, initValue)(using state.refMap)
+          state.refMap = state.refMap.updated(ref, initValue)
+          state.speculateStack.push(this)
+          manip
+    override private[Manip] def performPop(state: PerformState): PerformResult =
+      state.tracer.onDel(this, ref, debugInfo)(using state.refMap)
+      state.refMap = state.refMap.removed(ref)
+      null
+    override private[Manip] def performBacktrack(state: PerformState, posInfo: DebugInfo): PerformResult =
+      state.tracer.onDel(this, ref, debugInfo)(using state.refMap)
+      state.refMap = state.refMap.removed(ref)
+      null
+  
+  final case class RefReset[T, U](ref: Manip.Ref[T], manip: Manip[U], debugInfo: DebugInfo) extends Manip[U]:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.refMap.get(ref) match
+        case None =>
+        case Some(_) =>state.tracer.onDel(this, ref, debugInfo)(using state.refMap)
+          state.refMap = state.refMap.removed(ref)
+
+      manip
+
+  final case class RefGet[T](ref: Manip.Ref[T], debugInfo: DebugInfo) extends Manip[T]:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.refMap.get(ref) match
+        case None =>
+          state.backtrack(this, debugInfo)
+        case Some(value) =>
+          state.tracer.onRead(this, ref, value, debugInfo)(using state.refMap)
+          state.result = value
+          null
+  
+  final case class RefUpdated[T, U](
+      ref: Manip.Ref[T],
+      fn: T => T,
+      manip: Manip[U],
+      debugInfo: DebugInfo
+  ) extends Manip[U]:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.refMap.get(ref) match
+        case None => state.backtrack(this, debugInfo)
+        case Some(value) =>
+          state.tracer.onRead(this, ref, value, debugInfo)(using state.refMap)
+          state.speculateStack.push(PerformState.ResetRef(ref, value))
+          val newValue = fn(value)
+          state.tracer.onAssign(this, ref, newValue)(using state.refMap)
+          state.refMap = state.refMap.updated(ref, newValue)
+          manip
+  
+  case object GetRefMap extends Manip[Manip.RefMap]:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.result = state.refMap
+      null
+  
+  case object GetTracer extends Manip[Manip.Tracer]:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.result = state.tracer
+      null
+
+  final case class Disjunction[T](first: Manip[T], second: Manip[T], debugInfo: DebugInfo) extends Manip[T], StackRecNopPop:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.tracer.onBranch(this, debugInfo)(using state.refMap)
+      state.speculateStack.push(this)
+      first
+    private[Manip] def performBacktrack(state: PerformState, posInfo: DebugInfo): PerformResult =
+      second
+  
+  final case class Deferred[T](fn: () => Manip[T]) extends Manip[T]:
+    private[Manip] def performImpl(state: PerformState): PerformResult = fn()
+
+  final case class TapEffect[T](manip: Manip[T], fn: T => Unit) extends Manip[T], StackRecNopBacktrack:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.speculateStack.push(this)
+      manip
+    private[Manip] def performPop(state: PerformState): PerformResult =
+      fn(state.result.asInstanceOf[T])
+      null
+
+  final case class RestrictHandle[T](fn: PartialFunction[Manip.Handle, Manip.Handle], manip: Manip[T], debugInfo: DebugInfo) extends Manip[T]:
+    private[Manip] def performImpl(state: PerformState): PerformResult =
+      state.refMap.get(Manip.Handle.ref) match
+        case None => state.backtrack(this, debugInfo)
+        case Some(oldHandle) =>
+          state.tracer.onRead(this, Manip.Handle.ref, oldHandle, debugInfo)(using state.refMap)
+          oldHandle match
+            case fn(handle) =>
+              state.speculateStack.push(PerformState.ResetRef(Manip.Handle.ref, oldHandle))
+              state.tracer.onAssign(this, Manip.Handle.ref, handle)(using state.refMap)
+              state.refMap = state.refMap.updated(Manip.Handle.ref, handle)
+              manip
+            case _ =>
+              state.backtrack(this, debugInfo)
 
   abstract class Ref[T]:
-    final def init[U](init: => T)(manip: Manip[U]): Manip[U] =
-      Manip.RefInit(this, () => init, manip)
+    final def init[U](using DebugInfo)(init: => T)(manip: Manip[U]): Manip[U] =
+      Manip.RefInit(this, () => init, manip, summon[DebugInfo])
+    final def reset[U](using DebugInfo)(manip: Manip[U]): Manip[U] =
+      Manip.RefReset(this, manip, summon[DebugInfo])
     final def get(using DebugInfo): Manip[T] =
       Manip.RefGet(this, summon[DebugInfo])
     final def updated[U](using
@@ -438,6 +413,9 @@ object Manip:
 
     def updated[T](ref: Ref[T], value: T): RefMap =
       RefMap(map.updated(ref, value))
+
+    def removed[T](ref: Ref[T]): RefMap =
+      RefMap(map.removed(ref))
 
     def treeDescr: String =
       get(Handle.ref) match
@@ -481,22 +459,19 @@ object Manip:
     override def productR[A, B](fa: Manip[A])(fb: Manip[B]): Manip[B] =
       Manip.KeepRight(fa, fb)
 
-  given semigroupK: cats.SemigroupK[Manip] with
+  given monoidK(using DebugInfo): cats.MonoidK[Manip] with
+    def empty[A]: Manip[A] = Manip.Backtrack(summon[DebugInfo])
     def combineK[A](x: Manip[A], y: Manip[A]): Manip[A] =
       (x, y) match
         case (Manip.Backtrack(_), right) => right
         case (left, Manip.Backtrack(_))  => left
-        case (
-              Manip.Negated(manip1, debugInfo1),
-              Manip.Negated(manip2, debugInfo2)
-            ) =>
-          Manip.Negated(combineK(manip1, manip2), debugInfo1 ++ debugInfo2)
+        // case (
+        //       Manip.Negated(manip1, debugInfo1),
+        //       Manip.Negated(manip2, debugInfo2)
+        //     ) =>
+        //   Manip.Negated(combineK(manip1, manip2), debugInfo1 ++ debugInfo2)
         case _ =>
-          Manip.Disjunction(x, y)
-
-  // given monoidK(using DebugInfo): cats.MonoidK[Manip] with
-  //   export semigroupK.combineK
-  //   def empty[A]: Manip[A] = Manip.Backtrack(summon[DebugInfo])
+          Manip.Disjunction(x, y, summon[DebugInfo])
 
   class Lookahead[T](val manip: Manip[T]) extends AnyVal:
     def flatMap[U](fn: T => Manip[U]): Manip[U] =
@@ -508,22 +483,21 @@ object Manip:
         Lookahead(ff.manip.ap(fa.manip))
       def pure[A](x: A): Lookahead[A] =
         Lookahead(Manip.pure(x))
-    given semigroupK: cats.SemigroupK[Lookahead] with
+    given monoidK(using DebugInfo): cats.MonoidK[Lookahead] with
+      def empty[A]: Lookahead[A] = Lookahead(Manip.monoidK.empty)
       def combineK[A](x: Lookahead[A], y: Lookahead[A]): Lookahead[A] =
         Lookahead(x.manip.combineK(y.manip))
-    // given monoidK(using DebugInfo): cats.MonoidK[Lookahead] with
-    //   export semigroupK.combineK
-    //   def empty[A]: Lookahead[A] =
-    //     Lookahead(backtrack)
-
-  object tracerRef extends Ref[Tracer]
 
   trait Tracer extends java.io.Closeable:
     def beforePass(debugInfo: DebugInfo)(using RefMap): Unit
     def afterPass(debugInfo: DebugInfo)(using RefMap): Unit
-    def onCommit(debugInfo: DebugInfo)(using RefMap): Unit
-    def onBacktrack(debugInfo: DebugInfo)(using RefMap): Unit
-    def onFatal(debugInfo: DebugInfo, from: DebugInfo)(using RefMap): Unit
+    def onRead(manip: Manip[?], ref: Ref[?], value: Any, debugInfo: DebugInfo)(using RefMap): Unit
+    def onAssign(manip: Manip[?], ref: Ref[?], value: Any)(using RefMap): Unit
+    def onDel(manip: Manip[?], ref: Ref[?], debugInfo: DebugInfo)(using RefMap): Unit
+    def onBranch(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit
+    def onCommit(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit
+    def onBacktrack(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit
+    def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo)(using RefMap): Unit
     def onRewriteMatch(
         debugInfo: DebugInfo,
         parent: Node.Parent,
@@ -540,9 +514,13 @@ object Manip:
   abstract class AbstractNopTracer extends Tracer:
     def beforePass(debugInfo: DebugInfo)(using RefMap): Unit = ()
     def afterPass(debugInfo: DebugInfo)(using RefMap): Unit = ()
-    def onCommit(debugInfo: DebugInfo)(using RefMap): Unit = ()
-    def onBacktrack(debugInfo: DebugInfo)(using RefMap): Unit = ()
-    def onFatal(debugInfo: DebugInfo, from: DebugInfo)(using RefMap): Unit = ()
+    def onRead(manip: Manip[?], ref: Ref[?], value: Any, debugInfo: DebugInfo)(using RefMap): Unit = ()
+    def onAssign(manip: Manip[?], ref: Ref[?], value: Any)(using RefMap): Unit = ()
+    def onDel(manip: Manip[?], ref: Ref[?], debugInfo: DebugInfo)(using RefMap): Unit = ()
+    def onBranch(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit = ()
+    def onCommit(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit = ()
+    def onBacktrack(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit = ()
+    def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo)(using RefMap): Unit = ()
     def onRewriteMatch(
         debugInfo: DebugInfo,
         parent: Node.Parent,
@@ -589,13 +567,33 @@ object Manip:
     def afterPass(debugInfo: DebugInfo)(using RefMap): Unit =
       logln(s"pass end $debugInfo at $treeDesc")
 
-    def onCommit(debugInfo: DebugInfo)(using RefMap): Unit =
+    def onRead(manip: Manip[?], ref: Ref[?], value: Any, debugInfo: DebugInfo)(using RefMap): Unit =
+      value match
+        case value: AnyVal =>
+          logln(s"read $ref --> $value at $treeDesc")
+        case value: AnyRef =>
+          logln(s"read $ref --> ${value.toShortString()} at $treeDesc")
+
+    def onAssign(manip: Manip[?], ref: Ref[?], value: Any)(using RefMap): Unit =
+      value match
+        case value: AnyVal =>
+          logln(s"assign $ref <-- ${value} at $treeDesc")
+        case value: AnyRef =>
+          logln(s"assign $ref <-- ${value.toShortString} at $treeDesc")
+
+    def onDel(manip: Manip[?], ref: Ref[?], debugInfo: DebugInfo)(using RefMap): Unit =
+      logln(s"del $ref $debugInfo")
+
+    def onBranch(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit =
+      logln(s"branch $debugInfo at $treeDesc")
+    
+    def onCommit(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit =
       logln(s"commit $debugInfo at $treeDesc")
 
-    def onBacktrack(debugInfo: DebugInfo)(using RefMap): Unit =
+    def onBacktrack(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit =
       logln(s"backtrack $debugInfo at $treeDesc")
 
-    def onFatal(debugInfo: DebugInfo, from: DebugInfo)(using RefMap): Unit =
+    def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo)(using RefMap): Unit =
       logln(s"fatal $debugInfo from $from at $treeDesc")
 
     def onRewriteMatch(
@@ -833,6 +831,25 @@ object Manip:
         case AtChild(parent, _, _) => parent
 
   object ops:
+    def instrumentWithTracer[T](tracer: Tracer)(fn: =>T): T =
+      require(tracerVar.get() eq null, s"tried to set over existing tracer ${tracerVar.get()}")
+      tracerVar.set(tracer)
+      try fn
+      finally
+        tracer.close()
+        assert(tracerVar.get() eq tracer, s"tracer $tracer was replaced by ${tracerVar.get()} during execution")
+        tracerVar.remove()
+
+    def instrumentWithTracerReentrant[T, Tr <: Tracer : ClassTag](tracer: Tr)(fn: =>T): T =
+      tracerVar.get() match
+        case null => instrumentWithTracer(tracer)(fn)
+        case existingTracer: Tr =>
+          tracerVar.remove()
+          try instrumentWithTracer(tracer)(fn)
+          finally tracerVar.set(existingTracer)
+        case existingTracer: Tracer =>
+          throw IllegalArgumentException(s"re-entrant tracer $tracer is not of the same type as existing tracer $existingTracer")
+
     def defer[T](manip: => Manip[T]): Manip[T] =
       lazy val impl = manip
       Manip.Deferred(() => impl)
@@ -846,11 +863,17 @@ object Manip:
     def backtrack(using DebugInfo): Manip[Nothing] =
       Manip.Backtrack(summon[DebugInfo])
 
-    def atNode[T](node: Node.All)(manip: Manip[T]): Manip[T] =
+    def initNode[T](using DebugInfo)(node: Node.All)(manip: Manip[T]): Manip[T] =
+      initHandle(Handle.fromNode(node))(manip)
+
+    def initHandle[T](using DebugInfo)(handle: Manip.Handle)(manip: Manip[T]): Manip[T] =
+      Manip.Handle.ref.init(handle)(manip)
+
+    def atNode[T](using DebugInfo)(node: Node.All)(manip: Manip[T]): Manip[T] =
       atHandle(Handle.fromNode(node))(manip)
 
-    def atHandle[T](handle: Manip.Handle)(manip: Manip[T]): Manip[T] =
-      Manip.Handle.ref.init(handle)(manip)
+    def atHandle[T](using DebugInfo)(handle: Manip.Handle)(manip: Manip[T]): Manip[T] =
+      restrictHandle(manip)(_ => Some(handle))
 
     def getHandle(using DebugInfo): Manip[Manip.Handle] =
       Manip.Handle.ref.get
@@ -870,7 +893,7 @@ object Manip:
     def keepHandlePtr[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       restrictHandle(manip)(PartialFunction.fromFunction(_.keepPtr))
 
-    def getNode(using DebugInfo): Manip[Node.All] =
+    def getNode(using DebugInfo.Ctx): Manip[Node.All] =
       getHandle
         .tapEffect(_.assertCoherence())
         .restrict:
@@ -906,13 +929,13 @@ object Manip:
     def atParent[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
       restrictHandle(manip)(_.findParent)
 
-    def atAncestor[T](using DebugInfo)(manip: Manip[T]): Manip[T] =
+    def atAncestor[T](using DebugInfo.Ctx)(manip: Manip[T]): Manip[T] =
       lazy val impl: Manip[T] =
         manip | atParent(defer(impl))
 
       atParent(impl)
 
-    def addChild[T](using DebugInfo)(child: => Node.Child): Manip[Node.Child] =
+    def addChild[T](using DebugInfo.Ctx)(child: => Node.Child): Manip[Node.Child] =
       getNode.lookahead.flatMap:
         case thisParent: Node.Parent =>
           effect:
@@ -932,7 +955,7 @@ object Manip:
         raw.void
 
       def rewrite(using
-          DebugInfo
+          DebugInfo.Ctx
       )(
           action: on.Ctx ?=> T => Rules
       ): Rules =
@@ -977,7 +1000,7 @@ object Manip:
       final case class Ctx(matchedCount: Int) extends AnyVal
 
     def spliceThen(using
-        DebugInfo
+        DebugInfo.Ctx
     )(using
         onCtx: on.Ctx
     )(
@@ -1031,7 +1054,7 @@ object Manip:
       spliceThen(nodes.iterator.toArray)(manip)
 
     def splice(using
-        DebugInfo
+        DebugInfo.Ctx
     )(using
         onCtx: on.Ctx,
         passCtx: pass.Ctx
@@ -1061,17 +1084,17 @@ object Manip:
     def continuePass(using passCtx: pass.Ctx): Rules =
       passCtx.loop
 
-    def continuePassAtNextNode(using pass.Ctx): Rules =
+    def continuePassAtNextNode(using DebugInfo)(using pass.Ctx): Rules =
       atNextNode(continuePass)
 
-    def atNextNode(using passCtx: pass.Ctx)(manip: Rules): Rules =
+    def atNextNode(using DebugInfo)(using passCtx: pass.Ctx)(manip: Rules): Rules =
       passCtx.strategy.atNext(manip)
 
     def endPass(using DebugInfo): Rules =
       pass.resultRef.get
 
     def skipMatch(using
-        DebugInfo
+        DebugInfo.Ctx
     )(using onCtx: on.Ctx, passCtx: pass.Ctx): Rules =
       require(
         onCtx.matchedCount > 0,
@@ -1092,8 +1115,8 @@ object Manip:
 
     extension [T](lhs: Manip[T])
       @scala.annotation.targetName("or")
-      def |(rhs: Manip[T]): Manip[T] =
-        semigroupK.combineK(lhs, rhs)
+      def |(using DebugInfo)(rhs: Manip[T]): Manip[T] =
+        monoidK.combineK(lhs, rhs)
       def flatMap[U](using DebugInfo)(fn: T => Manip[U]): Manip[U] =
         Manip.FlatMap(lhs, t => commit(fn(t)))
       def lookahead: Lookahead[T] =
@@ -1105,24 +1128,20 @@ object Manip:
           case v if pred(v) => v
       def withFinally(fn: => Unit): Manip[T] =
         Manip.Finally(lhs, () => fn)
-      def withTracer(tracer: => Tracer): Manip[T] =
-        tracerRef.init(tracer):
-          getTracer.lookahead.flatMap: tracer =>
-            lhs.withFinally(tracer.close())
       def tapEffect(fn: T => Unit): Manip[T] =
         Manip.TapEffect(lhs, fn)
 
     extension (lhs: Manip[Node.All])
-      def here[U](manip: Manip[U]): Manip[U] =
+      def here[U](using DebugInfo.Ctx)(manip: Manip[U]): Manip[U] =
         lhs.lookahead.flatMap: node =>
-          atNode(node)(manip)
+          restrictHandle(manip)(_ => Some(Handle.fromNode(node)))
 
     final class pass(
         strategy: pass.TraversalStrategy = pass.topDown,
         once: Boolean = false,
         wrapFn: Manip[Unit] => Manip[Unit] = identity
     ):
-      def rules(using DebugInfo)(rules: pass.Ctx ?=> Rules): Manip[Unit] =
+      def rules(using DebugInfo.Ctx)(rules: pass.Ctx ?=> Rules): Manip[Unit] =
         val before = getTracer
           .product(Manip.GetRefMap)
           .flatMap: (tracer, refMap) =>
@@ -1133,7 +1152,7 @@ object Manip:
             effect(tracer.afterPass(summon[DebugInfo])(using refMap))
 
         // TODO: consider optimizing the ancestor check if it becomes a bottleneck
-        def exceptInError[T](manip: Manip[T])(using DebugInfo): Manip[T] =
+        def exceptInError[T](manip: Manip[T])(using DebugInfo.Ctx): Manip[T] =
           import SeqPattern.ops.*
           on(not(ancestor(Builtin.Error))).check *> manip
 
@@ -1144,12 +1163,13 @@ object Manip:
 
         wrapFn:
           lazy val bigLoop: Manip[Unit] =
-            pass.resultRef.init(RulesResult.NoProgress):
-              (before *> strategy.atInit(loop) <* after).flatMap:
-                case RulesResult.Progress if !once =>
-                  bigLoop
-                case RulesResult.Progress | RulesResult.NoProgress =>
-                  pure(())
+            pass.resultRef.reset:
+              pass.resultRef.init(RulesResult.NoProgress):
+                (before *> strategy.atInit(loop) <* after).flatMap:
+                  case RulesResult.Progress if !once =>
+                    bigLoop
+                  case RulesResult.Progress | RulesResult.NoProgress =>
+                    pure(())
 
           bigLoop
 
@@ -1167,20 +1187,18 @@ object Manip:
       final case class Ctx(
           strategy: TraversalStrategy,
           loop: Manip[RulesResult]
-      ):
+      )(using DebugInfo.Ctx):
         lazy val loopAtNext: Manip[RulesResult] =
           strategy.atNext(loop)
 
       trait TraversalStrategy:
-        def atInit(manip: Manip[RulesResult]): Manip[RulesResult]
-        def atNext(manip: Manip[RulesResult]): Manip[RulesResult]
+        def atInit(manip: Manip[RulesResult])(using DebugInfo.Ctx): Manip[RulesResult]
+        def atNext(manip: Manip[RulesResult])(using DebugInfo.Ctx): Manip[RulesResult]
 
       object topDown extends TraversalStrategy:
-        private inline given DebugInfo = DebugInfo.notPoison
+        def atInit(manip: Manip[RulesResult])(using DebugInfo.Ctx): Manip[RulesResult] = manip
 
-        def atInit(manip: Manip[RulesResult]): Manip[RulesResult] = manip
-
-        def atNext(manip: Manip[RulesResult]): Manip[RulesResult] =
+        def atNext(manip: Manip[RulesResult])(using DebugInfo.Ctx): Manip[RulesResult] =
           val next = commit(manip)
           commit:
             atFirstChild(next)
@@ -1195,9 +1213,7 @@ object Manip:
                 ))
 
       object bottomUp extends TraversalStrategy:
-        private inline given DebugInfo = DebugInfo.notPoison
-
-        def atInit(manip: Manip[RulesResult]): Manip[RulesResult] =
+        def atInit(manip: Manip[RulesResult])(using DebugInfo.Ctx): Manip[RulesResult] =
           lazy val impl: Manip[RulesResult] =
             commit:
               atFirstChild(defer(impl))
@@ -1205,7 +1221,7 @@ object Manip:
 
           impl
 
-        def atNext(manip: Manip[RulesResult]): Manip[RulesResult] =
+        def atNext(manip: Manip[RulesResult])(using DebugInfo.Ctx): Manip[RulesResult] =
           val next = commit(manip)
           def atNextCousin[T](manip: Manip[T]): Manip[T] =
             lazy val impl: Manip[T] =

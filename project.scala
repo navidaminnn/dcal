@@ -19,9 +19,18 @@
 //> using dep org.typelevel::cats-core:2.13.0
 //> using dep dev.zio::izumi-reflect:3.0.2
 //> using dep com.lihaoyi::ujson::4.1.0
-//> using dependency "io.github.java-diff-utils:java-diff-utils:4.15"
+//> using dep io.github.java-diff-utils:java-diff-utils:4.15
+
+//> using dep com.lihaoyi::pprint:0.9.0
+
+//> using dep edu.berkeley.cs.jqf:jqf-fuzz:2.0
+//> using dep edu.berkeley.cs.jqf:jqf-instrument:2.0
+
+//> using dep com.github.scopt::scopt:4.1.0
+
 //> using test.dep org.scalameta::munit:1.1.0
 
 //> using javaProp distcompiler.Node.assertErrorRefCorrectness=no
+//> using test.javaProp distcompiler.Manip.useReferenceTracer=yes
 
 // discarded flags: -Yrequire-targetName

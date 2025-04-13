@@ -65,13 +65,13 @@ class ManipTests extends munit.FunSuite:
 
   test("treePairs unifyColors1"):
     treePairs.foreach: (bi, mono) =>
-      atNode(bi)(unifyColors1).perform()
+      initNode(bi)(unifyColors1).perform()
       assertEquals(bi, mono)
 
   test("unifyColors1 on a single node"):
     val bi = Node.Top(tok2())
     val mono = Node.Top(tok1())
-    atNode(bi)(unifyColors1).perform()
+    initNode(bi)(unifyColors1).perform()
     assertEquals(bi, mono)
 
   val unifyColors2 =
@@ -82,7 +82,7 @@ class ManipTests extends munit.FunSuite:
 
   test("treePairs unifyColors2"):
     treePairs.foreach: (bi, mono) =>
-      atNode(bi)(unifyColors2).perform()
+      initNode(bi)(unifyColors2).perform()
       assertEquals(bi, mono)
 
   val unifyColors3 =
@@ -93,7 +93,7 @@ class ManipTests extends munit.FunSuite:
 
   test("treePairs unifyColors3"):
     treePairs.foreach: (bi, mono) =>
-      atNode(bi)(unifyColors3).perform()
+      initNode(bi)(unifyColors3).perform()
       assertEquals(bi, mono)
 
   val unifyColors4 =
@@ -104,7 +104,7 @@ class ManipTests extends munit.FunSuite:
 
   test("treePairs unifyColors4"):
     treePairs.foreach: (bi, mono) =>
-      atNode(bi)(unifyColors4).perform()
+      initNode(bi)(unifyColors4).perform()
       assertEquals(bi, mono)
 
   val unifyColors5 =
@@ -117,7 +117,7 @@ class ManipTests extends munit.FunSuite:
 
   test("treePairs unifyColors5"):
     treePairs.foreach: (bi, mono) =>
-      atNode(bi)(unifyColors5).perform()
+      initNode(bi)(unifyColors5).perform()
       assertEquals(bi, mono)
 
   val unifyColors6 =
@@ -131,7 +131,7 @@ class ManipTests extends munit.FunSuite:
 
   test("treePairs unifyColors6"):
     treePairs.foreach: (bi, mono) =>
-      atNode(bi)(unifyColors6).perform()
+      initNode(bi)(unifyColors6).perform()
       assertEquals(bi, mono)
 
   val unifyColors7 =
@@ -145,7 +145,7 @@ class ManipTests extends munit.FunSuite:
 
   test("treePairs unifyColors7"):
     treePairs.foreach: (bi, mono) =>
-      atNode(bi)(unifyColors7).perform()
+      initNode(bi)(unifyColors7).perform()
       assertEquals(bi, mono)
 
   val unifyColors8 =
@@ -156,7 +156,7 @@ class ManipTests extends munit.FunSuite:
 
   test("treePairs unifyColors8"):
     treePairs.foreach: (bi, mono) =>
-      atNode(bi)(unifyColors8).perform()
+      initNode(bi)(unifyColors8).perform()
       assertEquals(bi, mono)
 
   test("error node is skipped"):
@@ -173,12 +173,12 @@ class ManipTests extends munit.FunSuite:
 
     // topDown
     val result1 = example.clone()
-    atNode(result1)(unifyColors1).perform()
+    initNode(result1)(unifyColors1).perform()
     assertEquals(result1, expected)
 
     // bottomUp
     val result2 = example.clone()
-    atNode(result2)(unifyColors3).perform()
+    initNode(result2)(unifyColors3).perform()
     assertEquals(result2, expected)
 
 object ManipTests:

@@ -184,5 +184,6 @@ object SExprReader extends Reader:
             | finish(unexpectedEOF)
 
     commit:
-      builderRef.init(SourceRange.newBuilder):
-        dropMatch(impl)
+      builderRef.reset:
+        builderRef.init(SourceRange.newBuilder):
+          dropMatch(impl)

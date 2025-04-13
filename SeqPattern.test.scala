@@ -29,7 +29,7 @@ class SeqPatternTests extends munit.FunSuite:
       val top = Node.Top(children)
       test(name):
         val result =
-          atNode(top)(atFirstChild(pat.value))
+          initNode(top)(atFirstChild(pat.value))
             .perform()
         assertEquals(result, expected)
       pat

@@ -512,7 +512,8 @@ object TLAReader extends Reader:
                 addByte(m.head)
             | finishStringLiteral(unexpectedEOF)
 
-    builderRef.init(SourceRange.newBuilder)(dropMatch(stringLiteralLoop))
+    builderRef.reset:
+      builderRef.init(SourceRange.newBuilder)(dropMatch(stringLiteralLoop))
 
   lazy val endNumberLiteral: Manip[SourceRange] =
     consumeMatch: m =>

@@ -413,7 +413,7 @@ final class Wellformed private (
             .addDeserializedChildren(top.children)
             .map(_ => result.asInstanceOf[N])
         case node: Node =>
-          atNode(node)(nodeManip)
+          initNode(node)(nodeManip)
             .perform()
             .asInstanceOf[TailRec[N]]
 

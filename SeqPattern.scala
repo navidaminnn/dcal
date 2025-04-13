@@ -17,15 +17,16 @@ package distcompiler
 import cats.syntax.all.given
 import dsl.*
 import scala.collection.IndexedSeqView
+import scala.util.NotGiven
 
-final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]])
-    extends AnyVal:
+final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]]):
+  private inline given poison(using NotGiven[DebugInfo.Ctx]): DebugInfo = DebugInfo.poison
   import SeqPattern.*
 
-  def |[U >: T](other: SeqPattern[U]): SeqPattern[U] =
+  def |[U >: T](using DebugInfo.Ctx)(other: SeqPattern[U]): SeqPattern[U] =
     SeqPattern(manip.combineK(other.manip))
 
-  def productAtRightSibling[U](other: SeqPattern[U]): SeqPattern[(T, U)] =
+  def productAtRightSibling[U](using DebugInfo.Ctx)(other: SeqPattern[U]): SeqPattern[(T, U)] =
     SeqPattern:
       manip.lookahead.flatMap:
         case Result.Top(_, _) => backtrack
@@ -34,14 +35,14 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]])
         case Result.Match(_, idx, t) =>
           atIdx(idx + 1)(other.map((t, _)).manip)
 
-  def restrict[U](fn: PartialFunction[T, U]): SeqPattern[U] =
+  def restrict[U](using DebugInfo.Ctx)(fn: PartialFunction[T, U]): SeqPattern[U] =
     SeqPattern:
       manip.restrict:
         case Result.Top(top, fn(u))           => Result.Top(top, u)
         case Result.Look(parent, idx, fn(u))  => Result.Look(parent, idx, u)
         case Result.Match(parent, idx, fn(u)) => Result.Match(parent, idx, u)
 
-  def filter(pred: T => Boolean): SeqPattern[T] =
+  def filter(using DebugInfo.Ctx)(pred: T => Boolean): SeqPattern[T] =
     SeqPattern(manip.filter(res => pred(res.value)))
 
   def asManip: Manip[T] =
@@ -51,7 +52,7 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]])
   def ~[Tpl1 <: Tuple, Tpl2 <: Tuple](using
       T <:< Fields[Tpl1]
   )(using
-      DebugInfo
+      DebugInfo.Ctx
   )(
       other: SeqPattern[Fields[Tpl2]]
   ): SeqPattern[Fields[Tuple.Concat[Tpl1, Tpl2]]] =
@@ -65,8 +66,8 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]])
       T <:< Fields[Tpl]
   )(using
       maybeStrip: Fields.MaybeStripTuple1[Tpl, T2]
-  )(using DebugInfo)(other: eof.type): SeqPattern[T2] =
-    this.productAtRightSibling(atEnd).map(flds => maybeStrip(flds._1.fields))
+  )(using DebugInfo.Ctx)(other: eof.type): SeqPattern[T2] =
+      this.productAtRightSibling(atEnd).map(flds => maybeStrip(flds._1.fields))
 
   @scala.annotation.targetName("fieldsTrailing")
   def ~[Tpl <: Tuple, T2](using
@@ -86,6 +87,7 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]])
     this *> other.void
 
 object SeqPattern:
+  private inline given poison(using NotGiven[DebugInfo.Ctx]): DebugInfo = DebugInfo.poison
   export applicative.{pure, unit}
 
   given applicative: cats.Applicative[SeqPattern] with
@@ -254,7 +256,7 @@ object SeqPattern:
             Result.Look(parent, 0, ())
 
     def nodeSpanMatchedBy(using
-        DebugInfo
+        DebugInfo.Ctx
     )(
         pattern: SeqPattern[?]
     ): SeqPattern[IndexedSeqView[Node.Child]] =
@@ -284,18 +286,22 @@ object SeqPattern:
 
     export SeqPattern.{FieldsEndMarker as eof, FieldsTrailingMarker as trailing}
 
-    def not[T](using DebugInfo)(pattern: SeqPattern[T]): SeqPattern[Unit] =
-      SeqPattern(Manip.Negated(pattern.manip, summon[DebugInfo]) *> unit.manip)
+    def not[T](using DebugInfo.Ctx)(pattern: SeqPattern[T]): SeqPattern[Unit] =
+      SeqPattern:
+        ((pattern.manip *> Manip.pure(true)) | Manip.pure(false))
+          .restrict:
+            case false => ()
+          *> SeqPattern.unit.manip
 
     def optional[T](using
-        DebugInfo
+        DebugInfo.Ctx
     )(
         pattern: SeqPattern[T]
     ): SeqPattern[Option[T]] =
       pattern.map(Some(_)) | pure(None)
 
     def repeated[T](using
-        DebugInfo
+        DebugInfo.Ctx
     )(
         pattern: SeqPattern[T]
     ): SeqPattern[List[T]] =
@@ -307,14 +313,14 @@ object SeqPattern:
       impl
 
     def repeated1[T](using
-        DebugInfo
+        DebugInfo.Ctx
     )(
         pattern: SeqPattern[T]
     ): SeqPattern[List[T]] =
       (field(pattern) ~ field(repeated(pattern)) ~ trailing).map(_ :: _)
 
     def repeatedSepBy1[T](using
-        DebugInfo
+        DebugInfo.Ctx
     )(sep: SeqPattern[?])(pattern: SeqPattern[T]): SeqPattern[List[T]] =
       (field(pattern) ~ field(
         repeated(skip(sep) ~ field(pattern) ~ trailing)
@@ -322,7 +328,7 @@ object SeqPattern:
         .map(_ :: _)
 
     def repeatedSepBy[T](using
-        DebugInfo
+        DebugInfo.Ctx
     )(sep: SeqPattern[?])(
         pattern: SeqPattern[T]
     ): SeqPattern[List[T]] =

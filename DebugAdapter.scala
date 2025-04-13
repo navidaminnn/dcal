@@ -27,6 +27,8 @@ import java.nio.CharBuffer
 import java.nio.channels.Channels
 import java.io.Closeable
 import distcompiler.Manip.Handle
+import distcompiler.Manip.Ref
+import distcompiler.Manip.RefMap
 
 final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
   import DebugAdapter.{EvalState, EvalTag, StackEntry, SourceRecord}
@@ -54,10 +56,10 @@ final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
 
         val stackEntry = StackEntry(
           source = SourceRecord(
-            fileName = debugInfo.records.head.file
+            fileName = debugInfo.file
           ),
           tag = evalTag,
-          line = debugInfo.records.head.line
+          line = debugInfo.line
         )
 
         if state.stackTrace.headOption != Some(stackEntry)
@@ -121,6 +123,15 @@ final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
   def afterPass(debugInfo: DebugInfo)(using Manip.RefMap): Unit =
     handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.AfterPass)
 
+  def onRead(manip: Manip[?], ref: Ref[?], value: Any, debugInfo: DebugInfo)(using RefMap): Unit =
+    () // TODO: implement
+
+  def onAssign(manip: Manip[?], ref: Ref[?], value: Any)(using RefMap): Unit =
+    () // TODO: implement
+
+  def onDel(manip: Manip[?], ref: Ref[?], debugInfo: DebugInfo)(using RefMap): Unit =
+    () // TODO: implement
+
   def onRewriteMatch(
       debugInfo: DebugInfo,
       parent: Node.Parent,
@@ -141,12 +152,17 @@ final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
   )(using Manip.RefMap): Unit =
     handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.AfterRewrite)
 
-  def onCommit(debugInfo: DebugInfo)(using Manip.RefMap): Unit =
+  def onBranch(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit =
+    // TODO: implement
+    ()
+
+  def onCommit(manip: Manip[?], debugInfo: DebugInfo)(using Manip.RefMap): Unit =
     handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.Commit)
-  def onBacktrack(debugInfo: DebugInfo)(using Manip.RefMap): Unit =
+  
+  def onBacktrack(manip: Manip[?], debugInfo: DebugInfo)(using Manip.RefMap): Unit =
     handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.Backtrack)
 
-  def onFatal(debugInfo: DebugInfo, from: DebugInfo)(using Manip.RefMap): Unit =
+  def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo)(using Manip.RefMap): Unit =
     handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.FatalError)
 
 object DebugAdapter:
@@ -253,17 +269,14 @@ object DebugAdapter:
       this.connectionOpt match
         case None =>
           withState: state =>
-            state.knownSources ++= debugInfo.records.iterator.map(rec =>
-              SourceRecord(rec.file)
-            )
+            state.knownSources += SourceRecord(debugInfo.file)
         case Some(connection) =>
           withState: state =>
-            debugInfo.records.iterator.foreach: rec =>
-              val record = SourceRecord(rec.file)
-              if !state.knownSources(record)
-              then
-                state.knownSources += record
-                connection.sendSource(record)
+            val record = SourceRecord(debugInfo.file)
+            if !state.knownSources(record)
+            then
+              state.knownSources += record
+              connection.sendSource(record)
 
     def witnessPause(evalTag: EvalTag): Unit =
       this.connectionOpt match
