@@ -23,7 +23,7 @@ object SExprReader extends Reader:
   import distcompiler.Builtin.{Error, SourceMarker}
   import Reader.*
 
-  def wellformed: Wellformed = distcompiler.sexpr.wellformed
+  def wellformed: Wellformed = lang.wf
 
   private val alpha: Set[Char] =
     ('a' to 'z').toSet ++ ('A' to 'Z').toSet
@@ -51,7 +51,7 @@ object SExprReader extends Reader:
         .onOneOf(whitespace):
           extendThisNodeWithMatch(rules)
         .on('('):
-          addChild(tokens.List())
+          addChild(lang.List())
             .here(extendThisNodeWithMatch(rules))
         .on(')'):
           extendThisNodeWithMatch:
@@ -97,7 +97,7 @@ object SExprReader extends Reader:
                   dropMatch:
                     bytes.selectCount(lengthPrefix):
                       consumeMatch: m =>
-                        addChild(tokens.Atom(m))
+                        addChild(lang.Atom(m))
                           *> rules
                   | bytes.getSrc.flatMap: src =>
                     val srcEnd = src.drop(src.length)
@@ -126,7 +126,7 @@ object SExprReader extends Reader:
         .onOneOf(digit)(tokenMode)
         .fallback:
           consumeMatch: m =>
-            addChild(tokens.Atom(m))
+            addChild(lang.Atom(m))
               *> rules
 
   private lazy val stringMode: Manip[SourceRange] =
@@ -147,7 +147,7 @@ object SExprReader extends Reader:
       dropMatch:
         builderRef.get.flatMap: builder =>
           val stringContents = builder.result()
-          addChild(tokens.Atom(stringContents))
+          addChild(lang.Atom(stringContents))
             *> rest
 
     lazy val impl: Manip[SourceRange] =

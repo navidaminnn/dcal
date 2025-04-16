@@ -18,72 +18,55 @@ import cats.syntax.all.given
 
 import distcompiler.*
 import dsl.*
-import distcompiler.calc.tokens.*
 
-object tokens:
-  object Expression extends Token:
-    override def showSource: Boolean = false
+object lang extends WellformedDef:
+  val topShape: Shape = repeated(Expression)
 
-  object AddOp extends Token:
-    override def showSource: Boolean = true
+  object Expression
+      extends t(
+        choice(
+          Number,
+          Add,
+          Sub,
+          Mul,
+          Div
+        )
+      )
 
-  object DivOp extends Token:
-    override def showSource: Boolean = true
+  object Number extends t(Atom), Token.ShowSource
 
-  object MulOp extends Token:
-    override def showSource: Boolean = true
-
-  object SubOp extends Token:
-    override def showSource: Boolean = true
-
-  object Add extends Token:
-    override def showSource: Boolean = true
-
-  object Sub extends Token:
-    override def showSource: Boolean = true
-
-  object Mul extends Token:
-    override def showSource: Boolean = true
-
-  object Div extends Token:
-    override def showSource: Boolean = true
-
-  object Number extends Token:
-    override def showSource: Boolean = true
-
-val wellformed: Wellformed =
-  Wellformed:
-    Node.Top ::= repeated(tokens.Expression)
-
-    tokens.Number ::= Atom
-
-    tokens.Add ::= fields(
-      tokens.Expression,
-      tokens.Expression
-    )
-
-    tokens.Sub ::= fields(
-      tokens.Expression,
-      tokens.Expression
-    )
-
-    tokens.Mul ::= fields(
-      tokens.Expression,
-      tokens.Expression
-    )
-
-    tokens.Div ::= fields(
-      tokens.Expression,
-      tokens.Expression
-    )
-
-    tokens.Expression ::= choice(
-      tokens.Number,
-      tokens.Add,
-      tokens.Sub,
-      tokens.Mul,
-      tokens.Div
-    )
+  object Add
+      extends t(
+        fields(
+          Expression,
+          Expression
+        )
+      ),
+        Token.ShowSource
+  object Sub
+      extends t(
+        fields(
+          Expression,
+          Expression
+        )
+      ),
+        Token.ShowSource
+  object Mul
+      extends t(
+        fields(
+          Expression,
+          Expression
+        )
+      ),
+        Token.ShowSource
+  object Div
+      extends t(
+        fields(
+          Expression,
+          Expression
+        )
+      ),
+        Token.ShowSource
 
 object read:
   def fromSourceRange(sourceRange: SourceRange): Node.Top =

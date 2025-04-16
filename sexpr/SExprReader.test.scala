@@ -18,7 +18,7 @@ import distcompiler.*
 import Builtin.{Error, SourceMarker}
 
 class SExprReaderTests extends munit.FunSuite:
-  import tokens.Atom
+  import lang.Atom
   extension (str: String)
     def parse: Node.Top =
       sexpr.parse.fromSourceRange(SourceRange.entire(Source.fromString(str)))
@@ -57,21 +57,21 @@ class SExprReaderTests extends munit.FunSuite:
   test("empty atom"):
     assertEquals("0:".parse, Node.Top(Atom("")))
   test("empty list"):
-    assertEquals("()".parse, Node.Top(tokens.List()))
+    assertEquals("()".parse, Node.Top(lang.List()))
 
   test("list of two atoms"):
     assertEquals(
       "(3:foo 3:bar)".parse,
-      Node.Top(tokens.List(Atom("foo"), Atom("bar")))
+      Node.Top(lang.List(Atom("foo"), Atom("bar")))
     )
   test("list of three lists"):
     assertEquals(
       "((3:foo) (3:bar) ())".parse,
       Node.Top(
-        tokens.List(
-          tokens.List(Atom("foo")),
-          tokens.List(Atom("bar")),
-          tokens.List()
+        lang.List(
+          lang.List(Atom("foo")),
+          lang.List(Atom("bar")),
+          lang.List()
         )
       )
     )
@@ -95,20 +95,20 @@ class SExprReaderTests extends munit.FunSuite:
     assertEquals(
       "(4: foo".parse,
       Node.Top(
-        tokens.List(Atom(" foo"), Error("unexpected EOF", SourceMarker()))
+        lang.List(Atom(" foo"), Error("unexpected EOF", SourceMarker()))
       )
     )
 
   test("empty string literal"):
-    assertEquals("\"\"".parse, Node.Top(tokens.Atom("")))
+    assertEquals("\"\"".parse, Node.Top(lang.Atom("")))
 
   test("3 empty string literals with a list"):
     assertEquals(
       "\"\" (\"\" ) \"\"".parse,
       Node.Top(
-        tokens.Atom(""),
-        tokens.List(tokens.Atom("")),
-        tokens.Atom("")
+        lang.Atom(""),
+        lang.List(lang.Atom("")),
+        lang.Atom("")
       )
     )
 
@@ -116,10 +116,10 @@ class SExprReaderTests extends munit.FunSuite:
     assertEquals(
       raw"""("foo" "bar" " ")""".parse,
       Node.Top(
-        tokens.List(
-          tokens.Atom("foo"),
-          tokens.Atom("bar"),
-          tokens.Atom(" ")
+        lang.List(
+          lang.Atom("foo"),
+          lang.Atom("bar"),
+          lang.Atom(" ")
         )
       )
     )
@@ -127,7 +127,7 @@ class SExprReaderTests extends munit.FunSuite:
   test("string with escapes"):
     assertEquals(
       raw""" "\tfoo\\bar" """.parse,
-      Node.Top(tokens.Atom("\tfoo\\bar"))
+      Node.Top(lang.Atom("\tfoo\\bar"))
     )
 
   test("misc token atoms"):

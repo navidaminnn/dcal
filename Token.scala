@@ -52,16 +52,6 @@ object Token:
   trait ShowSource extends Token:
     override def showSource: Boolean = true
 
-  private var _freshCounter: Long = 0
-  private def incFreshCounter(): Long =
-    val result = _freshCounter
-    _freshCounter += 1
-    result
-
-  abstract class Fresh
-      extends Token,
-        Named(using Named.OwnName(List(s"$$${{ incFreshCounter() }}")))
-
   extension (token: Token)
     def apply(children: Node.Child*): Node =
       Node(token)(children)
