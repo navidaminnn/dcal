@@ -92,14 +92,14 @@ object TLAParser extends PassSeq:
     // may appear between top-level units
     DashSeq,
     // nested modules look like this (we will have parsed them earlier)
-    tokens.Module,
+    lang.Module,
     // can occur in nested ASSUME ... ASSUME ... PROVE <expr> PROVE
     defns.PROVE
   )
 
   final case class RawExpression(nodes: IndexedSeqView[Node.Child]):
     def mkNode: Node =
-      tokens.Expr(nodes.map(_.unparent()))
+      lang.Expr(nodes.map(_.unparent()))
 
   private lazy val operatorDefnBeginnings: SeqPattern[EmptyTuple] =
     (skip(Alpha) ~ skip(optional(ParenthesesGroup)) ~ skip(`_==_`) ~ trailing)
@@ -271,25 +271,25 @@ object TLAParser extends PassSeq:
 
   val moduleGroups = passDef:
     wellformed := prevWellformed.makeDerived:
-      Node.Top ::=! repeated(tokens.Module)
+      Node.Top ::=! repeated(lang.Module)
       TLAReader.groupTokens.foreach: tok =>
         tok.removeCases(defns.MODULE, DashSeq, EqSeq)
 
-      tokens.Module ::= fields(
-        tokens.Id,
-        tokens.Module.Extends,
-        tokens.Module.Defns
+      lang.Module ::= fields(
+        lang.Id,
+        lang.Module.Extends,
+        lang.Module.Defns
       )
-      tokens.Module.Extends.importFrom(tla.wellformed)
-      tokens.Module.Defns ::= repeated(
-        choice(ModuleGroup.existingCases + DashSeq + tokens.Module)
+      lang.Module.Extends.importFrom(lang.wf)
+      lang.Module.Defns ::= repeated(
+        choice(ModuleGroup.existingCases + DashSeq + lang.Module)
       )
 
     pass(once = false, strategy = pass.topDown)
       .rules:
         // remove top-level modules from ModuleGroup
         on(
-          tok(ModuleGroup) *> onlyChild(tokens.Module)
+          tok(ModuleGroup) *> onlyChild(lang.Module)
         ).rewrite: mod =>
           splice(mod.unparent())
         // Any module that doesn't have what looks like an unparsed nested module in it.
@@ -319,29 +319,29 @@ object TLAParser extends PassSeq:
             ~ trailing // we might be inside another module
         ).rewrite: (name, exts, unitSoup) =>
           splice(
-            tokens.Module(
-              tokens.Id().like(name),
-              tokens.Module.Extends(exts.map(ext => tokens.Id().like(ext))),
-              tokens.Module.Defns(unitSoup.map(_.unparent()))
+            lang.Module(
+              lang.Id().like(name),
+              lang.Module.Extends(exts.map(ext => lang.Id().like(ext))),
+              lang.Module.Defns(unitSoup.map(_.unparent()))
             )
           )
 
   val unitDefns = passDef:
     wellformed := prevWellformed.makeDerived:
-      tokens.OpSym.importFrom(tla.wellformed)
+      lang.OpSym.importFrom(lang.wf)
 
-      tokens.Module.Defns ::=! repeated(
+      lang.Module.Defns ::=! repeated(
         choice(
-          tokens.Operator,
-          tokens.Variable,
-          tokens.Constant,
-          tokens.Assumption,
-          tokens.Theorem,
-          tokens.Recursive,
-          tokens.Instance,
-          tokens.ModuleDefinition,
-          tokens.Module,
-          tokens.UseOrHide,
+          lang.Operator,
+          lang.Variable,
+          lang.Constant,
+          lang.Assumption,
+          lang.Theorem,
+          lang.Recursive,
+          lang.Instance,
+          lang.ModuleDefinition,
+          lang.Module,
+          lang.UseOrHide,
           defns.LOCAL // goes away on next pass!
         )
       )
@@ -360,43 +360,43 @@ object TLAParser extends PassSeq:
           defns.INSTANCE
         )
 
-      tokens.Expr ::= repeated(
+      lang.Expr ::= repeated(
         choice(TLAReader.ParenthesesGroup.existingCases),
         minCount = 1
       )
 
       TLAReader.LetGroup ::=! repeated(
         choice(
-          tokens.Operator,
-          tokens.ModuleDefinition,
-          tokens.Recursive
+          lang.Operator,
+          lang.ModuleDefinition,
+          lang.Recursive
         )
       )
 
-      tokens.Operator.importFrom(tla.wellformed)
-      tokens.Variable.importFrom(tla.wellformed)
-      tokens.Constant.importFrom(tla.wellformed)
-      tokens.OpSym.importFrom(tla.wellformed)
-      tokens.Assumption.importFrom(tla.wellformed)
-      tokens.Theorem.importFrom(tla.wellformed)
-      tokens.Recursive.importFrom(tla.wellformed)
-      tokens.Instance.importFrom(tla.wellformed)
-      tokens.ModuleDefinition.importFrom(tla.wellformed)
-      tokens.UseOrHide.importFrom(tla.wellformed)
+      lang.Operator.importFrom(lang.wf)
+      lang.Variable.importFrom(lang.wf)
+      lang.Constant.importFrom(lang.wf)
+      lang.OpSym.importFrom(lang.wf)
+      lang.Assumption.importFrom(lang.wf)
+      lang.Theorem.importFrom(lang.wf)
+      lang.Recursive.importFrom(lang.wf)
+      lang.Instance.importFrom(lang.wf)
+      lang.ModuleDefinition.importFrom(lang.wf)
+      lang.UseOrHide.importFrom(lang.wf)
 
     final case class Instance(
         name: Node,
         substitutions: List[(Node, RawExpression)]
     ):
       def mkNode: Node =
-        tokens.Instance(
-          tokens.Id().like(name),
-          tokens.Instance.Substitutions(
+        lang.Instance(
+          lang.Id().like(name),
+          lang.Instance.Substitutions(
             substitutions.iterator
               .map: (name, expr) =>
-                tokens.Instance.Substitution(
+                lang.Instance.Substitution(
                   if name.token == Alpha
-                  then tokens.Id().like(name)
+                  then lang.Id().like(name)
                   else name.unparent(),
                   expr.mkNode
                 )
@@ -440,13 +440,13 @@ object TLAParser extends PassSeq:
             ~ trailing
         ).rewrite: (name, paramsOpt, body) =>
           splice(
-            tokens.Operator(
-              tokens.Id().like(name),
+            lang.Operator(
+              lang.Id().like(name),
               paramsOpt match
-                case None => tokens.Operator.Params()
+                case None => lang.Operator.Params()
                 case Some(params) =>
-                  tokens.Operator.Params(
-                    params.iterator.map(p => tokens.Id().like(p))
+                  lang.Operator.Params(
+                    params.iterator.map(p => lang.Id().like(p))
                   ),
               body.mkNode
             )
@@ -460,10 +460,10 @@ object TLAParser extends PassSeq:
             ~ trailing
         ).rewrite: (param1, op, param2, body) =>
           splice(
-            tokens.Operator(
-              tokens.OpSym(op.unparent()),
-              tokens.Operator
-                .Params(tokens.Id().like(param1), tokens.Id().like(param2)),
+            lang.Operator(
+              lang.OpSym(op.unparent()),
+              lang.Operator
+                .Params(lang.Id().like(param1), lang.Id().like(param2)),
               body.mkNode
             )
           )
@@ -475,9 +475,9 @@ object TLAParser extends PassSeq:
             ~ trailing
         ).rewrite: (param, op, body) =>
           splice(
-            tokens.Operator(
-              tokens.OpSym(op.unparent()),
-              tokens.Operator.Params(tokens.Id().like(param)),
+            lang.Operator(
+              lang.OpSym(op.unparent()),
+              lang.Operator.Params(lang.Id().like(param)),
               body.mkNode
             )
           )
@@ -489,9 +489,9 @@ object TLAParser extends PassSeq:
             ~ trailing
         ).rewrite: (op, param, body) =>
           splice(
-            tokens.Operator(
-              tokens.OpSym(op.unparent()),
-              tokens.Operator.Params(tokens.Id().like(param)),
+            lang.Operator(
+              lang.OpSym(op.unparent()),
+              lang.Operator.Params(lang.Id().like(param)),
               body.mkNode
             )
           )
@@ -503,10 +503,10 @@ object TLAParser extends PassSeq:
             ~ trailing
         ).rewrite: (name, params, body) =>
           splice(
-            tokens.Operator(
-              tokens.Id().like(name),
-              tokens.Operator.Params(),
-              tokens.Expr(
+            lang.Operator(
+              lang.Id().like(name),
+              lang.Operator.Params(),
+              lang.Expr(
                 SqBracketsGroup(
                   params.children.view.map(_.unparent())
                     ++ List(`|->`())
@@ -523,7 +523,7 @@ object TLAParser extends PassSeq:
         ).rewrite: vars =>
           splice(
             vars.map: v =>
-              tokens.Variable(tokens.Id().like(v))
+              lang.Variable(lang.Id().like(v))
           )
         // constant decls
         | on(
@@ -538,21 +538,21 @@ object TLAParser extends PassSeq:
             decls.iterator
               .map:
                 case (alpha, arity) if alpha.token == Alpha =>
-                  tokens.Constant(
-                    tokens.Order2(
-                      tokens.Id().like(alpha),
+                  lang.Constant(
+                    lang.Order2(
+                      lang.Id().like(alpha),
                       Node.Embed(arity)
                     )
                   )
                 case (op, arity) =>
-                  tokens.Constant(
-                    tokens.Order2(
+                  lang.Constant(
+                    lang.Order2(
                       op.unparent(),
                       Node.Embed(arity)
                     )
                   )
                 case alpha: Node =>
-                  tokens.Constant(tokens.Id().like(alpha))
+                  lang.Constant(lang.Id().like(alpha))
           )
         // assume
         | on(
@@ -568,10 +568,10 @@ object TLAParser extends PassSeq:
             ~ trailing
         ).rewrite: (nameOpt, rawExpr) =>
           splice(
-            tokens.Assumption(
+            lang.Assumption(
               nameOpt match
-                case None       => tokens.Anonymous()
-                case Some(name) => tokens.Id().like(name),
+                case None       => lang.Anonymous()
+                case Some(name) => lang.Id().like(name),
               rawExpr.mkNode
             )
           )
@@ -604,20 +604,20 @@ object TLAParser extends PassSeq:
             ~ trailing
         ).rewrite: (nameOpt, body, proofsOpt) =>
           splice(
-            tokens.Theorem(
+            lang.Theorem(
               nameOpt match
-                case None       => tokens.Anonymous()
-                case Some(name) => tokens.Id().like(name),
+                case None       => lang.Anonymous()
+                case Some(name) => lang.Id().like(name),
               body match
                 case rawExpr: RawExpression => rawExpr.mkNode
                 case assumeProveNodes: IndexedSeqView[Node.Child] =>
-                  tokens.Theorem.AssumeProve(
+                  lang.Theorem.AssumeProve(
                     assumeProveNodes.map(_.unparent())
                   ),
               proofsOpt match
-                case None => tokens.Theorem.Proofs()
+                case None => lang.Theorem.Proofs()
                 case Some(proofs) =>
-                  tokens.Theorem.Proofs(proofs.map(_.unparent()))
+                  lang.Theorem.Proofs(proofs.map(_.unparent()))
             )
           )
         // recursive
@@ -634,21 +634,21 @@ object TLAParser extends PassSeq:
             decls.iterator
               .map:
                 case (alpha, arity) if alpha.token == Alpha =>
-                  tokens.Recursive(
-                    tokens.Order2(
-                      tokens.Id().like(alpha),
+                  lang.Recursive(
+                    lang.Order2(
+                      lang.Id().like(alpha),
                       Node.Embed(arity)
                     )
                   )
                 case (op, arity) =>
-                  tokens.Recursive(
-                    tokens.Order2(
+                  lang.Recursive(
+                    lang.Order2(
                       op.unparent(),
                       Node.Embed(arity)
                     )
                   )
                 case alpha: Node =>
-                  tokens.Recursive(tokens.Id().like(alpha))
+                  lang.Recursive(lang.Id().like(alpha))
           )
         // instance
         | on(
@@ -670,13 +670,13 @@ object TLAParser extends PassSeq:
             ~ trailing
         ).rewrite: (name, paramsOpt, instance) =>
           splice(
-            tokens.ModuleDefinition(
-              tokens.Id().like(name),
+            lang.ModuleDefinition(
+              lang.Id().like(name),
               paramsOpt match
-                case None => tokens.Operator.Params()
+                case None => lang.Operator.Params()
                 case Some(params) =>
-                  tokens.Operator.Params(
-                    params.map(param => tokens.Id().like(param))
+                  lang.Operator.Params(
+                    params.map(param => lang.Id().like(param))
                   ),
               instance.mkNode
             )
@@ -691,13 +691,13 @@ object TLAParser extends PassSeq:
           tok(defns.USE, defns.HIDE)
             *> rawProofs
         ).rewrite: contents =>
-          splice(tokens.UseOrHide(contents.map(_.unparent())))
+          splice(lang.UseOrHide(contents.map(_.unparent())))
 
   val addLocals = passDef:
     wellformed := prevWellformed.makeDerived:
-      tokens.Module.Defns.removeCases(defns.LOCAL)
-      tokens.Module.Defns.addCases(tokens.Local)
-      tokens.Local.importFrom(tla.wellformed)
+      lang.Module.Defns.removeCases(defns.LOCAL)
+      lang.Module.Defns.addCases(lang.Local)
+      lang.Local.importFrom(lang.wf)
 
     pass(once = true, strategy = pass.bottomUp)
       .rules:
@@ -705,11 +705,11 @@ object TLAParser extends PassSeq:
         on(
           field(tok(defns.LOCAL))
             ~ field(
-              tok(tokens.Operator, tokens.Instance, tokens.ModuleDefinition)
+              tok(lang.Operator, lang.Instance, lang.ModuleDefinition)
             )
             ~ trailing
         ).rewrite: (local, op) =>
-          splice(tokens.Local(op.unparent()).like(local))
+          splice(lang.Local(op.unparent()).like(local))
 
   // TODO: finish expression parsing
   // val buildExpressions = passDef:
@@ -719,56 +719,56 @@ object TLAParser extends PassSeq:
   //       TLAReader.NumberLiteral,
   //       TLAReader.TupleGroup,
   //     )
-  //     tokens.Module.Defns.removeCases(removedCases*)
-  //     tokens.Module.Defns.addCases(tokens.Expr)
+  //     lang.Module.Defns.removeCases(removedCases*)
+  //     lang.Module.Defns.addCases(lang.Expr)
   //     TLAReader.groupTokens.foreach: tok =>
   //       tok.removeCases(removedCases*)
-  //       tok.addCases(tokens.Expr)
+  //       tok.addCases(lang.Expr)
 
-  //     tokens.Expr.importFrom(tla.wellformed)
-  //     tokens.Expr.addCases(tokens.TmpGroupExpr)
+  //     lang.Expr.importFrom(tla.wellformed)
+  //     lang.Expr.addCases(lang.TmpGroupExpr)
 
-  //     tokens.TmpGroupExpr ::= tokens.Expr
+  //     lang.TmpGroupExpr ::= lang.Expr
 
   //   pass(once = false, strategy = pass.bottomUp)
   //     .rules:
   //       on(
   //         TLAReader.StringLiteral
   //       ).rewrite: lit =>
-  //         splice(tokens.Expr(tokens.Expr.StringLiteral().like(lit)))
+  //         splice(lang.Expr(lang.Expr.StringLiteral().like(lit)))
   //       | on(
   //         TLAReader.NumberLiteral
   //       ).rewrite: lit =>
-  //         splice(tokens.Expr(tokens.Expr.NumberLiteral().like(lit)))
+  //         splice(lang.Expr(lang.Expr.NumberLiteral().like(lit)))
   //       | on(
   //         field(TLAReader.Alpha)
   //         ~ field(
   //           tok(TLAReader.ParenthesesGroup) *> children(
-  //             repeatedSepBy(`,`)(tokens.Expr)
+  //             repeatedSepBy(`,`)(lang.Expr)
   //           )
   //         )
   //         ~ trailing
   //       ).rewrite: (name, params) =>
-  //         splice(tokens.Expr(tokens.Expr.OpCall(
-  //           tokens.Id().like(name),
-  //           tokens.Expr.OpCall.Params(params.iterator.map(_.unparent())),
+  //         splice(lang.Expr(lang.Expr.OpCall(
+  //           lang.Id().like(name),
+  //           lang.Expr.OpCall.Params(params.iterator.map(_.unparent())),
   //         )))
   //       | on(
   //         TLAReader.Alpha
   //       ).rewrite: name =>
-  //         splice(tokens.Expr(tokens.Expr.OpCall(
-  //           tokens.Id().like(name),
-  //           tokens.Expr.OpCall.Params(),
+  //         splice(lang.Expr(lang.Expr.OpCall(
+  //           lang.Id().like(name),
+  //           lang.Expr.OpCall.Params(),
   //         )))
   //       | on(
-  //         tok(TLAReader.ParenthesesGroup) *> onlyChild(tokens.Expr)
+  //         tok(TLAReader.ParenthesesGroup) *> onlyChild(lang.Expr)
   //       ).rewrite: expr =>
   //         // mark this group as an expression, but leave evidence that it is a group (for operator precedence handling)
-  //         splice(tokens.Expr(tokens.TmpGroupExpr(expr.unparent())))
+  //         splice(lang.Expr(lang.TmpGroupExpr(expr.unparent())))
   //       | on(
   //         tok(TLAReader.TupleGroup).product(children(
-  //           field(repeatedSepBy(`,`)(tokens.Expr))
+  //           field(repeatedSepBy(`,`)(lang.Expr))
   //           ~ eof
   //         ))
   //       ).rewrite: (lit, elems) =>
-  //         splice(tokens.Expr(tokens.Expr.TupleLiteral(elems.iterator.map(_.unparent()))))
+  //         splice(lang.Expr(lang.Expr.TupleLiteral(elems.iterator.map(_.unparent()))))

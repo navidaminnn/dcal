@@ -18,17 +18,10 @@ import cats.syntax.all.given
 import distcompiler.*
 import distcompiler.dsl.*
 
-object tokens:
-  object List extends Token
-  object Atom extends Token:
-    override def showSource: Boolean = true
-
-val wellformed: Wellformed =
-  Wellformed:
-    val listContents = repeated(choice(tokens.Atom, tokens.List))
-    Node.Top ::= listContents
-    tokens.Atom ::= Atom
-    tokens.List ::= listContents
+object lang extends WellformedDef:
+  val topShape: Shape = repeated(choice(Atom, List))
+  object List extends t(topShape)
+  object Atom extends t(Shape.Atom), Token.ShowSource
 
 object parse:
   def fromFile(path: os.Path): Node.Top =
@@ -59,13 +52,13 @@ object serialize:
               top.children.iterator
                 .map(impl)
                 .traverse(identity)
-            case atom @ tokens.Atom() =>
+            case atom @ lang.Atom() =>
               val sourceRange = atom.sourceRange
               out.write(sourceRange.length.toString().getBytes())
               out.write(':')
               sourceRange.writeBytesTo(out)
               done(())
-            case list @ tokens.List(_*) =>
+            case list @ lang.List(_*) =>
               for
                 () <- done(out.write('('))
                 () <- list.children.iterator
@@ -102,27 +95,27 @@ object serialize:
                 .map(impl)
                 .intercalate(nl)
                 .traverse(identity)
-            case atom @ tokens.Atom()
+            case atom @ lang.Atom()
                 if SExprReader.canBeEncodedAsToken(atom.sourceRange) =>
               atom.sourceRange.writeBytesTo(out)
               done(())
-            case atom @ tokens.Atom() =>
+            case atom @ lang.Atom() =>
               val sourceRange = atom.sourceRange
               out.write(sourceRange.length.toString().getBytes())
               out.write(':')
               sourceRange.writeBytesTo(out)
               done(())
-            case tokens.List() =>
+            case lang.List() =>
               out.write('(')
               out.write(')')
               done(())
-            case tokens.List(child) =>
+            case lang.List(child) =>
               for
                 () <- done(out.write('('))
                 () <- impl(child)
                 () <- done(out.write(')'))
               yield ()
-            case list @ tokens.List(_*) =>
+            case list @ lang.List(_*) =>
               def writeChildren(iter: Iterator[Node.Child]): TailRec[Unit] =
                 iter
                   .map(impl)
@@ -133,7 +126,7 @@ object serialize:
               for
                 () <- withIndent:
                   list.children.head match
-                    case atom @ tokens.Atom() =>
+                    case atom @ lang.Atom() =>
                       for
                         () <- impl(atom)
                         () <- nl
