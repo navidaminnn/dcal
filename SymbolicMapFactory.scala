@@ -5,7 +5,7 @@ import scala.reflect.ClassTag
 
 abstract class SymbolicMapFactory:
   private val nextIdx = AtomicInteger(0)
-  
+
   trait Mapped extends Equals:
     val mapIdx: Int =
       nextIdx.getAndIncrement()
@@ -19,7 +19,10 @@ abstract class SymbolicMapFactory:
         case _ => false
   end Mapped
 
-  final class Map[@specialized T] private (private var array: Array[T], default: =>T)(using val classTag: ClassTag[T]):
+  final class Map[@specialized T] private (
+      private var array: Array[T],
+      default: => T
+  )(using val classTag: ClassTag[T]):
     private def defaultFn: T = default
 
     def apply(key: Mapped): T =
@@ -40,8 +43,7 @@ abstract class SymbolicMapFactory:
       val oldLength = array.length
       var length = oldLength
       if length == 0 then length += 1
-      while length <= idx do
-        length *= 2
+      while length <= idx do length *= 2
       assert(length >= 1)
       if length != array.length
       then
@@ -73,7 +75,7 @@ abstract class SymbolicMapFactory:
   end Map
 
   object Map:
-    def empty[T: ClassTag](default: =>T): Map[T] = Map(Array.empty, default)
+    def empty[T: ClassTag](default: => T): Map[T] = Map(Array.empty, default)
   end Map
 end SymbolicMapFactory
 

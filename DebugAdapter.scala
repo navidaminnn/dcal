@@ -119,7 +119,12 @@ final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
   def afterPass(debugInfo: DebugInfo): Unit =
     handlePointOfInterest(debugInfo, EvalTag.AfterPass)
 
-  def onRead(manip: Manip[?], ref: Ref[?], value: Any, debugInfo: DebugInfo): Unit =
+  def onRead(
+      manip: Manip[?],
+      ref: Ref[?],
+      value: Any,
+      debugInfo: DebugInfo
+  ): Unit =
     () // TODO: implement
 
   private var currHandle: Option[Manip.Handle] = None

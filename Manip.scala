@@ -178,7 +178,12 @@ object Manip:
     def leftDec(): Unit =
       leftDepth -= 1
       assert(leftDepth >= 0)
-    def pushSave[T](ref: Ref[T], value: T | Null, oldSavedDepth: Int = -2, isCommit: Boolean = false): Unit =
+    def pushSave[T](
+        ref: Ref[T],
+        value: T | Null,
+        oldSavedDepth: Int = -2,
+        isCommit: Boolean = false
+    ): Unit =
       // if we have an old depth that "predates" what's in safeMap,
       // restore to that. This will catch the first RestoreRef during commit, if
       // the safeMap entry has advanced since then.
@@ -186,7 +191,7 @@ object Manip:
       // what we've committed.
       if oldSavedDepth != -2 && oldSavedDepth < safeMap(ref)
       then safeMap(ref) = oldSavedDepth
-      
+
       val savedDepth = safeMap(ref)
       assert(savedDepth <= leftDepth)
       if savedDepth < leftDepth
@@ -256,7 +261,8 @@ object Manip:
       private[Manip] def performCommit(state: PerformState): Unit =
         state.committedStack.push(this)
 
-    final case class RestoreRef[T](ref: Ref[T], value: T | Null, leftDepth: Int) extends StackRec:
+    final case class RestoreRef[T](ref: Ref[T], value: T | Null, leftDepth: Int)
+        extends StackRec:
       private def restore(state: PerformState): Unit =
         state.safeMap(ref) = leftDepth
         if value == null
@@ -294,7 +300,8 @@ object Manip:
       null
 
   final case class Ap[T, U](ff: Manip[T => U], fa: Manip[T])
-      extends Manip[U], StackRec:
+      extends Manip[U],
+        StackRec:
     private[Manip] def performImpl(state: PerformState): PerformResult =
       state.leftInc()
       state.speculateStack.push(this)
@@ -306,7 +313,10 @@ object Manip:
       )
       state.result = null
       fa
-    private[Manip] def performBacktrack(state: PerformState, posInfo: DebugInfo): PerformResult =
+    private[Manip] def performBacktrack(
+        state: PerformState,
+        posInfo: DebugInfo
+    ): PerformResult =
       state.leftDec()
       null
     private[Manip] def performCommit(state: PerformState): Unit =
@@ -315,7 +325,8 @@ object Manip:
 
   final case class MapOpt[T, U](manip: Manip[T], fn: T => U)
       extends Manip[U],
-        NopBacktrack, PushCommit:
+        NopBacktrack,
+        PushCommit:
     private[Manip] def performImpl(state: PerformState): PerformResult =
       state.speculateStack.push(this)
       manip
@@ -335,7 +346,10 @@ object Manip:
       val next = fn(state.result.asInstanceOf[T])
       state.result = null
       next
-    private[Manip] def performBacktrack(state: PerformState, posInfo: DebugInfo): PerformResult =
+    private[Manip] def performBacktrack(
+        state: PerformState,
+        posInfo: DebugInfo
+    ): PerformResult =
       state.leftDec()
       null
     private[Manip] def performCommit(state: PerformState): Unit =
@@ -347,7 +361,8 @@ object Manip:
       restriction: PartialFunction[T, U],
       debugInfo: DebugInfo
   ) extends Manip[U],
-        NopBacktrack, PushCommit:
+        NopBacktrack,
+        PushCommit:
     private[Manip] def performImpl(state: PerformState): PerformResult =
       state.speculateStack.push(this)
       manip
@@ -367,7 +382,8 @@ object Manip:
 
   final case class Finally[T](manip: Manip[T], fn: () => Unit)
       extends Manip[T],
-        StackRec, PushCommit:
+        StackRec,
+        PushCommit:
     private[Manip] def performImpl(state: PerformState): PerformResult =
       state.speculateStack.push(this)
       manip
@@ -394,7 +410,10 @@ object Manip:
       state.speculateStack.push(PerformState.MapFn(_ => storedResult))
       state.result = null
       right
-    private[Manip] def performBacktrack(state: PerformState, posInfo: DebugInfo): PerformResult =
+    private[Manip] def performBacktrack(
+        state: PerformState,
+        posInfo: DebugInfo
+    ): PerformResult =
       state.leftDec()
       null
     private[Manip] def performCommit(state: PerformState): Unit =
@@ -412,7 +431,10 @@ object Manip:
       state.leftDec()
       state.result = null
       right
-    private[Manip] def performBacktrack(state: PerformState, posInfo: DebugInfo): PerformResult =
+    private[Manip] def performBacktrack(
+        state: PerformState,
+        posInfo: DebugInfo
+    ): PerformResult =
       state.leftDec()
       null
     private[Manip] def performCommit(state: PerformState): Unit =
@@ -497,7 +519,8 @@ object Manip:
       first: Manip[T],
       second: Manip[T],
       debugInfo: DebugInfo
-  ) extends Manip[T], StackRec:
+  ) extends Manip[T],
+        StackRec:
     private[Manip] def performImpl(state: PerformState): PerformResult =
       state.leftInc()
       state.tracer.onBranch(this, debugInfo)
@@ -520,7 +543,8 @@ object Manip:
 
   final case class TapEffect[T](manip: Manip[T], fn: T => Unit)
       extends Manip[T],
-        NopBacktrack, PushCommit:
+        NopBacktrack,
+        PushCommit:
     private[Manip] def performImpl(state: PerformState): PerformResult =
       state.speculateStack.push(this)
       manip
@@ -571,7 +595,7 @@ object Manip:
 
     def get[T](ref: Ref[T]): Option[T] =
       map(ref) match
-        case null => None
+        case null  => None
         case value => Some(value.asInstanceOf[T])
 
     def updated[T](ref: Ref[T], value: T): RefMap =
@@ -644,7 +668,12 @@ object Manip:
   trait Tracer extends java.io.Closeable:
     def beforePass(debugInfo: DebugInfo): Unit
     def afterPass(debugInfo: DebugInfo): Unit
-    def onRead(manip: Manip[?], ref: Ref[?], value: Any, debugInfo: DebugInfo): Unit
+    def onRead(
+        manip: Manip[?],
+        ref: Ref[?],
+        value: Any,
+        debugInfo: DebugInfo
+    ): Unit
     def onAssign(manip: Manip[?], ref: Ref[?], value: Any): Unit
     def onDel(manip: Manip[?], ref: Ref[?], debugInfo: DebugInfo): Unit
     def onBranch(manip: Manip[?], debugInfo: DebugInfo): Unit
@@ -667,7 +696,12 @@ object Manip:
   abstract class AbstractNopTracer extends Tracer:
     def beforePass(debugInfo: DebugInfo): Unit = ()
     def afterPass(debugInfo: DebugInfo): Unit = ()
-    def onRead(manip: Manip[?], ref: Ref[?], value: Any, debugInfo: DebugInfo): Unit = ()
+    def onRead(
+        manip: Manip[?],
+        ref: Ref[?],
+        value: Any,
+        debugInfo: DebugInfo
+    ): Unit = ()
     def onAssign(manip: Manip[?], ref: Ref[?], value: Any): Unit =
       ()
     def onDel(manip: Manip[?], ref: Ref[?], debugInfo: DebugInfo): Unit = ()
@@ -675,7 +709,8 @@ object Manip:
     def onCommit(manip: Manip[?], debugInfo: DebugInfo): Unit = ()
     def onBacktrack(manip: Manip[?], debugInfo: DebugInfo): Unit =
       ()
-    def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo): Unit = ()
+    def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo): Unit =
+      ()
     def onRewriteMatch(
         debugInfo: DebugInfo,
         parent: Node.Parent,
@@ -729,7 +764,12 @@ object Manip:
     def afterPass(debugInfo: DebugInfo): Unit =
       logln(s"pass end $debugInfo at $treeDesc")
 
-    def onRead(manip: Manip[?], ref: Ref[?], value: Any, debugInfo: DebugInfo): Unit =
+    def onRead(
+        manip: Manip[?],
+        ref: Ref[?],
+        value: Any,
+        debugInfo: DebugInfo
+    ): Unit =
       value match
         case value: AnyVal =>
           logln(s"read $ref --> $value at $treeDesc")
@@ -841,7 +881,11 @@ object Manip:
       if ref == Manip.Handle.ref
       then currHandle = Some(value.asInstanceOf[Handle])
 
-    override def onDel(manip: Manip[?], ref: Ref[?], debugInfo: DebugInfo): Unit =
+    override def onDel(
+        manip: Manip[?],
+        ref: Ref[?],
+        debugInfo: DebugInfo
+    ): Unit =
       if ref == Manip.Handle.ref
       then currHandle = None
 
