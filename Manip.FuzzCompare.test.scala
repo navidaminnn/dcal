@@ -264,13 +264,6 @@ object ManipFuzzCompareTests:
           DebugInfo()
         )
 
-    given ManipGenImpl[GetRefMap.type] with
-      override val fixedResultType = true
-      val minTreeSize = 1
-      def generate(treeSize: Int)(using ctx: Ctx): GetRefMap.type =
-        require(!ctx.requireFn)
-        GetRefMap
-
     given ManipGenImpl[GetTracer.type] with
       override val fixedResultType = true
       val minTreeSize = 1

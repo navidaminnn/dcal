@@ -26,7 +26,6 @@ import java.nio.channels.Channels
 import java.io.Closeable
 import distcompiler.Manip.Handle
 import distcompiler.Manip.Ref
-import distcompiler.Manip.RefMap
 
 final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
   import DebugAdapter.{EvalState, EvalTag, StackEntry, SourceRecord}
@@ -35,7 +34,6 @@ final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
   @scala.annotation.tailrec
   private def handlePointOfInterest(
       debugInfo: DebugInfo,
-      refMap: Manip.RefMap,
       evalTag: DebugAdapter.EvalTag
   ): Unit =
     io.witnessSources(debugInfo)
@@ -65,13 +63,13 @@ final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
 
         def enforceRunningState(): Unit =
           state.debugInfo = null
-          state.refMap = null
+          state.currHandle = null
           state.clearNodeRefs()
 
         def beginPause(): Unit =
           println(s"pausing...")
           state.debugInfo = debugInfo
-          state.refMap = refMap
+          state.currHandle = currHandle
           state.evalState = EvalState.Paused
 
         state.evalState match
@@ -86,7 +84,7 @@ final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
           case EvalState.Paused =>
             // println(s"paused...")
             state.debugInfo = debugInfo
-            state.refMap = refMap
+            state.currHandle = currHandle
             true
           case EvalState.Stepping =>
             // println(s"stepping...")
@@ -110,28 +108,30 @@ final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
     then
       io.awaitStateUpdate()
       // println("wake up...")
-      handlePointOfInterest(debugInfo, refMap, evalTag)
+      handlePointOfInterest(debugInfo, evalTag)
 
   def close(): Unit =
     io.close()
 
-  def beforePass(debugInfo: DebugInfo)(using Manip.RefMap): Unit =
-    handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.BeforePass)
+  def beforePass(debugInfo: DebugInfo): Unit =
+    handlePointOfInterest(debugInfo, EvalTag.BeforePass)
 
-  def afterPass(debugInfo: DebugInfo)(using Manip.RefMap): Unit =
-    handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.AfterPass)
+  def afterPass(debugInfo: DebugInfo): Unit =
+    handlePointOfInterest(debugInfo, EvalTag.AfterPass)
 
-  def onRead(manip: Manip[?], ref: Ref[?], value: Any, debugInfo: DebugInfo)(
-      using RefMap
-  ): Unit =
+  def onRead(manip: Manip[?], ref: Ref[?], value: Any, debugInfo: DebugInfo): Unit =
     () // TODO: implement
 
-  def onAssign(manip: Manip[?], ref: Ref[?], value: Any)(using RefMap): Unit =
-    () // TODO: implement
+  private var currHandle: Option[Manip.Handle] = None
 
-  def onDel(manip: Manip[?], ref: Ref[?], debugInfo: DebugInfo)(using
-      RefMap
-  ): Unit =
+  def onAssign(manip: Manip[?], ref: Ref[?], value: Any): Unit =
+    if ref == Manip.Handle.ref
+    then currHandle = Some(value.asInstanceOf[Manip.Handle])
+    // TODO: implement
+
+  def onDel(manip: Manip[?], ref: Ref[?], debugInfo: DebugInfo): Unit =
+    if ref == Manip.Handle.ref
+    then currHandle = None
     () // TODO: implement
 
   def onRewriteMatch(
@@ -139,10 +139,9 @@ final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
       parent: Node.Parent,
       idx: Int,
       matchedCount: Int
-  )(using Manip.RefMap): Unit =
+  ): Unit =
     handlePointOfInterest(
       debugInfo,
-      summon[Manip.RefMap],
       EvalTag.BeforeRewrite
     )
 
@@ -151,27 +150,21 @@ final class DebugAdapter(host: String, port: Int) extends Manip.Tracer:
       parent: Node.Parent,
       idx: Int,
       resultCount: Int
-  )(using Manip.RefMap): Unit =
-    handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.AfterRewrite)
+  ): Unit =
+    handlePointOfInterest(debugInfo, EvalTag.AfterRewrite)
 
-  def onBranch(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit =
+  def onBranch(manip: Manip[?], debugInfo: DebugInfo): Unit =
     // TODO: implement
     ()
 
-  def onCommit(manip: Manip[?], debugInfo: DebugInfo)(using
-      Manip.RefMap
-  ): Unit =
-    handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.Commit)
+  def onCommit(manip: Manip[?], debugInfo: DebugInfo): Unit =
+    handlePointOfInterest(debugInfo, EvalTag.Commit)
 
-  def onBacktrack(manip: Manip[?], debugInfo: DebugInfo)(using
-      Manip.RefMap
-  ): Unit =
-    handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.Backtrack)
+  def onBacktrack(manip: Manip[?], debugInfo: DebugInfo): Unit =
+    handlePointOfInterest(debugInfo, EvalTag.Backtrack)
 
-  def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo)(using
-      Manip.RefMap
-  ): Unit =
-    handlePointOfInterest(debugInfo, summon[Manip.RefMap], EvalTag.FatalError)
+  def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo): Unit =
+    handlePointOfInterest(debugInfo, EvalTag.FatalError)
 
 object DebugAdapter:
   final case class SourceRecord(fileName: String):
@@ -213,7 +206,7 @@ object DebugAdapter:
 
     var evalTag: EvalTag | Null = null
     var debugInfo: DebugInfo | Null = null
-    var refMap: Manip.RefMap | Null = null
+    var currHandle: Option[Manip.Handle] | Null = null
     var frameIdCounter = 0
 
     val knownSources = mutable.HashSet[SourceRecord]()
@@ -533,7 +526,7 @@ object DebugAdapter:
             val frameId = req("frameId").num.toInt
             io.withState: state =>
               // val node = state.getNodeByRef(frameId)
-              state.refMap.nn.get(Manip.Handle.ref) match
+              state.currHandle.nn match
                 case None =>
                 case Some(Manip.Handle.AtTop(top)) =>
                   sendResp(

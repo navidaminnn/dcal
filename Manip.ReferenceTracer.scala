@@ -15,7 +15,6 @@
 package distcompiler
 
 import distcompiler.dsl.*
-import distcompiler.Manip.RefMap
 import scala.collection.mutable
 
 import java.io.PrintStream
@@ -96,35 +95,31 @@ final class ManipReferenceTracer(manip: Manip[?])(using
 
   def close(): Unit = ()
 
-  def beforePass(debugInfo: DebugInfo)(using RefMap): Unit = ()
+  def beforePass(debugInfo: DebugInfo): Unit = ()
 
-  def afterPass(debugInfo: DebugInfo)(using RefMap): Unit = ()
+  def afterPass(debugInfo: DebugInfo): Unit = ()
 
   def onRead(
       manip: Manip[?],
       ref: Manip.Ref[?],
       value: Any,
       debugInfo: DebugInfo
-  )(using RefMap): Unit =
+  ): Unit =
     perform(Action.Read(ref, ValueWrapper(value), debugInfo))
 
-  def onAssign(manip: Manip[?], ref: Manip.Ref[?], value: Any)(using
-      RefMap
-  ): Unit =
+  def onAssign(manip: Manip[?], ref: Manip.Ref[?], value: Any): Unit =
     perform(Action.Assign(ref, ValueWrapper(value)))
 
-  def onDel(manip: Manip[?], ref: Manip.Ref[?], debugInfo: DebugInfo)(using
-      RefMap
-  ): Unit =
+  def onDel(manip: Manip[?], ref: Manip.Ref[?], debugInfo: DebugInfo): Unit =
     perform(Action.Del(ref, debugInfo))
 
-  def onBranch(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit =
+  def onBranch(manip: Manip[?], debugInfo: DebugInfo): Unit =
     perform(Action.Branch(debugInfo))
 
-  def onBacktrack(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit =
+  def onBacktrack(manip: Manip[?], debugInfo: DebugInfo): Unit =
     perform(Action.Backtrack(debugInfo))
 
-  def onCommit(manip: Manip[?], debugInfo: DebugInfo)(using RefMap): Unit =
+  def onCommit(manip: Manip[?], debugInfo: DebugInfo): Unit =
     perform(Action.Commit(debugInfo))
 
   def onRewriteMatch(
@@ -132,18 +127,16 @@ final class ManipReferenceTracer(manip: Manip[?])(using
       parent: Node.Parent,
       idx: Int,
       matchCount: Int
-  )(using RefMap): Unit = ()
+  ): Unit = ()
 
   def onRewriteComplete(
       debugInfo: DebugInfo,
       parent: Node.Parent,
       idx: Int,
       resultCount: Int
-  )(using RefMap): Unit = ()
+  ): Unit = ()
 
-  def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo)(using
-      RefMap
-  ): Unit =
+  def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo): Unit =
     perform(Action.Fatal(debugInfo))
 end ManipReferenceTracer
 
@@ -365,7 +358,6 @@ object ManipReferenceTracer:
                 _ <- perform(Action.Assign(ref, ValueWrapper(value)))
                 result <- impl(manip)(using refMap.updated(ref, value))
               yield result
-        case GetRefMap => Result.pure(refMap)
         case GetTracer => Result.pure(Manip.NopTracer)
         case Disjunction(first, second, debugInfo) =>
           perform(Action.Branch(debugInfo))

@@ -17,7 +17,7 @@ package distcompiler
 import scala.collection.mutable
 import dsl.*
 
-trait Token extends Equals, Named:
+trait Token extends Equals, Named, TokenMapFactory.Mapped:
   require(!Token._nameSet.contains(name), s"duplicate name $name")
   Token._nameSet += name
 
@@ -27,17 +27,8 @@ trait Token extends Equals, Named:
   final def mkNode(childrenInit: Node.Child*): Node =
     Node(this)(childrenInit)
 
-  override def canEqual(that: Any): Boolean =
-    that.isInstanceOf[Token]
-
-  override def equals(that: Any): Boolean =
-    this eq that.asInstanceOf[AnyRef]
-
-  override def hashCode(): Int =
-    System.identityHashCode(this)
-
   override def toString(): String =
-    s"Token(@${hashCode()} $name)"
+    s"Token(@$mapIdx $name)"
 
   final def canBeLookedUp: Boolean = !lookedUpBy.isBacktrack
 
