@@ -14,327 +14,359 @@
 
 package distcompiler.tla
 
-import scala.language.dynamics
 import cats.syntax.all.given
 import distcompiler.*
 import dsl.*
 
-object tokens extends TokenSrc:
-  object Module extends Token:
-    override val symbolTableFor: Set[Token] =
-      Set(Id, OpSym)
+object lang extends WellformedDef:
+  val topShape: Shape = repeated(Module)
 
-    object Extends extends Token
-    object Defns extends Token
+  object Module
+      extends t(
+        fields(
+          Id,
+          Module.Extends,
+          Module.Defns
+        )
+      ):
+    object Extends extends t(repeated(Id))
+    object Defns
+        extends t(
+          repeated(
+            choice(
+              Local,
+              Recursive,
+              Operator,
+              Variable,
+              Constant,
+              Assumption,
+              Theorem,
+              Instance,
+              Module,
+              ModuleDefinition
+            )
+          )
+        )
+  end Module
 
-  object Id extends Token.ShowSource
-  object OpSym extends Token.ShowSource
-  object Order2 extends Token:
-    override val lookedUpBy: Manip[Set[Node]] =
-      on(
-        Order2.withChildren(tok(Id).map(Set(_)))
-      ).value
-
-  object Expr extends Token, TokenSrc:
-    object NumberLiteral extends Token.ShowSource
-    object StringLiteral extends Token.ShowSource
-
-    object Let extends Token:
-      override val symbolTableFor: Set[Token] =
-        Set(Id, OpSym)
-
-      object Defns extends Token
-
-    transparent trait TokenWithQuantifierBounds extends Token:
-      override val symbolTableFor: Set[Token] =
-        Set(Id)
-
-    object Exists extends TokenWithQuantifierBounds
-    object Forall extends TokenWithQuantifierBounds
-    object Function extends TokenWithQuantifierBounds
-    object SetComprehension extends TokenWithQuantifierBounds
-    object SetRefinement extends TokenWithQuantifierBounds
-    object Choose extends TokenWithQuantifierBounds
-
-    object Except extends Token:
-      object Substitutions extends Token
-      object Substitution extends Token:
-        override val symbolTableFor: Set[Token] =
-          Set(Anchor)
-      object Path extends Token:
-        override val lookedUpBy: Manip[Set[Node]] =
-          on(Path).check.as(Set(Anchor()))
-      object Anchor extends Token
-
-    object Lambda extends Token:
-      override val symbolTableFor: Set[Token] =
-        Operator.symbolTableFor
-
-      object Params extends Token
-
-  object Operator extends Token:
-    override val symbolTableFor: Set[Token] =
-      Set(Id, OpSym)
-    override val lookedUpBy: Manip[Set[Node]] =
-      on(tok(Operator) *> children(tok(Id, OpSym)).map(Set(_))).value
-
-    object Params extends Token
-
-  object Variable extends Token:
-    override val lookedUpBy: Manip[Set[Node]] =
-      on(tok(Variable) *> children(tok(Id).map(Set(_)))).value
-
-  object Constant extends Token:
-    override val lookedUpBy: Manip[Set[Node]] =
-      on(
-        tok(Constant).withChildren:
-          tok(Id).map(Set(_))
-            | refine(Order2.lookedUpBy)
-      ).value
-
-  object Recursive extends Token:
-    override val lookedUpBy: Manip[Set[Node]] =
-      on(
-        tok(Recursive).withChildren:
-          tok(Id).map(Set(_))
-            | refine(Order2.lookedUpBy)
-      ).value
-
-  object QuantifierBound extends Token:
-    override val lookedUpBy: Manip[Set[Node]] =
-      on(
-        tok(QuantifierBound)
-        *> children:
-          tok(Id).map(Set(_))
-            | tok(tokens.Ids) *> children:
-              repeated(tok(Id)).map(_.toSet)
-      ).value
-
-val wellformed: Wellformed =
-  import dsl.*
-  import tokens as t
-  Wellformed:
-    Node.Top ::= repeated(t.Module)
-
-    t.Module ::= fields(
-      t.Id,
-      t.Module.Extends,
-      t.Module.Defns
-    )
-    t.Module.Extends ::= repeated(t.Id)
-    t.Module.Defns ::= repeated(
-      choice(
-        t.Local,
-        t.Recursive,
-        t.Operator,
-        t.Variable,
-        t.Constant,
-        t.Assumption,
-        t.Theorem,
-        t.Instance,
-        t.Module,
-        t.ModuleDefinition
+  object Local
+      extends t(
+        choice(
+          Operator,
+          Instance,
+          ModuleDefinition
+        )
       )
-    )
 
-    t.Local ::= choice(
-      t.Operator,
-      t.Instance,
-      t.ModuleDefinition
-    )
-
-    t.Recursive ::= choice(
-      t.Id,
-      t.Order2
-    )
-
-    t.ModuleDefinition ::= fields(
-      t.Id,
-      t.Operator.Params,
-      t.Instance
-    )
-
-    t.Id ::= Atom
-    t.Ids ::= repeated(t.Id, minCount = 1)
-    t.OpSym ::= choice(defns.Operator.instances.toSet)
-    defns.Operator.instances.foreach(_ ::= Atom)
-    t.Order2 ::= fields(
-      t.Id,
-      embedded[Int]
-    )
-
-    t.Expr ::= choice(
-      t.Expr.NumberLiteral,
-      t.Expr.StringLiteral,
-      t.Expr.SetLiteral,
-      t.Expr.TupleLiteral,
-      t.Expr.RecordLiteral,
-      t.Expr.Project,
-      t.Expr.OpCall,
-      t.Expr.FnCall,
-      t.Expr.If,
-      t.Expr.Case,
-      t.Expr.Let,
-      t.Expr.Exists,
-      t.Expr.Forall,
-      t.Expr.Function,
-      t.Expr.SetComprehension,
-      t.Expr.SetRefinement,
-      t.Expr.Choose,
-      t.Expr.Except,
-      t.Expr.Lambda
-    )
-
-    t.Expr.NumberLiteral ::= Atom
-    t.Expr.StringLiteral ::= Atom
-
-    t.Expr.SetLiteral ::= repeated(t.Expr)
-    t.Expr.TupleLiteral ::= repeated(t.Expr)
-    t.Expr.RecordLiteral ::= repeated(t.Expr.RecordLiteral.Field, minCount = 1)
-    t.Expr.RecordLiteral.Field ::= fields(
-      t.Id,
-      t.Expr
-    )
-    t.Expr.Project ::= fields(
-      t.Expr,
-      t.Id
-    )
-    t.Expr.RecordSetLiteral ::= repeated(
-      t.Expr.RecordLiteral.Field,
-      minCount = 1
-    )
-    t.Expr.RecordSetLiteral.Field ::= fields(
-      t.Id,
-      t.Expr
-    )
-
-    t.Expr.OpCall ::= fields(
-      choice(t.Id, t.OpSym),
-      t.Expr.OpCall.Params
-    )
-    t.Expr.OpCall.Params ::= repeated(t.Expr)
-
-    t.Expr.FnCall ::= fields(t.Expr, t.Expr)
-
-    t.Expr.If ::= fields(
-      t.Expr,
-      t.Expr,
-      t.Expr
-    )
-
-    t.Expr.Case ::= repeated(t.Expr.Case.Branch, minCount = 1)
-    t.Expr.Case.Branch ::= fields(
-      t.Expr,
-      t.Expr
-    )
-
-    t.Expr.Let ::= fields(
-      t.Expr.Let.Defns,
-      t.Expr
-    )
-    t.Expr.Let.Defns ::= repeated(
-      choice(
-        t.Operator,
-        t.ModuleDefinition,
-        t.Recursive
-      ),
-      minCount = 1
-    )
-
-    t.Expr.Exists ::= fields(
-      t.QuantifierBounds,
-      t.Expr
-    )
-    t.Expr.Forall ::= fields(
-      t.QuantifierBounds,
-      t.Expr
-    )
-    t.Expr.Function ::= fields(
-      t.QuantifierBounds,
-      t.Expr
-    )
-    t.Expr.SetComprehension ::= fields(
-      t.Expr,
-      t.QuantifierBounds
-    )
-    t.Expr.SetRefinement ::= fields(
-      t.QuantifierBound,
-      t.Expr
-    )
-    t.Expr.Choose ::= fields(
-      t.QuantifierBound,
-      t.Expr
-    )
-
-    t.Expr.Except ::= fields(
-      t.Expr,
-      t.Expr.Except.Substitutions
-    )
-    t.Expr.Except.Substitutions ::= repeated(
-      t.Expr.Except.Substitution,
-      minCount = 1
-    )
-    t.Expr.Except.Substitution ::= fields(
-      t.Expr.Except.Path,
-      t.Expr
-    )
-    t.Expr.Except.Path ::= repeated(t.Expr, minCount = 1)
-    t.Expr.Except.Anchor ::= Atom
-
-    t.Expr.Lambda ::= fields(
-      t.Expr.Lambda.Params,
-      t.Expr
-    )
-    t.Expr.Lambda.Params ::= repeated(
-      choice(
-        t.Id,
-        t.Order2
-      ),
-      minCount = 1
-    )
-
-    t.Operator ::= fields(
-      choice(t.Id, t.OpSym),
-      t.Operator.Params,
-      t.Expr
-    )
-    t.Operator.Params ::= repeated(
-      choice(
-        t.Id,
-        t.Order2
+  object Recursive
+      extends t(
+        choice(
+          Id,
+          Order2
+        )
       )
-    )
 
-    t.Variable ::= t.Id
-    t.Constant ::= choice(t.Id, t.Order2)
-    t.Anonymous ::= Atom
-    t.Assumption ::= fields(
-      choice(t.Id, t.Anonymous),
-      t.Expr
-    )
-    t.Theorem ::= fields(
-      choice(t.Id, t.Anonymous),
-      choice(t.Expr, t.Theorem.AssumeProve),
-      t.Theorem.Proofs
-    )
-    // unparsed placeholders
-    t.Theorem.AssumeProve ::= AnyShape
-    t.Theorem.Proofs ::= AnyShape
-    t.UseOrHide ::= AnyShape
+  object ModuleDefinition
+      extends t(
+        fields(
+          Id,
+          Operator.Params,
+          Instance
+        )
+      )
 
-    t.Instance ::= fields(
-      t.Id,
-      t.Instance.Substitutions
-    )
-    t.Instance.Substitutions ::= repeated(t.Instance.Substitution)
-    t.Instance.Substitution ::= fields(
-      choice(t.Id, t.OpSym),
-      t.Expr
-    )
+  object Id extends t(Atom)
 
-    t.QuantifierBound ::= fields(
-      choice(t.Id, t.Ids),
-      t.Expr
-    )
+  object Ids extends t(repeated(Id, minCount = 1))
 
-    t.QuantifierBounds ::= repeated(t.QuantifierBound, minCount = 1)
+  object OpSym extends t(choice(defns.Operator.instances.toSet))
+  defns.Operator.instances.foreach(_ ::= Atom)
+
+  object Order2
+      extends t(
+        fields(
+          Id,
+          embedded[Int]
+        )
+      )
+
+  object Expr
+      extends t(
+        choice(
+          Expr.NumberLiteral,
+          Expr.StringLiteral,
+          Expr.SetLiteral,
+          Expr.TupleLiteral,
+          Expr.RecordLiteral,
+          Expr.Project,
+          Expr.OpCall,
+          Expr.FnCall,
+          Expr.If,
+          Expr.Case,
+          Expr.Let,
+          Expr.Exists,
+          Expr.Forall,
+          Expr.Function,
+          Expr.SetComprehension,
+          Expr.SetRefinement,
+          Expr.Choose,
+          Expr.Except,
+          Expr.Except.Anchor,
+          Expr.Lambda
+        )
+      ):
+    object NumberLiteral extends t(Atom)
+
+    object StringLiteral extends t(Atom)
+
+    object SetLiteral extends t(repeated(Expr))
+
+    object TupleLiteral extends t(repeated(Expr))
+
+    object RecordLiteral extends t(repeated(RecordLiteral.Field, minCount = 1)):
+      object Field
+          extends t(
+            fields(
+              Id,
+              Expr
+            )
+          )
+    end RecordLiteral
+
+    object Project
+        extends t(
+          fields(
+            Expr,
+            Id
+          )
+        )
+
+    object RecordSetLiteral
+        extends t(
+          repeated(
+            RecordSetLiteral.Field,
+            minCount = 1
+          )
+        ):
+      object Field
+          extends t(
+            fields(
+              Id,
+              Expr
+            )
+          )
+    end RecordSetLiteral
+
+    object OpCall
+        extends t(
+          fields(
+            choice(Id, OpSym),
+            OpCall.Params
+          )
+        ):
+      object Params extends t(repeated(Expr))
+    end OpCall
+
+    object FnCall extends t(fields(Expr, Expr))
+
+    object If
+        extends t(
+          fields(
+            Expr,
+            Expr,
+            Expr
+          )
+        )
+
+    object Case extends t(repeated(Case.Branch, minCount = 1)):
+      object Branch
+          extends t(
+            fields(
+              Expr,
+              Expr
+            )
+          )
+    end Case
+
+    object Let
+        extends t(
+          fields(
+            Let.Defns,
+            Expr
+          )
+        ):
+      object Defns
+          extends t(
+            repeated(
+              choice(
+                Operator,
+                ModuleDefinition,
+                Recursive
+              ),
+              minCount = 1
+            )
+          )
+    end Let
+
+    object Exists
+        extends t(
+          fields(
+            QuantifierBounds,
+            Expr
+          )
+        )
+
+    object Forall
+        extends t(
+          fields(
+            QuantifierBounds,
+            Expr
+          )
+        )
+
+    object Function
+        extends t(
+          fields(
+            QuantifierBounds,
+            Expr
+          )
+        )
+
+    object SetComprehension
+        extends t(
+          fields(
+            Expr,
+            QuantifierBounds
+          )
+        )
+
+    object SetRefinement
+        extends t(
+          fields(
+            QuantifierBound,
+            Expr
+          )
+        )
+
+    object Choose
+        extends t(
+          fields(
+            QuantifierBound,
+            Expr
+          )
+        )
+
+    object Except
+        extends t(
+          fields(
+            Expr,
+            Except.Substitutions
+          )
+        ):
+      object Substitutions
+          extends t(
+            repeated(
+              Substitution,
+              minCount = 1
+            )
+          )
+
+      object Substitution
+          extends t(
+            fields(
+              Path,
+              Expr
+            )
+          )
+
+      object Path extends t(repeated(Expr, minCount = 1))
+
+      object Anchor extends t(Atom)
+    end Except
+
+    object Lambda
+        extends t(
+          fields(
+            Lambda.Params,
+            Expr
+          )
+        ):
+      object Params extends t(repeated(Id, minCount = 1))
+    end Lambda
+  end Expr
+
+  object Operator
+      extends t(
+        fields(
+          choice(Id, OpSym),
+          Operator.Params,
+          Expr
+        )
+      ):
+    object Params
+        extends t(
+          repeated(
+            choice(
+              Id,
+              Order2
+            )
+          )
+        )
+  end Operator
+
+  object Variable extends t(Id)
+
+  object Constant extends t(choice(Id, Order2))
+
+  object Anonymous extends t(Atom)
+
+  object Assumption
+      extends t(
+        fields(
+          choice(Id, Anonymous),
+          Expr
+        )
+      )
+
+  object Theorem
+      extends t(
+        fields(
+          choice(Id, Anonymous),
+          choice(Expr, Theorem.AssumeProve),
+          Theorem.Proofs
+        )
+      ):
+    object AssumeProve extends t(AnyShape)
+    object Proofs extends t(AnyShape)
+  end Theorem
+
+  object UseOrHide extends t(AnyShape)
+  forceDef(UseOrHide)
+
+  object Instance
+      extends t(
+        fields(
+          Id,
+          Instance.Substitutions
+        )
+      ):
+    object Substitutions extends t(repeated(Substitution))
+    object Substitution
+        extends t(
+          fields(
+            choice(Id, OpSym),
+            Expr
+          )
+        )
+  end Instance
+
+  object QuantifierBound
+      extends t(
+        fields(
+          choice(Id, Ids),
+          Expr
+        )
+      )
+
+  object QuantifierBounds extends t(repeated(QuantifierBound, minCount = 1))
+end lang

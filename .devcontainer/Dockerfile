@@ -17,4 +17,6 @@ RUN mkdir -p /home/$USERNAME \
     && su --login $USERNAME -c "curl -sSLf https://scala-cli.virtuslab.org/get | sh" \
     && su --login $USERNAME -c "scala-cli version"
 
+ENV EDITOR code --wait
+
 USER $USERNAME

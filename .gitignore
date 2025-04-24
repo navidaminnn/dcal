@@ -13,3 +13,5 @@ target/
 dbg_*/
 scala-doc/
 *.vsix
+.fuzz_output/
+.ref_compare/

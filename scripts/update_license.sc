@@ -16,20 +16,20 @@ import scala.util.matching.Regex
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
-final case class Options(
-    check: Boolean = true
-)
+var shouldRewrite = false
 
-val shouldRewrite =
-  args match
-    case Array("rewrite")           => true
-    case Array("dry-run") | Array() => false
-    case _ =>
-      println(
-        s"unrecognized command-line arguments: ${args.map(arg => s"`$arg`").mkString(", ")}"
-      )
-      System.exit(1)
-      false
+val parser = new scopt.OptionParser[Unit]("update_license"):
+  cmd("rewrite")
+    .optional()
+    .foreach(_ => shouldRewrite = true)
+    .text("rewrite the source files")
+  cmd("dry-run")
+    .optional()
+    .foreach(_ => shouldRewrite = false)
+    .text("don't touch any of the files")
+
+if !parser.parse(args, ()).isDefined
+then sys.exit(1)
 
 val licenseTemplate =
   """ Copyright 2024-____ DCal Team

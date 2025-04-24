@@ -16,10 +16,8 @@ package distcompiler
 
 import cats.syntax.all.given
 import scala.collection.mutable
-import izumi.reflect.Tag
 import scala.util.control.TailCalls.*
 import util.TailCallsUtils.*
-import distcompiler.util.toShortString
 
 final class Wellformed private (
     val assigns: Map[Token, Wellformed.Shape],
@@ -27,10 +25,6 @@ final class Wellformed private (
 ):
   import Wellformed.Shape
   import dsl.*
-  require(
-    assigns.iterator.map(_._1.name).distinct.size == assigns.size,
-    s"assigns must be distinct"
-  )
   locally:
     val reached = mutable.HashSet.empty[Token]
     def assertReachable(tokenOrEmbed: Token | EmbedMeta[?]): TailRec[Unit] =
@@ -250,7 +244,7 @@ final class Wellformed private (
     builder.build()
 
   def serializeTree(tree: Node.All): tree.This =
-    import sexpr.tokens.{Atom, List as SList}
+    import sexpr.lang.{Atom, List as SList}
 
     val src = SourceRange.entire(Source.fromString(":src"))
     val txt = SourceRange.entire(Source.fromString(":txt"))
@@ -317,7 +311,7 @@ final class Wellformed private (
   end serializeTree
 
   def deserializeTree(tree: Node.All): Node.All =
-    import sexpr.tokens.{Atom, List as SList}
+    import sexpr.lang.{Atom, List as SList}
 
     val src = SourceRange.entire(Source.fromString(":src"))
     val txt = SourceRange.entire(Source.fromString(":txt"))
@@ -413,7 +407,7 @@ final class Wellformed private (
             .addDeserializedChildren(top.children)
             .map(_ => result.asInstanceOf[N])
         case node: Node =>
-          atNode(node)(nodeManip)
+          initNode(node)(nodeManip)
             .perform()
             .asInstanceOf[TailRec[N]]
 
@@ -421,10 +415,10 @@ final class Wellformed private (
   end deserializeTree
 
   def asNode: Node =
-    val result = sexpr.tokens.List(
-      sexpr.tokens.Atom("wellformed"),
-      sexpr.tokens.List(
-        sexpr.tokens.Atom("top"),
+    val result = sexpr.lang.List(
+      sexpr.lang.Atom("wellformed"),
+      sexpr.lang.List(
+        sexpr.lang.Atom("top"),
         topShape.asNode
       )
     )
@@ -433,8 +427,8 @@ final class Wellformed private (
         .sortInPlaceBy(_._1.name)
         .iterator
         .map: (tok, shape) =>
-          sexpr.tokens.List(
-            sexpr.tokens.Atom(tok.name),
+          sexpr.lang.List(
+            sexpr.lang.Atom(tok.name),
             shape.asNode
           )
     result
@@ -452,7 +446,7 @@ object Wellformed:
     fn(using builder)
     builder.build()
 
-  final class Builder private[Wellformed] (
+  final class Builder private[distcompiler] (
       assigns: mutable.HashMap[Token, Wellformed.Shape],
       private var topShapeOpt: Option[Wellformed.Shape]
   ):
@@ -476,7 +470,7 @@ object Wellformed:
             require(topShapeOpt.nonEmpty, s"top has no shape to replace")
             topShapeOpt = Some(shape)
 
-      private def getExistingShape: Shape =
+      def existingShape: Shape =
         token match
           case token: Token =>
             require(assigns.contains(token))
@@ -486,7 +480,7 @@ object Wellformed:
             topShapeOpt.get
 
       def existingCases: Set[Token | EmbedMeta[?]] =
-        getExistingShape match
+        existingShape match
           case Shape.Choice(choices)    => choices
           case Shape.Repeat(choices, _) => choices.choices
           case shape: (Shape.Fields | Shape.Atom.type | Shape.AnyShape.type) =>
@@ -495,7 +489,7 @@ object Wellformed:
             )
 
       def removeCases(cases: (Token | EmbedMeta[?])*): Unit =
-        getExistingShape match
+        existingShape match
           case Shape.Choice(choices) =>
             token ::=! Shape.Choice(choices -- cases)
           case Shape.Repeat(choices, minCount) =>
@@ -511,7 +505,7 @@ object Wellformed:
           // maybe it helps to assert something here, but it is technically correct to just do nothing
 
       def addCases(cases: Token*): Unit =
-        getExistingShape match
+        existingShape match
           case Shape.Choice(choices) =>
             token ::=! Shape.Choice(choices ++ cases)
           case Shape.Repeat(choice, minCount) =>
@@ -551,7 +545,7 @@ object Wellformed:
             fillFromShape(wf2.topShape)
           case token: Token => fillFromTokenOrEmbed(token)
 
-    private[Wellformed] def build(): Wellformed =
+    private[distcompiler] def build(): Wellformed =
       require(topShapeOpt.nonEmpty)
       new Wellformed(assigns.toMap, topShape = topShapeOpt.get)
   end Builder
@@ -564,35 +558,35 @@ object Wellformed:
 
     def asNode: Node =
       this match
-        case Atom     => sexpr.tokens.Atom("atom")
-        case AnyShape => sexpr.tokens.Atom("anyShape")
+        case Atom     => sexpr.lang.Atom("atom")
+        case AnyShape => sexpr.lang.Atom("anyShape")
         case Choice(choices) if choices.sizeIs == 1 =>
           choices.head match
-            case token: Token        => sexpr.tokens.Atom(token.name)
-            case embed: EmbedMeta[?] => sexpr.tokens.Atom(embed.canonicalName)
+            case token: Token        => sexpr.lang.Atom(token.name)
+            case embed: EmbedMeta[?] => sexpr.lang.Atom(embed.canonicalName)
         case Choice(choices) =>
-          val result = sexpr.tokens.List(
-            sexpr.tokens.Atom("choice")
+          val result = sexpr.lang.List(
+            sexpr.lang.Atom("choice")
           )
           result.children.addAll:
             choices.iterator
               .map:
-                case token: Token => sexpr.tokens.Atom(token.name)
+                case token: Token => sexpr.lang.Atom(token.name)
                 case embed: EmbedMeta[?] =>
-                  sexpr.tokens.Atom(embed.canonicalName)
+                  sexpr.lang.Atom(embed.canonicalName)
           result
         case Repeat(choice, minCount) =>
-          sexpr.tokens.List(
-            sexpr.tokens.Atom("repeat"),
+          sexpr.lang.List(
+            sexpr.lang.Atom("repeat"),
             choice.asNode,
-            sexpr.tokens.List(
-              sexpr.tokens.Atom("minCount"),
-              sexpr.tokens.Atom(minCount.toString())
+            sexpr.lang.List(
+              sexpr.lang.Atom("minCount"),
+              sexpr.lang.Atom(minCount.toString())
             )
           )
         case Fields(fields) =>
-          val result = sexpr.tokens.List(
-            sexpr.tokens.Atom("fields")
+          val result = sexpr.lang.List(
+            sexpr.lang.Atom("fields")
           )
           result.children.addAll(fields.iterator.map(_.asNode))
           result
@@ -603,23 +597,26 @@ object Wellformed:
       def |(other: Shape.Choice): Shape.Choice =
         Shape.Choice(choice.choices ++ other.choices)
 
-    def choice(tokens: (Token | EmbedMeta[?])*): Shape.Choice =
-      Shape.Choice(tokens.toSet)
+    trait Ops:
+      def choice(tokens: (Token | EmbedMeta[?])*): Shape.Choice =
+        Shape.Choice(tokens.toSet)
 
-    def choice(tokens: Set[Token | EmbedMeta[?]]): Shape.Choice =
-      Shape.Choice(tokens)
+      def choice(tokens: Set[Token | EmbedMeta[?]]): Shape.Choice =
+        Shape.Choice(tokens)
 
-    def repeated(choice: Shape.Choice, minCount: Int = 0): Shape.Repeat =
-      Shape.Repeat(choice, minCount)
+      def repeated(choice: Shape.Choice, minCount: Int = 0): Shape.Repeat =
+        Shape.Repeat(choice, minCount)
 
-    inline def embedded[T: EmbedMeta]: Shape.Choice =
-      Shape.Choice(Set(summon[EmbedMeta[T]]))
+      inline def embedded[T: EmbedMeta]: Shape.Choice =
+        Shape.Choice(Set(summon[EmbedMeta[T]]))
 
-    def fields(fields: Shape.Choice*): Shape.Fields =
-      Shape.Fields(fields.toList)
+      def fields(fields: Shape.Choice*): Shape.Fields =
+        Shape.Fields(fields.toList)
 
-    import scala.language.implicitConversions
-    // TODO: once `into` keyword works, use that
-    implicit def tokenAsChoice(token: Token): Shape.Choice =
-      Shape.Choice(Set(token))
+      import scala.language.implicitConversions
+      // TODO: once `into` keyword works, use that
+      implicit def tokenAsChoice(token: Token): Shape.Choice =
+        Shape.Choice(Set(token))
+    end Ops
+  end Shape
 end Wellformed

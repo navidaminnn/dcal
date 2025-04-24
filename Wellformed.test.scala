@@ -100,25 +100,26 @@ class WellformedTests extends munit.FunSuite:
     tok3 ::= Atom
 
   test("wf1 asNode"):
+    import sexpr.lang.{Atom, List as SList}
     assertEquals(
       wf1.asNode,
-      sexpr.tokens.List(
-        sexpr.tokens.Atom("wellformed"),
-        sexpr.tokens.List(
-          sexpr.tokens.Atom("top"),
-          sexpr.tokens.Atom("distcompiler.WellformedTests.tok2")
+      SList(
+        Atom("wellformed"),
+        SList(
+          Atom("top"),
+          Atom("distcompiler.WellformedTests.tok2")
         ),
-        sexpr.tokens.List(
-          sexpr.tokens.Atom("distcompiler.WellformedTests.tok2"),
-          sexpr.tokens.List(
-            sexpr.tokens.Atom("fields"),
-            sexpr.tokens.Atom("distcompiler.WellformedTests.tok3"),
-            sexpr.tokens.Atom("distcompiler.WellformedTests.tok3")
+        SList(
+          Atom("distcompiler.WellformedTests.tok2"),
+          SList(
+            Atom("fields"),
+            Atom("distcompiler.WellformedTests.tok3"),
+            Atom("distcompiler.WellformedTests.tok3")
           )
         ),
-        sexpr.tokens.List(
-          sexpr.tokens.Atom("distcompiler.WellformedTests.tok3"),
-          sexpr.tokens.Atom("atom")
+        SList(
+          Atom("distcompiler.WellformedTests.tok3"),
+          Atom("atom")
         )
       )
     )

@@ -15,6 +15,7 @@
 package distcompiler
 
 import cats.syntax.all.given
+import dsl.*
 import scala.annotation.targetName
 import java.nio.charset.{StandardCharsets, Charset}
 import java.nio.CharBuffer
@@ -22,7 +23,6 @@ import java.nio.CharBuffer
 trait Reader:
   def wellformed: Wellformed
 
-  protected def tracePathOpt: Option[os.Path] = None
   protected def traceLimit: Int = -1
   protected def rules: Manip[SourceRange]
 
@@ -31,7 +31,7 @@ trait Reader:
     val top = Node.Top()
 
     val manip =
-      Manip.ops.atNode(top):
+      initNode(top):
         Reader.srcRef.init(sourceRange):
           Reader.matchedRef.init(sourceRange.take(0)):
             rules.flatMap: _ =>
@@ -39,14 +39,7 @@ trait Reader:
               then Manip.unit
               else wellformed.markErrorsPass
 
-    tracePathOpt match
-      case None => manip.perform()
-      case Some(tracePath) =>
-        println(s"!! logging behavior to $tracePath")
-        Manip.ops
-          .withTracer(manip)(Manip.LogTracer(tracePath, limit = traceLimit))
-          .perform()
-
+    manip.perform()
     top
 
 object Reader:

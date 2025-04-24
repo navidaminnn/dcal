@@ -25,32 +25,28 @@ class CalcReaderTests extends munit.FunSuite:
     def parse: Node.Top =
       val top = read
 
-      CalcParser(
-        top,
-        tracer = Manip.RewriteDebugTracer(os.pwd / "dbg_calc_parser_passes")
-      )
+      // instrumentWithTracer(Manip.RewriteDebugTracer(os.pwd / "dbg_calc_parser_passes")):
+      CalcParser(top)
 
-      os.write.over(
-        os.pwd / "dbg_calc_parser" / "test_output.dbg",
-        top.toPrettyWritable(CalcReader.wellformed),
-        createFolders = true
-      )
+      // os.write.over(
+      //   os.pwd / "dbg_calc_parser" / "test_output.dbg",
+      //   top.toPrettyWritable(CalcReader.wellformed),
+      //   createFolders = true
+      // )
 
       top
 
     def evaluate: Node.Top =
       val top = parse
 
-      CalcEvaluator(
-        top,
-        tracer = Manip.RewriteDebugTracer(os.pwd / "dbg_calc_evaluator_passes")
-      )
+      // instrumentWithTracer(Manip.RewriteDebugTracer(os.pwd / "dbg_calc_evaluator_passes")):
+      CalcEvaluator(top)
 
-      os.write.over(
-        os.pwd / "dbg_calc_evaluator" / "test_output.dbg",
-        top.toPrettyWritable(CalcReader.wellformed),
-        createFolders = true
-      )
+      // os.write.over(
+      //   os.pwd / "dbg_calc_evaluator" / "test_output.dbg",
+      //   top.toPrettyWritable(CalcReader.wellformed),
+      //   createFolders = true
+      // )
 
       top
 
@@ -67,8 +63,8 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5".read,
       Node.Top(
-        tokens.Expression(
-          tokens.Number("5")
+        lang.Expression(
+          lang.Number("5")
         )
       )
     )
@@ -77,12 +73,12 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 + 11".read,
       Node.Top(
-        tokens.Expression(
-          tokens.Number("5")
+        lang.Expression(
+          lang.Number("5")
         ),
-        tokens.AddOp(),
-        tokens.Expression(
-          tokens.Number("11")
+        CalcReader.AddOp(),
+        lang.Expression(
+          lang.Number("11")
         )
       )
     )
@@ -91,12 +87,12 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 * 11".read,
       Node.Top(
-        tokens.Expression(
-          tokens.Number("5")
+        lang.Expression(
+          lang.Number("5")
         ),
-        tokens.MulOp(),
-        tokens.Expression(
-          tokens.Number("11")
+        CalcReader.MulOp(),
+        lang.Expression(
+          lang.Number("11")
         )
       )
     )
@@ -105,16 +101,16 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 + 11 * 4".read,
       Node.Top(
-        tokens.Expression(
-          tokens.Number("5")
+        lang.Expression(
+          lang.Number("5")
         ),
-        tokens.AddOp(),
-        tokens.Expression(
-          tokens.Number("11")
+        CalcReader.AddOp(),
+        lang.Expression(
+          lang.Number("11")
         ),
-        tokens.MulOp(),
-        tokens.Expression(
-          tokens.Number("4")
+        CalcReader.MulOp(),
+        lang.Expression(
+          lang.Number("4")
         )
       )
     )
@@ -123,15 +119,15 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 + 11".parse,
       Node.Top(
-        tokens
+        lang
           .Expression(
-            tokens
+            lang
               .Add(
-                tokens.Expression(
-                  tokens.Number("5")
+                lang.Expression(
+                  lang.Number("5")
                 ),
-                tokens.Expression(
-                  tokens.Number("11")
+                lang.Expression(
+                  lang.Number("11")
                 )
               )
               .at("5 + 11")
@@ -144,15 +140,15 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 * 11".parse,
       Node.Top(
-        tokens
+        lang
           .Expression(
-            tokens
+            lang
               .Mul(
-                tokens.Expression(
-                  tokens.Number("5")
+                lang.Expression(
+                  lang.Number("5")
                 ),
-                tokens.Expression(
-                  tokens.Number("11")
+                lang.Expression(
+                  lang.Number("11")
                 )
               )
               .at("5 * 11")
@@ -165,22 +161,22 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 + 11 * 4".parse,
       Node.Top(
-        tokens
+        lang
           .Expression(
-            tokens
+            lang
               .Add(
-                tokens.Expression(
-                  tokens.Number("5")
+                lang.Expression(
+                  lang.Number("5")
                 ),
-                tokens
+                lang
                   .Expression(
-                    tokens
+                    lang
                       .Mul(
-                        tokens.Expression(
-                          tokens.Number("11")
+                        lang.Expression(
+                          lang.Number("11")
                         ),
-                        tokens.Expression(
-                          tokens.Number("4")
+                        lang.Expression(
+                          lang.Number("4")
                         )
                       )
                       .at("11 * 4")
@@ -197,37 +193,37 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 * 4 + 4 / 2 - 6 * 2".parse,
       Node.Top(
-        tokens
+        lang
           .Expression(
-            tokens
+            lang
               .Sub(
-                tokens
+                lang
                   .Expression(
-                    tokens
+                    lang
                       .Add(
-                        tokens
+                        lang
                           .Expression(
-                            tokens
+                            lang
                               .Mul(
-                                tokens.Expression(
-                                  tokens.Number("5")
+                                lang.Expression(
+                                  lang.Number("5")
                                 ),
-                                tokens.Expression(
-                                  tokens.Number("4")
+                                lang.Expression(
+                                  lang.Number("4")
                                 )
                               )
                               .at("5 * 4")
                           )
                           .at("5 * 4"),
-                        tokens
+                        lang
                           .Expression(
-                            tokens
+                            lang
                               .Div(
-                                tokens.Expression(
-                                  tokens.Number("4")
+                                lang.Expression(
+                                  lang.Number("4")
                                 ),
-                                tokens.Expression(
-                                  tokens.Number("2")
+                                lang.Expression(
+                                  lang.Number("2")
                                 )
                               )
                               .at("4 / 2")
@@ -237,15 +233,15 @@ class CalcReaderTests extends munit.FunSuite:
                       .at("5 * 4 + 4 / 2")
                   )
                   .at("5 * 4 + 4 / 2"),
-                tokens
+                lang
                   .Expression(
-                    tokens
+                    lang
                       .Mul(
-                        tokens.Expression(
-                          tokens.Number("6")
+                        lang.Expression(
+                          lang.Number("6")
                         ),
-                        tokens.Expression(
-                          tokens.Number("2")
+                        lang.Expression(
+                          lang.Number("2")
                         )
                       )
                       .at("6 * 2")
@@ -262,7 +258,7 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 + 11".evaluate,
       Node.Top(
-        tokens.Number("16")
+        lang.Number("16")
       )
     )
 
@@ -270,7 +266,7 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 * 11".evaluate,
       Node.Top(
-        tokens.Number("55")
+        lang.Number("55")
       )
     )
 
@@ -278,7 +274,7 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 + 11 * 4".evaluate,
       Node.Top(
-        tokens.Number("49")
+        lang.Number("49")
       )
     )
 
@@ -286,7 +282,7 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 * 4 + 4 / 2".evaluate,
       Node.Top(
-        tokens.Number("22")
+        lang.Number("22")
       )
     )
 
@@ -294,7 +290,7 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 * 4 + 4 / 2 - 6".evaluate,
       Node.Top(
-        tokens.Number("16")
+        lang.Number("16")
       )
     )
 
@@ -302,6 +298,6 @@ class CalcReaderTests extends munit.FunSuite:
     assertEquals(
       "5 * 4 + 4 / 2 - 6 * 2".evaluate,
       Node.Top(
-        tokens.Number("10")
+        lang.Number("10")
       )
     )

@@ -18,15 +18,14 @@ import cats.syntax.all.given
 
 import distcompiler.*
 import dsl.*
-import distcompiler.Builtin.{Error, SourceMarker}
-import distcompiler.calc.tokens.*
+import distcompiler.calc.lang.*
 
 object CalcEvaluator extends PassSeq:
   import distcompiler.dsl.*
   import Reader.*
   import CalcReader.*
 
-  def inputWellformed: Wellformed = distcompiler.calc.wellformed
+  def inputWellformed: Wellformed = distcompiler.calc.lang.wf
 
   private val simplifyPass = passDef:
     wellformed := inputWellformed.makeDerived:

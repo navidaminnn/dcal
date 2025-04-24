@@ -18,8 +18,7 @@ import cats.syntax.all.given
 
 import distcompiler.*
 import dsl.*
-import distcompiler.Builtin.{Error, SourceMarker}
-import distcompiler.calc.tokens.*
+import calc.lang.*
 
 object CalcParser extends PassSeq:
   import distcompiler.dsl.*

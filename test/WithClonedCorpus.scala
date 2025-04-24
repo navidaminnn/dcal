@@ -36,6 +36,7 @@ transparent trait WithClonedCorpus:
     os.walk
       .stream(checkoutFolder)
       .filter(isCorpusFile)
+      // .take(3) // TODO: make unnecessary
       .foreach: corpusFile =>
         foundAnything = true
         test(corpusFile.relativeTo(clonesDir).toString)(fn(corpusFile))

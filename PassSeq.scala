@@ -66,10 +66,8 @@ transparent trait PassSeq:
             entry.rules
               *> entry.wellformed.markErrorsPass
 
-  final def apply(top: Node.Top, tracer: Manip.Tracer = Manip.NopTracer): Unit =
-    atNode(top)(allPasses)
-      .withTracer(tracer)
-      .perform()
+  final def apply(top: Node.Top): Unit =
+    initNode(top)(allPasses).perform()
 
 object PassSeq:
   final case class Entry(wellformed: Wellformed, rules: Manip[Unit])

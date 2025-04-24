@@ -27,7 +27,7 @@ final class ById[T <: AnyRef](val ref: T) extends Equals:
     System.identityHashCode(ref)
 
   override def toString(): String =
-    s"ById(@${hashCode()} $ref)"
+    s"ById(@${hashCode()} ${pprint.apply(ref)})"
 end ById
 
 object ById:

@@ -20,9 +20,14 @@ import distcompiler.*
 import dsl.*
 import distcompiler.Builtin.{Error, SourceMarker}
 import Reader.*
-import distcompiler.calc.tokens.*
+import distcompiler.calc.lang.*
 
 object CalcReader extends Reader:
+  object AddOp extends Token, Token.ShowSource
+  object SubOp extends Token, Token.ShowSource
+  object MulOp extends Token, Token.ShowSource
+  object DivOp extends Token, Token.ShowSource
+
   override lazy val wellformed = Wellformed:
     Node.Top ::= repeated(choice(Expression, AddOp, SubOp, MulOp, DivOp))
 

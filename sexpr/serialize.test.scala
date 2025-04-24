@@ -32,7 +32,7 @@ class serializeTests extends munit.FunSuite:
     def serializePretty: String =
       serialize.toPrettyWritable(top).writeToString
 
-  val eg1 = Node.Top(tokens.List(tokens.Atom("foo"), tokens.Atom("bar")))
+  val eg1 = Node.Top(lang.List(lang.Atom("foo"), lang.Atom("bar")))
 
   test("eg1 compact"):
     assertEquals(eg1.serializeCompact, "(3:foo3:bar)")
@@ -45,7 +45,7 @@ class serializeTests extends munit.FunSuite:
     )
 
   val eg2 = Node.Top(
-    tokens.List(tokens.List(), tokens.List(), tokens.List(tokens.List()))
+    lang.List(lang.List(), lang.List(), lang.List(lang.List()))
   )
 
   test("nested lists compact"):

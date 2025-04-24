@@ -15,30 +15,48 @@
 package distcompiler
 
 import sourcecode.*
-import cats.data.NonEmptyChain
 
-final case class DebugInfo(records: NonEmptyChain[DebugInfo.Record]):
+final case class DebugInfo(
+    file: String,
+    fileName: String,
+    line: Int,
+    outerOpt: Option[DebugInfo] = None
+) extends DebugInfo.Ctx:
   override def toString(): String =
-    records.iterator
-      .map(_.toString())
-      .mkString("\nand ")
-
-  @scala.annotation.targetName("concat")
-  def ++(other: DebugInfo): DebugInfo =
-    DebugInfo(records ++ other.records)
+    outerOpt match
+      case None =>
+        s"$file:$line"
+      case Some(outer) =>
+        s"$file:$line in $outer"
 
 object DebugInfo:
-  final case class Record(file: String, fileName: String, line: Int):
-    override def toString(): String =
-      s"$file:$line"
+  import scala.compiletime.{summonInline, summonFrom}
 
-  given instance(using file: File, fileName: FileName, line: Line): DebugInfo =
-    DebugInfo(NonEmptyChain(Record(file.value, fileName.value, line.value)))
+  sealed abstract class Ctx
 
-  inline def apply()(using DebugInfo): DebugInfo = summon[DebugInfo]
+  inline given instance(using
+      file: File,
+      fileName: FileName,
+      line: Line
+  ): DebugInfo =
+    summonFrom:
+      case ctx: Ctx =>
+        ctx match
+          case ctx: DebugInfo
+              if (file.value, fileName.value, line.value) != (
+                ctx.file,
+                ctx.fileName,
+                ctx.line
+              ) =>
+            DebugInfo(file.value, fileName.value, line.value, Some(ctx))
+          case ctx: DebugInfo => ctx
+      case _ =>
+        DebugInfo(file.value, fileName.value, line.value)
+
+  inline def apply()(using debugInfo: DebugInfo): DebugInfo = debugInfo
 
   // Put this in implicit scope (as an inline given) when you want to be sure you're not accidentally
-  // summoning DebugInfo that points inside your implementation.
+  // summoning DebugInfo.
   // It will flag all such mistakes with a compile-time error.
   inline def poison: DebugInfo =
     scala.compiletime.error("implementation bug: used a poison DebugInfo value")
@@ -46,7 +64,6 @@ object DebugInfo:
   // If you have a nested scope where you used the above but actually want DebugInfo
   // to work again, shadow the poison given with another inline given that expands to this.
   inline def notPoison: DebugInfo =
-    import scala.compiletime.summonInline
     instance(using
       file = summonInline[File],
       fileName = summonInline[FileName],

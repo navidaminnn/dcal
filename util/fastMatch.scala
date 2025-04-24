@@ -85,7 +85,8 @@ private def fastMatchImpl[T <: Enum: Type, U: Type](
                   None,
                   dummyMatch(cse)
                 )
-          case cse @ CaseDef(StripBind(id @ Ident(_)), None, _) =>
+          case cse @ CaseDef(StripBind(id: Term), None, _)
+              if tRepr.typeSymbol.children.contains(id.tpe.termSymbol) =>
             CaseDef(
               Literal(IntConstant(getOrdinal(id.tpe.termSymbol, id.pos))),
               None,
@@ -93,7 +94,7 @@ private def fastMatchImpl[T <: Enum: Type, U: Type](
             )
           case CaseDef(head, _, _) =>
             report.errorAndAbort(
-              s"${head.show} can't be interpreted as a case unapply, ident, or type test",
+              s"${head.show(using Printer.TreeStructure)} can't be interpreted as a case unapply, ident, or type test",
               head.pos
             )
         restoreInlined(
