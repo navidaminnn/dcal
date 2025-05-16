@@ -21,7 +21,7 @@ import forja.wf.WellformedDef
 import forja.src.SourceRange
 
 object lang extends WellformedDef:
-  val topShape: Shape = repeated(Expression)
+  lazy val topShape: Shape = repeated(Expression)
 
   object Expression
       extends t(

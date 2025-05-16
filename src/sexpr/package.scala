@@ -21,7 +21,7 @@ import forja.dsl.*
 import forja.src.{Source, SourceRange}
 
 object lang extends WellformedDef:
-  val topShape: Shape = repeated(choice(Atom, List))
+  lazy val topShape: Shape = repeated(choice(Atom, List))
   object List extends t(topShape)
   object Atom extends t(Shape.Atom), Token.ShowSource
 

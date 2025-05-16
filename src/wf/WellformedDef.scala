@@ -18,7 +18,7 @@ import scala.collection.mutable
 import forja.dsl.*
 
 trait WellformedDef:
-  val topShape: Shape
+  def topShape: Shape
 
   trait t protected (private[WellformedDef] val shape: Shape) extends Token
 

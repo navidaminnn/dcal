@@ -20,7 +20,7 @@ import forja.dsl.*
 import forja.wf.WellformedDef
 
 object lang extends WellformedDef:
-  val topShape: Shape = repeated(Module)
+  lazy val topShape: Shape = repeated(Module)
 
   object Module
       extends t(
