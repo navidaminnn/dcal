@@ -1,4 +1,4 @@
-// Copyright 2024-2025 DCal Team
+// Copyright 2024-2025 Forja Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@
 
 //> using dep com.github.scopt::scopt:4.1.0
 
-//> using test.dep org.scalameta::munit:1.1.0
+//> using test.dep org.scalameta::munit:1.1.1
 
 //> using javaProp distcompiler.Node.assertErrorRefCorrectness=no
 

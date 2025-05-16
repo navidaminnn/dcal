@@ -1,0 +1,144 @@
+// Copyright 2024-2025 Forja Team
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package forja.sexpr
+
+import forja.*
+import forja.src.{Source, SourceRange}
+import Builtin.{Error, SourceMarker}
+
+class SExprReaderTests extends munit.FunSuite:
+  import lang.Atom
+  extension (str: String)
+    def parse: Node.Top =
+      sexpr.parse.fromSourceRange(SourceRange.entire(Source.fromString(str)))
+
+  test("foo string literal"):
+    assertEquals("\"foo\"".parse, Node.Top(Atom("foo")))
+
+  test("escape tab char"):
+    assertEquals("\"\\t\"".parse, Node.Top(Atom("\t")))
+
+  test("ignore crlf"):
+    assertEquals("\"\\\r\n\"".parse, Node.Top(Atom("")))
+
+  test("error: invalid string escape"):
+    assertEquals(
+      "\"\\^\"".parse,
+      Node.Top(
+        Error("invalid escape sequence \\^", Builtin.SourceMarker("\\^")),
+        Atom("?")
+      )
+    )
+
+  test("empty string"):
+    assertEquals("".parse, Node.Top())
+  test("one space"):
+    assertEquals(" ".parse, Node.Top())
+  test("all misc whitespace"):
+    assertEquals(" \n\n \t\r\n".parse, Node.Top())
+  test("one atom"):
+    assertEquals("8:deadbeef".parse, Node.Top(Atom("deadbeef")))
+  test("two atoms"):
+    assertEquals("3:foo 3:bar".parse, Node.Top(Atom("foo"), Atom("bar")))
+  test("atom with weird chars"):
+    assertEquals("9:(foo bar)".parse, Node.Top(Atom("(foo bar)")))
+
+  test("empty atom"):
+    assertEquals("0:".parse, Node.Top(Atom("")))
+  test("empty list"):
+    assertEquals("()".parse, Node.Top(lang.List()))
+
+  test("list of two atoms"):
+    assertEquals(
+      "(3:foo 3:bar)".parse,
+      Node.Top(lang.List(Atom("foo"), Atom("bar")))
+    )
+  test("list of three lists"):
+    assertEquals(
+      "((3:foo) (3:bar) ())".parse,
+      Node.Top(
+        lang.List(
+          lang.List(Atom("foo")),
+          lang.List(Atom("bar")),
+          lang.List()
+        )
+      )
+    )
+
+  test("error: stray list close"):
+    assertEquals(
+      ")".parse,
+      Node.Top(Error("unexpected end of list", SourceMarker(")")))
+    )
+
+  test("error: stray list close, recovery"):
+    assertEquals(
+      ") 3:foo".parse,
+      Node.Top(
+        Error("unexpected end of list", SourceMarker(")")),
+        Atom("foo")
+      )
+    )
+
+  test("error: missing list terminator"):
+    assertEquals(
+      "(4: foo".parse,
+      Node.Top(
+        lang.List(Atom(" foo"), Error("unexpected EOF", SourceMarker()))
+      )
+    )
+
+  test("empty string literal"):
+    assertEquals("\"\"".parse, Node.Top(lang.Atom("")))
+
+  test("3 empty string literals with a list"):
+    assertEquals(
+      "\"\" (\"\" ) \"\"".parse,
+      Node.Top(
+        lang.Atom(""),
+        lang.List(lang.Atom("")),
+        lang.Atom("")
+      )
+    )
+
+  test("list of 3 string literals"):
+    assertEquals(
+      raw"""("foo" "bar" " ")""".parse,
+      Node.Top(
+        lang.List(
+          lang.Atom("foo"),
+          lang.Atom("bar"),
+          lang.Atom(" ")
+        )
+      )
+    )
+
+  test("string with escapes"):
+    assertEquals(
+      raw""" "\tfoo\\bar" """.parse,
+      Node.Top(lang.Atom("\tfoo\\bar"))
+    )
+
+  test("misc token atoms"):
+    assertEquals(
+      "foo bar =ping= :this /42a".parse,
+      Node.Top(
+        Atom("foo"),
+        Atom("bar"),
+        Atom("=ping="),
+        Atom(":this"),
+        Atom("/42a")
+      )
+    )

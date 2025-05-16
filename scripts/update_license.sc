@@ -1,4 +1,4 @@
-// Copyright 2024-2025 DCal Team
+// Copyright 2024-2025 Forja Team
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ if !parser.parse(args, ()).isDefined
 then sys.exit(1)
 
 val licenseTemplate =
-  """ Copyright 2024-____ DCal Team
+  """ Copyright 2024-____ Forja Team
     |
     | Licensed under the Apache License, Version 2.0 (the "License");
     | you may not use this file except in compliance with the License.
