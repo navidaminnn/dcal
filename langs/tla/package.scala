@@ -27,8 +27,8 @@ object lang extends WellformedDef:
         fields(
           Id,
           Module.Extends,
-          Module.Defns
-        )
+          Module.Defns,
+        ),
       ):
     object Extends extends t(repeated(Id))
     object Defns
@@ -44,9 +44,9 @@ object lang extends WellformedDef:
               Theorem,
               Instance,
               Module,
-              ModuleDefinition
-            )
-          )
+              ModuleDefinition,
+            ),
+          ),
         )
   end Module
 
@@ -55,16 +55,16 @@ object lang extends WellformedDef:
         choice(
           Operator,
           Instance,
-          ModuleDefinition
-        )
+          ModuleDefinition,
+        ),
       )
 
   object Recursive
       extends t(
         choice(
           Id,
-          Order2
-        )
+          Order2,
+        ),
       )
 
   object ModuleDefinition
@@ -72,8 +72,8 @@ object lang extends WellformedDef:
         fields(
           Id,
           Operator.Params,
-          Instance
-        )
+          Instance,
+        ),
       )
 
   object Id extends t(Atom)
@@ -87,8 +87,8 @@ object lang extends WellformedDef:
       extends t(
         fields(
           Id,
-          embedded[Int]
-        )
+          embedded[Int],
+        ),
       )
 
   object Expr
@@ -113,8 +113,8 @@ object lang extends WellformedDef:
           Expr.Choose,
           Expr.Except,
           Expr.Except.Anchor,
-          Expr.Lambda
-        )
+          Expr.Lambda,
+        ),
       ):
     object NumberLiteral extends t(Atom)
 
@@ -129,8 +129,8 @@ object lang extends WellformedDef:
           extends t(
             fields(
               Id,
-              Expr
-            )
+              Expr,
+            ),
           )
     end RecordLiteral
 
@@ -138,23 +138,23 @@ object lang extends WellformedDef:
         extends t(
           fields(
             Expr,
-            Id
-          )
+            Id,
+          ),
         )
 
     object RecordSetLiteral
         extends t(
           repeated(
             RecordSetLiteral.Field,
-            minCount = 1
-          )
+            minCount = 1,
+          ),
         ):
       object Field
           extends t(
             fields(
               Id,
-              Expr
-            )
+              Expr,
+            ),
           )
     end RecordSetLiteral
 
@@ -162,8 +162,8 @@ object lang extends WellformedDef:
         extends t(
           fields(
             choice(Id, OpSym),
-            OpCall.Params
-          )
+            OpCall.Params,
+          ),
         ):
       object Params extends t(repeated(Expr))
     end OpCall
@@ -175,8 +175,8 @@ object lang extends WellformedDef:
           fields(
             Expr,
             Expr,
-            Expr
-          )
+            Expr,
+          ),
         )
 
     object Case extends t(repeated(Case.Branch, minCount = 1)):
@@ -184,8 +184,8 @@ object lang extends WellformedDef:
           extends t(
             fields(
               Expr,
-              Expr
-            )
+              Expr,
+            ),
           )
     end Case
 
@@ -193,8 +193,8 @@ object lang extends WellformedDef:
         extends t(
           fields(
             Let.Defns,
-            Expr
-          )
+            Expr,
+          ),
         ):
       object Defns
           extends t(
@@ -202,10 +202,10 @@ object lang extends WellformedDef:
               choice(
                 Operator,
                 ModuleDefinition,
-                Recursive
+                Recursive,
               ),
-              minCount = 1
-            )
+              minCount = 1,
+            ),
           )
     end Let
 
@@ -213,71 +213,71 @@ object lang extends WellformedDef:
         extends t(
           fields(
             QuantifierBounds,
-            Expr
-          )
+            Expr,
+          ),
         )
 
     object Forall
         extends t(
           fields(
             QuantifierBounds,
-            Expr
-          )
+            Expr,
+          ),
         )
 
     object Function
         extends t(
           fields(
             QuantifierBounds,
-            Expr
-          )
+            Expr,
+          ),
         )
 
     object SetComprehension
         extends t(
           fields(
             Expr,
-            QuantifierBounds
-          )
+            QuantifierBounds,
+          ),
         )
 
     object SetRefinement
         extends t(
           fields(
             QuantifierBound,
-            Expr
-          )
+            Expr,
+          ),
         )
 
     object Choose
         extends t(
           fields(
             QuantifierBound,
-            Expr
-          )
+            Expr,
+          ),
         )
 
     object Except
         extends t(
           fields(
             Expr,
-            Except.Substitutions
-          )
+            Except.Substitutions,
+          ),
         ):
       object Substitutions
           extends t(
             repeated(
               Substitution,
-              minCount = 1
-            )
+              minCount = 1,
+            ),
           )
 
       object Substitution
           extends t(
             fields(
               Path,
-              Expr
-            )
+              Expr,
+            ),
           )
 
       object Path extends t(repeated(Expr, minCount = 1))
@@ -289,8 +289,8 @@ object lang extends WellformedDef:
         extends t(
           fields(
             Lambda.Params,
-            Expr
-          )
+            Expr,
+          ),
         ):
       object Params extends t(repeated(Id, minCount = 1))
     end Lambda
@@ -301,17 +301,17 @@ object lang extends WellformedDef:
         fields(
           choice(Id, OpSym),
           Operator.Params,
-          Expr
-        )
+          Expr,
+        ),
       ):
     object Params
         extends t(
           repeated(
             choice(
               Id,
-              Order2
-            )
-          )
+              Order2,
+            ),
+          ),
         )
   end Operator
 
@@ -325,8 +325,8 @@ object lang extends WellformedDef:
       extends t(
         fields(
           choice(Id, Anonymous),
-          Expr
-        )
+          Expr,
+        ),
       )
 
   object Theorem
@@ -334,8 +334,8 @@ object lang extends WellformedDef:
         fields(
           choice(Id, Anonymous),
           choice(Expr, Theorem.AssumeProve),
-          Theorem.Proofs
-        )
+          Theorem.Proofs,
+        ),
       ):
     object AssumeProve extends t(AnyShape)
     object Proofs extends t(AnyShape)
@@ -348,16 +348,16 @@ object lang extends WellformedDef:
       extends t(
         fields(
           Id,
-          Instance.Substitutions
-        )
+          Instance.Substitutions,
+        ),
       ):
     object Substitutions extends t(repeated(Substitution))
     object Substitution
         extends t(
           fields(
             choice(Id, OpSym),
-            Expr
-          )
+            Expr,
+          ),
         )
   end Instance
 
@@ -365,8 +365,8 @@ object lang extends WellformedDef:
       extends t(
         fields(
           choice(Id, Ids),
-          Expr
-        )
+          Expr,
+        ),
       )
 
   object QuantifierBounds extends t(repeated(QuantifierBound, minCount = 1))

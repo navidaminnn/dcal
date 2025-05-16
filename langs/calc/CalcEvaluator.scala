@@ -40,8 +40,8 @@ object CalcEvaluator extends PassSeq:
             tok(Add).withChildren:
               field(tok(Expression) *> onlyChild(tok(Number)))
                 ~ field(tok(Expression) *> onlyChild(tok(Number)))
-                ~ eof
-          )
+                ~ eof,
+          ),
         ).rewrite: (left, right) =>
           val leftNum = left.unparent().sourceRange.decodeString().toInt
           val rightNum = right.unparent().sourceRange.decodeString().toInt
@@ -49,17 +49,17 @@ object CalcEvaluator extends PassSeq:
           splice(
             Expression(
               Number(
-                (leftNum + rightNum).toString()
-              )
-            )
+                (leftNum + rightNum).toString(),
+              ),
+            ),
           )
         | on(
           field(tok(Expression)) *> onlyChild(
             tok(Sub).withChildren:
               field(tok(Expression) *> onlyChild(tok(Number)))
                 ~ field(tok(Expression) *> onlyChild(tok(Number)))
-                ~ eof
-          )
+                ~ eof,
+          ),
         ).rewrite: (left, right) =>
           val leftNum = left.unparent().sourceRange.decodeString().toInt
           val rightNum = right.unparent().sourceRange.decodeString().toInt
@@ -67,17 +67,17 @@ object CalcEvaluator extends PassSeq:
           splice(
             Expression(
               Number(
-                (leftNum - rightNum).toString()
-              )
-            )
+                (leftNum - rightNum).toString(),
+              ),
+            ),
           )
         | on(
           field(tok(Expression)) *> onlyChild(
             tok(Mul).withChildren:
               field(tok(Expression) *> onlyChild(tok(Number)))
                 ~ field(tok(Expression) *> onlyChild(tok(Number)))
-                ~ eof
-          )
+                ~ eof,
+          ),
         ).rewrite: (left, right) =>
           val leftNum = left.unparent().sourceRange.decodeString().toInt
           val rightNum = right.unparent().sourceRange.decodeString().toInt
@@ -85,17 +85,17 @@ object CalcEvaluator extends PassSeq:
           splice(
             Expression(
               Number(
-                (leftNum * rightNum).toString()
-              )
-            )
+                (leftNum * rightNum).toString(),
+              ),
+            ),
           )
         | on(
           field(tok(Expression)) *> onlyChild(
             tok(Div).withChildren:
               field(tok(Expression) *> onlyChild(tok(Number)))
                 ~ field(tok(Expression) *> onlyChild(tok(Number)))
-                ~ eof
-          )
+                ~ eof,
+          ),
         ).rewrite: (left, right) =>
           val leftNum = left.unparent().sourceRange.decodeString().toInt
           val rightNum = right.unparent().sourceRange.decodeString().toInt
@@ -103,9 +103,9 @@ object CalcEvaluator extends PassSeq:
           splice(
             Expression(
               Number(
-                (leftNum / rightNum).toString()
-              )
-            )
+                (leftNum / rightNum).toString(),
+              ),
+            ),
           )
 
   private val removeLayerPass = passDef:
@@ -117,8 +117,8 @@ object CalcEvaluator extends PassSeq:
         on(
           tok(Expression).withChildren:
             field(tok(Number))
-              ~ eof
+              ~ eof,
         ).rewrite: (number) =>
           splice(
-            number.unparent()
+            number.unparent(),
           )

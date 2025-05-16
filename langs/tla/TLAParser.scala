@@ -96,7 +96,7 @@ object TLAParser extends PassSeq:
     // nested modules look like this (we will have parsed them earlier)
     lang.Module,
     // can occur in nested ASSUME ... ASSUME ... PROVE <expr> PROVE
-    defns.PROVE
+    defns.PROVE,
   )
 
   final case class RawExpression(nodes: IndexedSeqView[Node.Child]):
@@ -107,13 +107,13 @@ object TLAParser extends PassSeq:
     (skip(Alpha) ~ skip(optional(ParenthesesGroup)) ~ skip(`_==_`) ~ trailing)
       | (skip(Alpha) ~ skip(SqBracketsGroup) ~ skip(`_==_`) ~ trailing)
       | (skip(Alpha) ~ skip(tok(defns.InfixOperator.instances*)) ~ skip(
-        Alpha
+        Alpha,
       ) ~ skip(`_==_`) ~ trailing)
       | (skip(Alpha) ~ skip(tok(defns.PostfixOperator.instances*)) ~ skip(
-        `_==_`
+        `_==_`,
       ) ~ trailing)
       | (skip(tok(defns.PrefixOperator.instances*)) ~ skip(Alpha) ~ skip(
-        `_==_`
+        `_==_`,
       ) ~ trailing)
 
   lazy val rawExpression: SeqPattern[RawExpression] =
@@ -121,13 +121,13 @@ object TLAParser extends PassSeq:
       anyChild.void <* not(
         tok(expressionDelimiters*)
         // stop at operator definitions: all valid patterns leading to == here
-          | operatorDefnBeginnings
+          | operatorDefnBeginnings,
       )
 
     lazy val quantifierBound: SeqPattern[EmptyTuple] =
       skip(
         tok(TupleGroup).as(EmptyTuple)
-          | repeatedSepBy1(`,`)(Alpha)
+          | repeatedSepBy1(`,`)(Alpha),
       )
         ~ skip(defns.`\\in`)
         ~ skip(defer(impl))
@@ -139,7 +139,7 @@ object TLAParser extends PassSeq:
     lazy val forallExists: SeqPattern[EmptyTuple] =
       skip(
         tok(LaTexLike).src("\\A") | tok(LaTexLike).src("\\AA") | tok(LaTexLike)
-          .src("\\E") | tok(LaTexLike).src("\\EE")
+          .src("\\E") | tok(LaTexLike).src("\\EE"),
       )
         ~ skip(quantifierBounds | repeatedSepBy1(`,`)(Alpha))
         ~ skip(`:`)
@@ -171,7 +171,7 @@ object TLAParser extends PassSeq:
           | choose
           | lambda
           | idFrag
-          | simpleCases // last, otherwise it eats parts of the above
+          | simpleCases, // last, otherwise it eats parts of the above
       ).void
 
     nodeSpanMatchedBy(impl).map(RawExpression.apply)
@@ -189,7 +189,7 @@ object TLAParser extends PassSeq:
     defns.LEMMA,
     defns.COROLLARY,
     defns.INSTANCE,
-    defns.LOCAL
+    defns.LOCAL,
   )
 
   lazy val assumeProve: SeqPattern[EmptyTuple] =
@@ -197,8 +197,8 @@ object TLAParser extends PassSeq:
       ~ skip(
         repeated(
           anyChild <* not(tok(defns.PROVE, defns.ASSUME))
-            | defer(assumeProve)
-        )
+            | defer(assumeProve),
+        ),
       )
       ~ skip(defns.PROVE)
       ~ skip(rawExpression)
@@ -208,7 +208,7 @@ object TLAParser extends PassSeq:
     val simpleCases: SeqPattern[Unit] =
       anyChild.void <* not(
         tok(proofDelimiters*)
-          | operatorDefnBeginnings
+          | operatorDefnBeginnings,
       )
 
     val innerDefn: SeqPattern[EmptyTuple] =
@@ -220,7 +220,7 @@ object TLAParser extends PassSeq:
               ~ skip(repeatedSepBy1(rawExpression)(operatorDefnBeginnings))
               ~ trailing
           )
-            | tok(defns.INSTANCE)
+            | tok(defns.INSTANCE),
         )
         ~ trailing
 
@@ -228,7 +228,7 @@ object TLAParser extends PassSeq:
       repeated(
         assumeProve
           | innerDefn
-          | simpleCases
+          | simpleCases,
       ).void
 
     nodeSpanMatchedBy(impl)
@@ -257,17 +257,17 @@ object TLAParser extends PassSeq:
     pass(once = true, strategy = pass.bottomUp)
       .rules:
         on(
-          tok(Alpha).filter(node => reservedWordMap.contains(node.sourceRange))
+          tok(Alpha).filter(node => reservedWordMap.contains(node.sourceRange)),
         ).rewrite: word =>
           splice(reservedWordMap(word.sourceRange)().like(word))
         | on(
           tok(LaTexLike).filter(node =>
-            laTexLikeOperatorMap.contains(node.sourceRange)
-          )
+            laTexLikeOperatorMap.contains(node.sourceRange),
+          ),
         ).rewrite: op =>
           splice(laTexLikeOperatorMap(op.sourceRange)().like(op))
         | on(
-          TLAReader.Comment
+          TLAReader.Comment,
         ).rewrite: _ =>
           splice() // delete it. TODO: maybe try to gather comments?
 
@@ -280,18 +280,18 @@ object TLAParser extends PassSeq:
       lang.Module ::= fields(
         lang.Id,
         lang.Module.Extends,
-        lang.Module.Defns
+        lang.Module.Defns,
       )
       lang.Module.Extends.importFrom(lang.wf)
       lang.Module.Defns ::= repeated(
-        choice(ModuleGroup.existingCases + DashSeq + lang.Module)
+        choice(ModuleGroup.existingCases + DashSeq + lang.Module),
       )
 
     pass(once = false, strategy = pass.topDown)
       .rules:
         // remove top-level modules from ModuleGroup
         on(
-          tok(ModuleGroup) *> onlyChild(lang.Module)
+          tok(ModuleGroup) *> onlyChild(lang.Module),
         ).rewrite: mod =>
           splice(mod.unparent())
         // Any module that doesn't have what looks like an unparsed nested module in it.
@@ -304,28 +304,28 @@ object TLAParser extends PassSeq:
               optional(
                 skip(defns.EXTENDS)
                   ~ field(repeatedSepBy1(`,`)(Alpha))
-                  ~ trailing
-              ).map(_.getOrElse(Nil))
+                  ~ trailing,
+              ).map(_.getOrElse(Nil)),
             )
             ~ field(
               repeated(
                 anyChild <* not(
                   tok(EqSeq)
                     | (skip(DashSeq) ~ skip(defns.MODULE) ~ skip(Alpha) ~ skip(
-                      DashSeq
-                    ) ~ trailing)
-                )
-              )
+                      DashSeq,
+                    ) ~ trailing),
+                ),
+              ),
             )
             ~ skip(EqSeq)
-            ~ trailing // we might be inside another module
+            ~ trailing, // we might be inside another module
         ).rewrite: (name, exts, unitSoup) =>
           splice(
             lang.Module(
               lang.Id().like(name),
               lang.Module.Extends(exts.map(ext => lang.Id().like(ext))),
-              lang.Module.Defns(unitSoup.map(_.unparent()))
-            )
+              lang.Module.Defns(unitSoup.map(_.unparent())),
+            ),
           )
 
   val unitDefns = passDef:
@@ -344,8 +344,8 @@ object TLAParser extends PassSeq:
           lang.ModuleDefinition,
           lang.Module,
           lang.UseOrHide,
-          defns.LOCAL // goes away on next pass!
-        )
+          defns.LOCAL, // goes away on next pass!
+        ),
       )
 
       TLAReader.groupTokens.foreach: tok =>
@@ -359,20 +359,20 @@ object TLAParser extends PassSeq:
           defns.AXIOM,
           defns.ASSUMPTION,
           defns.THEOREM,
-          defns.INSTANCE
+          defns.INSTANCE,
         )
 
       lang.Expr ::= repeated(
         choice(TLAReader.ParenthesesGroup.existingCases),
-        minCount = 1
+        minCount = 1,
       )
 
       TLAReader.LetGroup ::=! repeated(
         choice(
           lang.Operator,
           lang.ModuleDefinition,
-          lang.Recursive
-        )
+          lang.Recursive,
+        ),
       )
 
       lang.Operator.importFrom(lang.wf)
@@ -388,7 +388,7 @@ object TLAParser extends PassSeq:
 
     final case class Instance(
         name: Node,
-        substitutions: List[(Node, RawExpression)]
+        substitutions: List[(Node, RawExpression)],
     ):
       def mkNode: Node =
         lang.Instance(
@@ -400,9 +400,9 @@ object TLAParser extends PassSeq:
                   if name.token == Alpha
                   then lang.Id().like(name)
                   else name.unparent(),
-                  expr.mkNode
-                )
-          )
+                  expr.mkNode,
+                ),
+          ),
         )
 
     object Instance:
@@ -418,8 +418,8 @@ object TLAParser extends PassSeq:
                       ~ skip(`<-`)
                       ~ field(rawExpression)
                       ~ trailing)
-                  ~ trailing
-              )
+                  ~ trailing,
+              ),
             )
             ~ trailing
         ).map: (name, subsOpt) =>
@@ -433,13 +433,13 @@ object TLAParser extends PassSeq:
             ~ field(
               optional(
                 tok(ParenthesesGroup) *> children(
-                  repeatedSepBy(`,`)(TLAReader.Alpha)
-                )
-              )
+                  repeatedSepBy(`,`)(TLAReader.Alpha),
+                ),
+              ),
             )
             ~ skip(`_==_`)
             ~ field(rawExpression)
-            ~ trailing
+            ~ trailing,
         ).rewrite: (name, paramsOpt, body) =>
           splice(
             lang.Operator(
@@ -448,10 +448,10 @@ object TLAParser extends PassSeq:
                 case None => lang.Operator.Params()
                 case Some(params) =>
                   lang.Operator.Params(
-                    params.iterator.map(p => lang.Id().like(p))
+                    params.iterator.map(p => lang.Id().like(p)),
                   ),
-              body.mkNode
-            )
+              body.mkNode,
+            ),
           )
         | on(
           field(Alpha)
@@ -459,50 +459,50 @@ object TLAParser extends PassSeq:
             ~ field(Alpha)
             ~ skip(`_==_`)
             ~ field(rawExpression)
-            ~ trailing
+            ~ trailing,
         ).rewrite: (param1, op, param2, body) =>
           splice(
             lang.Operator(
               lang.OpSym(op.unparent()),
               lang.Operator
                 .Params(lang.Id().like(param1), lang.Id().like(param2)),
-              body.mkNode
-            )
+              body.mkNode,
+            ),
           )
         | on(
           field(Alpha)
             ~ field(tok(defns.PostfixOperator.instances*))
             ~ skip(`_==_`)
             ~ field(rawExpression)
-            ~ trailing
+            ~ trailing,
         ).rewrite: (param, op, body) =>
           splice(
             lang.Operator(
               lang.OpSym(op.unparent()),
               lang.Operator.Params(lang.Id().like(param)),
-              body.mkNode
-            )
+              body.mkNode,
+            ),
           )
         | on(
           field(tok(defns.PrefixOperator.instances*))
             ~ field(Alpha)
             ~ skip(`_==_`)
             ~ field(rawExpression)
-            ~ trailing
+            ~ trailing,
         ).rewrite: (op, param, body) =>
           splice(
             lang.Operator(
               lang.OpSym(op.unparent()),
               lang.Operator.Params(lang.Id().like(param)),
-              body.mkNode
-            )
+              body.mkNode,
+            ),
           )
         | on(
           field(Alpha)
             ~ field(SqBracketsGroup)
             ~ skip(`_==_`)
             ~ field(rawExpression)
-            ~ trailing
+            ~ trailing,
         ).rewrite: (name, params, body) =>
           splice(
             lang.Operator(
@@ -512,20 +512,20 @@ object TLAParser extends PassSeq:
                 SqBracketsGroup(
                   params.children.view.map(_.unparent())
                     ++ List(`|->`())
-                    ++ body.nodes.map(_.unparent())
-                )
-              )
-            )
+                    ++ body.nodes.map(_.unparent()),
+                ),
+              ),
+            ),
           )
         // variable decls
         | on(
           skip(tok(defns.VARIABLE, defns.VARIABLES))
             ~ field(repeatedSepBy1(`,`)(Alpha))
-            ~ trailing
+            ~ trailing,
         ).rewrite: vars =>
           splice(
             vars.map: v =>
-              lang.Variable(lang.Id().like(v))
+              lang.Variable(lang.Id().like(v)),
           )
         // constant decls
         | on(
@@ -533,8 +533,8 @@ object TLAParser extends PassSeq:
             ~ field(
               repeatedSepBy1(`,`):
                 opDeclPattern
-                  | tok(Alpha)
-            ) ~ trailing
+                  | tok(Alpha),
+            ) ~ trailing,
         ).rewrite: decls =>
           splice(
             decls.iterator
@@ -543,18 +543,18 @@ object TLAParser extends PassSeq:
                   lang.Constant(
                     lang.Order2(
                       lang.Id().like(alpha),
-                      Node.Embed(arity)
-                    )
+                      Node.Embed(arity),
+                    ),
                   )
                 case (op, arity) =>
                   lang.Constant(
                     lang.Order2(
                       op.unparent(),
-                      Node.Embed(arity)
-                    )
+                      Node.Embed(arity),
+                    ),
                   )
                 case alpha: Node =>
-                  lang.Constant(lang.Id().like(alpha))
+                  lang.Constant(lang.Id().like(alpha)),
           )
         // assume
         | on(
@@ -563,31 +563,31 @@ object TLAParser extends PassSeq:
               optional(
                 field(Alpha)
                   ~ skip(`_==_`)
-                  ~ trailing
-              )
+                  ~ trailing,
+              ),
             )
             ~ field(rawExpression)
-            ~ trailing
+            ~ trailing,
         ).rewrite: (nameOpt, rawExpr) =>
           splice(
             lang.Assumption(
               nameOpt match
                 case None       => lang.Anonymous()
                 case Some(name) => lang.Id().like(name),
-              rawExpr.mkNode
-            )
+              rawExpr.mkNode,
+            ),
           )
         // theorem
         | on(
           skip(
-            tok(defns.THEOREM, defns.PROPOSITION, defns.LEMMA, defns.COROLLARY)
+            tok(defns.THEOREM, defns.PROPOSITION, defns.LEMMA, defns.COROLLARY),
           )
             ~ field(
               optional(
                 field(Alpha)
                   ~ skip(`_==_`)
-                  ~ trailing
-              )
+                  ~ trailing,
+              ),
             )
             ~ field(nodeSpanMatchedBy(assumeProve.void) | rawExpression)
             ~ field(
@@ -598,12 +598,12 @@ object TLAParser extends PassSeq:
                   defns.PROOF,
                   defns.BY,
                   defns.OBVIOUS,
-                  defns.OMITTED
+                  defns.OMITTED,
                 )
-                  *> rawProofs
-              )
+                  *> rawProofs,
+              ),
             )
-            ~ trailing
+            ~ trailing,
         ).rewrite: (nameOpt, body, proofsOpt) =>
           splice(
             lang.Theorem(
@@ -614,13 +614,13 @@ object TLAParser extends PassSeq:
                 case rawExpr: RawExpression => rawExpr.mkNode
                 case assumeProveNodes: IndexedSeqView[Node.Child] =>
                   lang.Theorem.AssumeProve(
-                    assumeProveNodes.map(_.unparent())
+                    assumeProveNodes.map(_.unparent()),
                   ),
               proofsOpt match
                 case None => lang.Theorem.Proofs()
                 case Some(proofs) =>
-                  lang.Theorem.Proofs(proofs.map(_.unparent()))
-            )
+                  lang.Theorem.Proofs(proofs.map(_.unparent())),
+            ),
           )
         // recursive
         | on(
@@ -628,9 +628,9 @@ object TLAParser extends PassSeq:
             ~ field(
               repeatedSepBy1(`,`):
                 opDeclPattern
-                  | tok(Alpha)
+                  | tok(Alpha),
             )
-            ~ trailing
+            ~ trailing,
         ).rewrite: decls =>
           splice(
             decls.iterator
@@ -639,22 +639,22 @@ object TLAParser extends PassSeq:
                   lang.Recursive(
                     lang.Order2(
                       lang.Id().like(alpha),
-                      Node.Embed(arity)
-                    )
+                      Node.Embed(arity),
+                    ),
                   )
                 case (op, arity) =>
                   lang.Recursive(
                     lang.Order2(
                       op.unparent(),
-                      Node.Embed(arity)
-                    )
+                      Node.Embed(arity),
+                    ),
                   )
                 case alpha: Node =>
-                  lang.Recursive(lang.Id().like(alpha))
+                  lang.Recursive(lang.Id().like(alpha)),
           )
         // instance
         | on(
-          Instance.pattern
+          Instance.pattern,
         ).rewrite: inst =>
           splice(inst.mkNode)
         // module definition
@@ -663,13 +663,13 @@ object TLAParser extends PassSeq:
             ~ field(
               optional(
                 tok(ParenthesesGroup) *> children(
-                  repeated1(Alpha)
-                )
-              )
+                  repeated1(Alpha),
+                ),
+              ),
             )
             ~ skip(`_==_`)
             ~ field(Instance.pattern)
-            ~ trailing
+            ~ trailing,
         ).rewrite: (name, paramsOpt, instance) =>
           splice(
             lang.ModuleDefinition(
@@ -678,20 +678,20 @@ object TLAParser extends PassSeq:
                 case None => lang.Operator.Params()
                 case Some(params) =>
                   lang.Operator.Params(
-                    params.map(param => lang.Id().like(param))
+                    params.map(param => lang.Id().like(param)),
                   ),
-              instance.mkNode
-            )
+              instance.mkNode,
+            ),
           )
         // dashseq
         | on(
-          tok(DashSeq)
+          tok(DashSeq),
         ).rewrite: _ =>
           splice()
         // useOrHide
         | on(
           tok(defns.USE, defns.HIDE)
-            *> rawProofs
+            *> rawProofs,
         ).rewrite: contents =>
           splice(lang.UseOrHide(contents.map(_.unparent())))
 
@@ -707,9 +707,9 @@ object TLAParser extends PassSeq:
         on(
           field(tok(defns.LOCAL))
             ~ field(
-              tok(lang.Operator, lang.Instance, lang.ModuleDefinition)
+              tok(lang.Operator, lang.Instance, lang.ModuleDefinition),
             )
-            ~ trailing
+            ~ trailing,
         ).rewrite: (local, op) =>
           splice(lang.Local(op.unparent()).like(local))
 

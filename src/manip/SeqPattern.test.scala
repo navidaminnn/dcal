@@ -22,9 +22,9 @@ class SeqPatternTests extends munit.FunSuite:
 
   extension [T](pat: on[T])
     def onChildren(using
-        munit.Location
+        munit.Location,
     )(name: String)(children: Node.Child*)(
-        expected: T
+        expected: T,
     ): pat.type =
       val top = Node.Top(children)
       test(name):
@@ -36,7 +36,7 @@ class SeqPatternTests extends munit.FunSuite:
 
   on(
     tok(tok1)
-      | SeqPattern.pure("no")
+      | SeqPattern.pure("no"),
   )
     .onChildren("tok: match tok1")(tok1())(tok1())
     .onChildren("tok: no match tok1")(tok2())("no")
@@ -46,7 +46,7 @@ class SeqPatternTests extends munit.FunSuite:
     field(tok(tok1))
       ~ field(tok(tok2))
       ~ eof
-      | SeqPattern.pure("no")
+      | SeqPattern.pure("no"),
   )
     .onChildren("fields: match tok1, tok2")(tok1(), tok2())((tok1(), tok2()))
     .onChildren("fields: too short")(tok1())("no")
@@ -57,19 +57,19 @@ class SeqPatternTests extends munit.FunSuite:
   on(
     field(repeated(tok(tok1)))
       ~ eof
-      | SeqPattern.pure("no")
+      | SeqPattern.pure("no"),
   )
     .onChildren("fields repeated: 0")()(Nil)
     .onChildren("fields repeated: 1")(tok1())(List(tok1()))
     .onChildren("fields repeated: 2")(tok1(), tok1())(List(tok1(), tok1()))
     .onChildren("fields repeated: 3")(tok1(), tok1(), tok1())(
-      List(tok1(), tok1(), tok1())
+      List(tok1(), tok1(), tok1()),
     )
     .onChildren("fields repeated: odd one out")(tok1(), tok2(), tok1())("no")
     .onChildren("fields repeated: prefix but end assert")(
       tok1(),
       tok1(),
-      tok2()
+      tok2(),
     )("no")
 
   on(
@@ -77,7 +77,7 @@ class SeqPatternTests extends munit.FunSuite:
       ~ field(tok(tok2))
       ~ skip(tok(tok3))
       ~ eof
-      | SeqPattern.pure("no")
+      | SeqPattern.pure("no"),
   )
     .onChildren("fields skips: exact")(tok1(), tok2(), tok3())(tok2())
     .onChildren("fields skip: first missing")(tok2(), tok3())("no")

@@ -28,7 +28,7 @@ object TLAReader extends Reader:
     SqBracketsGroup,
     BracesGroup,
     TupleGroup,
-    LetGroup
+    LetGroup,
   )
 
   lazy val wellformed = Wellformed:
@@ -53,7 +53,7 @@ object TLAReader extends Reader:
         // ---
         Comment,
         DashSeq,
-        EqSeq
+        EqSeq,
       )
         | choice(NonAlpha.instances.toSet)
         | choice(allOperators.toSet)
@@ -74,7 +74,7 @@ object TLAReader extends Reader:
     StepMarker ::= fields(
       choice(StepMarker.Num, StepMarker.Plus, StepMarker.Star),
       StepMarker.Ident,
-      embedded[Int]
+      embedded[Int],
     )
     StepMarker.Num ::= Atom
     StepMarker.Plus ::= Atom
@@ -149,7 +149,7 @@ object TLAReader extends Reader:
   val nonAlphaNonLaTexOperators: IArray[defns.Operator] =
     allOperators.filter: op =>
       (!op.spelling.startsWith(
-        "\\"
+        "\\",
       ) || op == defns.`\\/` || op == defns.`\\`)
         && !letters(op.spelling.head)
 
@@ -178,7 +178,7 @@ object TLAReader extends Reader:
         sel.onSeq(s"\\$l")(impl)
 
     private def installAlphas(
-        next: => Manip[SourceRange]
+        next: => Manip[SourceRange],
     ): bytes.selecting[SourceRange] =
       val nxt = defer(next)
       sel.onOneOf(letters + '_'):
@@ -199,13 +199,13 @@ object TLAReader extends Reader:
           consumeMatch: m1 =>
             finishStepMarkerWithIdx(
               m1,
-              StepMarker.Star(m1.drop(1).dropRight(1))
+              StepMarker.Star(m1.drop(1).dropRight(1)),
             )
         .onSeq("<+>"):
           consumeMatch: m1 =>
             finishStepMarkerWithIdx(
               m1,
-              StepMarker.Plus(m1.drop(1).dropRight(1))
+              StepMarker.Plus(m1.drop(1).dropRight(1)),
             )
 
   override protected lazy val rules: Manip[SourceRange] =
@@ -213,7 +213,7 @@ object TLAReader extends Reader:
 
   lazy val moduleSearchNeverMind: Manip[SourceRange] =
     on(
-      tok(ModuleGroup) *> refine(atParent(on(theTop).value))
+      tok(ModuleGroup) *> refine(atParent(on(theTop).value)),
     ).value.flatMap: top =>
       dropMatch:
         effect(top.children.dropRightInPlace(1))
@@ -227,7 +227,7 @@ object TLAReader extends Reader:
             skip(DashSeq)
               ~ skip(Alpha.src("MODULE"))
               ~ skip(optional(Alpha))
-              ~ eof
+              ~ eof,
         ).check
 
       (validCases *> moduleSearch)
@@ -256,7 +256,7 @@ object TLAReader extends Reader:
                     skip(DashSeq)
                       ~ skip(Alpha.src("MODULE"))
                       ~ skip(Alpha)
-                      ~ eof
+                      ~ eof,
                 ).check *> consumeMatch: m =>
                   addChild(DashSeq(m))
                     *> tokens)
@@ -291,7 +291,7 @@ object TLAReader extends Reader:
 
   private def closeGroup(
       tkn: Token,
-      reinterpretTok: Token
+      reinterpretTok: Token,
   ): Manip[SourceRange] =
     val rest: Manip[SourceRange] =
       if tkn == reinterpretTok
@@ -299,7 +299,7 @@ object TLAReader extends Reader:
       else
         on(tok(tkn)).value.flatMap: node =>
           effect(
-            node.replaceThis(reinterpretTok(node.unparentedChildren).like(node))
+            node.replaceThis(reinterpretTok(node.unparentedChildren).like(node)),
           )
             *> tokens
 
@@ -314,8 +314,8 @@ object TLAReader extends Reader:
       addChild(
         Builtin.Error(
           s"unexpected end of $name group",
-          Builtin.SourceMarker(m)
-        )
+          Builtin.SourceMarker(m),
+        ),
       )
         *> tokens
 
@@ -324,35 +324,35 @@ object TLAReader extends Reader:
       addChild(
         Builtin.Error(
           "unexpected EOF",
-          Builtin.SourceMarker(m)
-        )
+          Builtin.SourceMarker(m),
+        ),
       )
         *> Manip.pure(m)
 
   private lazy val letGroupSemantics: Manip[SourceRange] =
     commit:
       on(
-        lastChild(Alpha.src("LET"))
+        lastChild(Alpha.src("LET")),
       ).value.flatMap: node =>
         effect(node.replaceThis(LetGroup(node.sourceRange)))
           .here(tokens)
       | on(
-        tok(LetGroup) *> lastChild(Alpha.src("IN"))
+        tok(LetGroup) *> lastChild(Alpha.src("IN")),
       ).value.flatMap: node =>
         effect(node.removeThis().sourceRange)
           .flatMap: m =>
             extendThisNode(m)
             atParent(tokens)
       | on(
-        lastChild(Alpha.src("IN"))
+        lastChild(Alpha.src("IN")),
       ).value.flatMap: node =>
         effect(node.removeThis().sourceRange)
           .flatMap: m =>
             addChild(
               Builtin.Error(
                 s"unexpected end of LET group",
-                Builtin.SourceMarker(m)
-              )
+                Builtin.SourceMarker(m),
+              ),
             )
               *> tokens
       | on(not(lastChild(Alpha.src("IN")))).check *> tokens
@@ -375,8 +375,8 @@ object TLAReader extends Reader:
                 addChild(
                   Builtin.Error(
                     "unexpected end of module",
-                    Builtin.SourceMarker(m)
-                  )
+                    Builtin.SourceMarker(m),
+                  ),
                 )
                   *> on(ancestor(theTop)).value.here(moduleSearch)
         .onSeq("----"):
@@ -392,7 +392,7 @@ object TLAReader extends Reader:
                           ~ field(tok(Alpha).src("MODULE"))
                           ~ field(Alpha)
                           ~ field(DashSeq)
-                          ~ eof
+                          ~ eof,
                       ).value.tapEffect: (initDashes, mod, name, endDashes) =>
                         val parent = initDashes.parent.get
                         parent.children.patchInPlace(
@@ -402,11 +402,11 @@ object TLAReader extends Reader:
                               initDashes.unparent(),
                               mod.unparent(),
                               name.unparent(),
-                              endDashes.unparent()
-                            )
+                              endDashes.unparent(),
+                            ),
                           ),
-                          replaced = 4
-                        )
+                          replaced = 4,
+                        ),
                   ) *> atLastChild(tokens)
 
                 handleNestedModule | tokens
@@ -442,8 +442,8 @@ object TLAReader extends Reader:
               addChild(
                 Builtin.Error(
                   "invalid character",
-                  Builtin.SourceMarker(m)
-                )
+                  Builtin.SourceMarker(m),
+                ),
               )
                 *> tokens
           | unexpectedEOF
@@ -559,7 +559,7 @@ object TLAReader extends Reader:
 
   private def finishStepMarkerWithIdx(
       m1: SourceRange,
-      idx: Node
+      idx: Node,
   ): Manip[SourceRange] =
     bytes.selectManyLike(digits ++ letters + '_'):
       consumeMatch: m2 =>
@@ -569,8 +569,8 @@ object TLAReader extends Reader:
               StepMarker(
                 idx,
                 StepMarker.Ident(m2),
-                Node.Embed(m3.size)
+                Node.Embed(m3.size),
               )
-                .at(m1 <+> m2 <+> m3)
+                .at(m1 <+> m2 <+> m3),
             )
               *> tokens

@@ -35,7 +35,7 @@ final class DebugAdapter(host: String, port: Int) extends Tracer:
   @scala.annotation.tailrec
   private def handlePointOfInterest(
       debugInfo: DebugInfo,
-      evalTag: DebugAdapter.EvalTag
+      evalTag: DebugAdapter.EvalTag,
   ): Unit =
     io.witnessSources(debugInfo)
     val shouldWait =
@@ -53,10 +53,10 @@ final class DebugAdapter(host: String, port: Int) extends Tracer:
 
         val stackEntry = StackEntry(
           source = SourceRecord(
-            fileName = debugInfo.file
+            fileName = debugInfo.file,
           ),
           tag = evalTag,
-          line = debugInfo.line
+          line = debugInfo.line,
         )
 
         if state.stackTrace.headOption != Some(stackEntry)
@@ -124,7 +124,7 @@ final class DebugAdapter(host: String, port: Int) extends Tracer:
       manip: Manip[?],
       ref: Manip.Ref[?],
       value: Any,
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ): Unit =
     () // TODO: implement
 
@@ -144,18 +144,18 @@ final class DebugAdapter(host: String, port: Int) extends Tracer:
       debugInfo: DebugInfo,
       parent: Node.Parent,
       idx: Int,
-      matchedCount: Int
+      matchedCount: Int,
   ): Unit =
     handlePointOfInterest(
       debugInfo,
-      EvalTag.BeforeRewrite
+      EvalTag.BeforeRewrite,
     )
 
   def onRewriteComplete(
       debugInfo: DebugInfo,
       parent: Node.Parent,
       idx: Int,
-      resultCount: Int
+      resultCount: Int,
   ): Unit =
     handlePointOfInterest(debugInfo, EvalTag.AfterRewrite)
 
@@ -177,7 +177,7 @@ object DebugAdapter:
     def asJSON: ujson.Obj =
       ujson.Obj(
         "name" -> fileName,
-        "path" -> fileName
+        "path" -> fileName,
       )
 
   enum EvalState:
@@ -264,8 +264,8 @@ object DebugAdapter:
             (
               seq,
               obj("command").str,
-              obj.obj.getOrElse("arguments", ujson.Obj())
-            )
+              obj.obj.getOrElse("arguments", ujson.Obj()),
+            ),
           )
         case _ => None
 
@@ -294,8 +294,8 @@ object DebugAdapter:
             body = ujson.Obj(
               "reason" -> "step",
               "description" -> s"Paused ${evalTag.desc}",
-              "threadId" -> 1
-            )
+              "threadId" -> 1,
+            ),
           )
 
     private final class Connection(sock: SocketChannel)
@@ -367,14 +367,14 @@ object DebugAdapter:
           val payloadBytes = ujson.writeToByteArray(payload)
           output.write(
             s"Content-Length: ${payloadBytes.length}\r\n\r\n"
-              .getBytes(StandardCharsets.UTF_8)
+              .getBytes(StandardCharsets.UTF_8),
           )
           output.write(payloadBytes)
 
       def sendResp(
           requestSeq: Int,
           command: String,
-          body: ujson.Value = ujson.Null
+          body: ujson.Value = ujson.Null,
       ): Unit =
         sendMsg(
           ujson.Obj(
@@ -382,20 +382,20 @@ object DebugAdapter:
             "success" -> true,
             "command" -> command,
             "type" -> "response",
-            "body" -> body
-          )
+            "body" -> body,
+          ),
         )
 
       def sendEvent(
           event: String,
-          body: ujson.Value = ujson.Null
+          body: ujson.Value = ujson.Null,
       ): Unit =
         sendMsg(
           ujson.Obj(
             "type" -> "event",
             "event" -> event,
-            "body" -> body
-          )
+            "body" -> body,
+          ),
         )
 
       def sendSource(record: SourceRecord): Unit =
@@ -403,8 +403,8 @@ object DebugAdapter:
           event = "loadedSource",
           body = ujson.Obj(
             "reason" -> "new",
-            "source" -> record.asJSON
-          )
+            "source" -> record.asJSON,
+          ),
         )
 
       private def handleMsg(msg: ujson.Value): Unit =
@@ -413,21 +413,21 @@ object DebugAdapter:
             // println(s"initialize req: $req")
             sendResp(
               requestSeq = seq,
-              command = "initialize"
+              command = "initialize",
             )
           case DAPRequest(seq, "attach", req) =>
             // println(s"attach req: $req")
             sendResp(
               requestSeq = seq,
-              command = "attach"
+              command = "attach",
             )
             sendEvent(
               event = "stopped",
               body = ujson.Obj(
                 "reason" -> "pause",
                 "description" -> "Ready to start",
-                "threadId" -> 1
-              )
+                "threadId" -> 1,
+              ),
             )
             withState: state =>
               state.knownSources.foreach(sendSource)
@@ -435,7 +435,7 @@ object DebugAdapter:
             // println(s"disconnect req: $req")
             sendResp(
               requestSeq = seq,
-              command = "disconnect"
+              command = "disconnect",
             )
             sock.close()
           case DAPRequest(seq, "threads", req) =>
@@ -448,10 +448,10 @@ object DebugAdapter:
                   ujson.Obj(
                     "id" -> 1,
                     "name" -> "singleton",
-                    "threadId" -> 1
-                  )
-                )
-              )
+                    "threadId" -> 1,
+                  ),
+                ),
+              ),
             )
           case DAPRequest(seq, "pause", req) =>
             // println(s"pause req: $req")
@@ -466,7 +466,7 @@ object DebugAdapter:
                 wasPaused
             sendResp(
               requestSeq = seq,
-              command = "pause"
+              command = "pause",
             )
             if wasPaused
             then
@@ -475,8 +475,8 @@ object DebugAdapter:
                 body = ujson.Obj(
                   "reason" -> "pause",
                   "description" -> "Paused",
-                  "threadId" -> 1
-                )
+                  "threadId" -> 1,
+                ),
               )
           case DAPRequest(seq, "stackTrace", req) =>
             // println(s"stackTrace req: $req")
@@ -492,7 +492,7 @@ object DebugAdapter:
                         "line" -> rec.line,
                         "column" -> 0,
                         "origin" -> "manip",
-                        "source" -> rec.source.asJSON
+                        "source" -> rec.source.asJSON,
                       )
 
                   sendResp(
@@ -500,8 +500,8 @@ object DebugAdapter:
                     command = "stackTrace",
                     body = ujson.Obj(
                       "stackFrames" -> frames.reverseIterator,
-                      "totalFrames" -> frames.size
-                    )
+                      "totalFrames" -> frames.size,
+                    ),
                   )
                 case _ => // TODO: error or something
           case DAPRequest(seq, "continue", req) =>
@@ -510,7 +510,7 @@ object DebugAdapter:
               state.evalState = EvalState.Running
             sendResp(
               requestSeq = seq,
-              command = "continue"
+              command = "continue",
             )
           case DAPRequest(seq, "next", req) =>
             // println(s"next req: $req")
@@ -518,14 +518,14 @@ object DebugAdapter:
               state.evalState = EvalState.Stepping
             sendResp(
               requestSeq = seq,
-              command = "next"
+              command = "next",
             )
           case DAPRequest(seq, "stepIn", req) =>
             io.withState: state =>
               state.evalState = EvalState.ContinueNextRewrite
             sendResp(
               requestSeq = seq,
-              command = "stepIn"
+              command = "stepIn",
             )
           case DAPRequest(seq, "scopes", req) =>
             // println(s"scopes req: $req")
@@ -543,10 +543,10 @@ object DebugAdapter:
                         ujson.Obj(
                           "name" -> "Tree (at top)",
                           "variablesReference" -> state.refOf(top),
-                          "namedVariables" -> top.children.size
-                        )
-                      )
-                    )
+                          "namedVariables" -> top.children.size,
+                        ),
+                      ),
+                    ),
                   )
                 case Some(Handle.AtChild(parent, idx, child)) =>
                   val childName = child match
@@ -562,10 +562,10 @@ object DebugAdapter:
                           "variablesReference" -> state.refOf(child),
                           "namedVariables" -> (child match
                             case parent: Node.Parent => parent.children.size + 1
-                            case _                   => 1)
-                        )
-                      )
-                    )
+                            case _                   => 1),
+                        ),
+                      ),
+                    ),
                   )
                 case Some(Handle.Sentinel(parent, idx)) =>
                   val parentName = parent match
@@ -579,10 +579,10 @@ object DebugAdapter:
                         ujson.Obj(
                           "name" -> s"Tree (past-the-end $idx of $parentName)",
                           "variablesReference" -> state.refOf(parent),
-                          "namedVariables" -> 1
-                        )
-                      )
-                    )
+                          "namedVariables" -> 1,
+                        ),
+                      ),
+                    ),
                   )
           case DAPRequest(seq, "variables", req) =>
             // println(s"variables req: $req")
@@ -599,7 +599,7 @@ object DebugAdapter:
                       "name" -> s"$pfx ${node.token.name}",
                       "value" -> node.sourceRange.decodeString(),
                       "variablesReference" -> state.refOf(node),
-                      "namedVariables" -> (node.children.size + 1)
+                      "namedVariables" -> (node.children.size + 1),
                     )
                   case embed: Node.Embed[?] =>
                     val pfx =
@@ -610,7 +610,7 @@ object DebugAdapter:
                       "name" -> s"$pfx ${embed.meta.tag}",
                       "value" -> embed.value.toString(),
                       "variablesReference" -> state.refOf(node),
-                      "namedVariables" -> 1
+                      "namedVariables" -> 1,
                     )
                   case top: Node.Top =>
                     ujson.Obj(
@@ -618,7 +618,7 @@ object DebugAdapter:
                                  else s"parent [$idxInParent] top"),
                       "value" -> "",
                       "variablesReference" -> state.refOf(top),
-                      "namedVariables" -> top.children.size
+                      "namedVariables" -> top.children.size,
                     )
 
               def variablesOf(node: Node.All): ujson.Arr =
@@ -626,7 +626,7 @@ object DebugAdapter:
                   case node: Node =>
                     ujson.Arr.from(
                       node.parent.map(variableOf(_, node.idxInParent)).iterator
-                        ++ node.children.iterator.map(variableOf(_, -1))
+                        ++ node.children.iterator.map(variableOf(_, -1)),
                     )
                   case embed: Node.Embed[?] =>
                     embed.parent.map(variableOf(_, embed.idxInParent))
@@ -640,15 +640,15 @@ object DebugAdapter:
                     requestSeq = seq,
                     command = "variables",
                     body = ujson.Obj(
-                      "variables" -> variablesOf(node)
-                    )
+                      "variables" -> variablesOf(node),
+                    ),
                   )
           case _ =>
             println(s"unsupported DAP request ${msg.render()}")
 
       def close(): Unit =
         sendEvent(
-          event = "terminated"
+          event = "terminated",
         )
         sock.close()
         thread.join()

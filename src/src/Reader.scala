@@ -97,10 +97,10 @@ object Reader:
 
       def onSeq(
           chars: CharSequence,
-          encoding: Charset = StandardCharsets.UTF_8
+          encoding: Charset = StandardCharsets.UTF_8,
       )(manip: => Manip[T]): selecting[T] =
         val bytes = SourceRange.entire(
-          Source.fromByteBuffer(encoding.encode(CharBuffer.wrap(chars)))
+          Source.fromByteBuffer(encoding.encode(CharBuffer.wrap(chars))),
         )
         new selecting(cell.add(bytes.iterator, defer(manip)))
 
@@ -123,14 +123,14 @@ object Reader:
 
         def lookup(
             src: SourceRange,
-            fallback: Manip[T]
+            fallback: Manip[T],
         ): (SourceRange, Manip[T]) =
           @scala.annotation.tailrec
           def impl(
               cell: Cell[T],
               src: SourceRange,
               matched: SourceRange,
-              otherwise: (SourceRange, Manip[T])
+              otherwise: (SourceRange, Manip[T]),
           ): (SourceRange, Manip[T]) =
             cell match
               case Branch(map, fallbackOpt) =>
@@ -157,14 +157,14 @@ object Reader:
                 Branch(
                   map.updatedWith(seqHead)(
                     _.orElse(Some(Branch[T](Map.empty, None)))
-                      .map(_.add(seq, manip))
+                      .map(_.add(seq, manip)),
                   ),
-                  fallback
+                  fallback,
                 )
               case Leaf(existingManip) =>
                 Branch(
                   Map(seqHead -> Branch(Map.empty, None).add(seq, manip)),
-                  Some(existingManip)
+                  Some(existingManip),
                 )
           else
             this match
@@ -173,9 +173,9 @@ object Reader:
               case Leaf(manip) => Leaf(manip | manip)
 
     def selectManyLike[T](using
-        DebugInfo
+        DebugInfo,
     )(bytes: Set[Byte])(
-        manip: Manip[T]
+        manip: Manip[T],
     ): Manip[T] =
       lazy val impl: Manip[T] =
         srcRef.get.lookahead.flatMap: src =>
@@ -188,9 +188,9 @@ object Reader:
 
     @targetName("selectManyLikeChars")
     def selectManyLike[T](using
-        DebugInfo
+        DebugInfo,
     )(chars: Set[Char])(
-        manip: Manip[T]
+        manip: Manip[T],
     ): Manip[T] =
       selectManyLike(chars.map(_.toByte))(manip)
 

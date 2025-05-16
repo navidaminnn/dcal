@@ -15,7 +15,7 @@
 package forja
 
 final class TokenTests extends munit.FunSuite:
-  import TokenTests.*  
+  import TokenTests.*
 
   test("tokens =="):
     assert(t1 == t1)

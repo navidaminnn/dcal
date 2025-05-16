@@ -51,7 +51,7 @@ val licenseTemplate =
 val yearString = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy"))
 val licenseText = licenseTemplate.replace("____", yearString)
 val licenseRegex = Regex(
-  raw"""(?s)// Copyright \d\d\d\d.*// limitations under the License\."""
+  raw"""(?s)// Copyright \d\d\d\d.*// limitations under the License\.""",
 )
 val licenseReplacement = Regex.quoteReplacement(licenseText)
 

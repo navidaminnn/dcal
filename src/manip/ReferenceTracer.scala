@@ -23,7 +23,7 @@ import java.io.ByteArrayOutputStream
 import cats.StackSafeMonad
 
 final class ReferenceTracer(manip: Manip[?])(using
-    baseDebugInfo: DebugInfo
+    baseDebugInfo: DebugInfo,
 ) extends Tracer:
   import ReferenceTracer.*
   private val referenceActionSrc: () => Action =
@@ -77,7 +77,7 @@ final class ReferenceTracer(manip: Manip[?])(using
     val outFile =
       os.temp(dir = tmpDir, contents = outBuf.toString(), deleteOnExit = false)
     throw new AssertionError(
-      s"diverged from reference implementation; see $outFile"
+      s"diverged from reference implementation; see $outFile",
     )
   end reportErr
 
@@ -104,7 +104,7 @@ final class ReferenceTracer(manip: Manip[?])(using
       manip: Manip[?],
       ref: Manip.Ref[?],
       value: Any,
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ): Unit =
     perform(Action.Read(ref, ValueWrapper(value), debugInfo))
 
@@ -127,14 +127,14 @@ final class ReferenceTracer(manip: Manip[?])(using
       debugInfo: DebugInfo,
       parent: Node.Parent,
       idx: Int,
-      matchCount: Int
+      matchCount: Int,
   ): Unit = ()
 
   def onRewriteComplete(
       debugInfo: DebugInfo,
       parent: Node.Parent,
       idx: Int,
-      resultCount: Int
+      resultCount: Int,
   ): Unit = ()
 
   def onFatal(manip: Manip[?], debugInfo: DebugInfo, from: DebugInfo): Unit =
@@ -221,7 +221,7 @@ object ReferenceTracer:
         trampoline() match
           case null =>
             throw RuntimeException(
-              "tried to get actions from exhausted reference impl"
+              "tried to get actions from exhausted reference impl",
             )
           case Backtrack(posInfo) =>
             throw RuntimeException(s"unrecovered backtrack $posInfo")
@@ -246,7 +246,7 @@ object ReferenceTracer:
 
   private def referenceEval(
       manip: Manip[?],
-      baseDebugInfo: DebugInfo
+      baseDebugInfo: DebugInfo,
   ): () => Action =
     import cats.syntax.all.given
     import Manip.*
@@ -257,7 +257,7 @@ object ReferenceTracer:
     type BacktrackFn = DebugInfo => Result[Nothing]
 
     def backtrackFatal(
-        debugInfo: DebugInfo
+        debugInfo: DebugInfo,
     )(posInfo: DebugInfo): Result[Nothing] =
       for
         _ <- perform(Action.Fatal(debugInfo))
@@ -328,7 +328,7 @@ object ReferenceTracer:
               for
                 _ <- perform(Action.Assign(refInit.ref, ValueWrapper(value)))
                 result <- impl(refInit.manip)(using
-                  refMap.updated(refInit.ref, value)
+                  refMap.updated(refInit.ref, value),
                 )
                 _ <- perform(Action.Del(refInit.ref, refInit.debugInfo))
               yield result
@@ -353,7 +353,7 @@ object ReferenceTracer:
             case Some(oldValue) =>
               for
                 _ <- perform(
-                  Action.Read(ref, ValueWrapper(oldValue), debugInfo)
+                  Action.Read(ref, ValueWrapper(oldValue), debugInfo),
                 )
                 value = fn(oldValue)
                 _ <- perform(Action.Assign(ref, ValueWrapper(value)))
@@ -377,15 +377,15 @@ object ReferenceTracer:
             case Some(oldHandle) =>
               perform(
                 Action
-                  .Read(Handle.ref, ValueWrapper(oldHandle), debugInfo)
+                  .Read(Handle.ref, ValueWrapper(oldHandle), debugInfo),
               )
                 *> (oldHandle match
                   case fn(handle) =>
                     perform(
-                      Action.Assign(Handle.ref, ValueWrapper(handle))
+                      Action.Assign(Handle.ref, ValueWrapper(handle)),
                     )
                       *> impl(manip)(using
-                        refMap.updated(Handle.ref, handle)
+                        refMap.updated(Handle.ref, handle),
                       )
                   case _ => doBacktrack(debugInfo))
     end impl

@@ -36,7 +36,7 @@ class WellformedTests extends munit.FunSuite:
 
   def joinN(
       breadth: Int,
-      iterFn: () => Iterator[Node.Child]
+      iterFn: () => Iterator[Node.Child],
   ): Iterator[List[Node.Child]] =
     breadth match
       case 0 => Iterator.single(Nil)
@@ -82,9 +82,9 @@ class WellformedTests extends munit.FunSuite:
       assertEquals(deser, orig)
 
   def expectNoErrors(using
-      munit.Location
+      munit.Location,
   )(wf: Wellformed)(
-      ast: Node.Top
+      ast: Node.Top,
   ): Unit =
     wf.markErrors(ast)
     if ast.hasErrors
@@ -107,21 +107,21 @@ class WellformedTests extends munit.FunSuite:
         SAtom("wellformed"),
         SList(
           SAtom("top"),
-          SAtom("forja.wf.WellformedTests.tok2")
+          SAtom("forja.wf.WellformedTests.tok2"),
         ),
         SList(
           SAtom("forja.wf.WellformedTests.tok2"),
           SList(
             SAtom("fields"),
             SAtom("forja.wf.WellformedTests.tok3"),
-            SAtom("forja.wf.WellformedTests.tok3")
-          )
+            SAtom("forja.wf.WellformedTests.tok3"),
+          ),
         ),
         SList(
           SAtom("forja.wf.WellformedTests.tok3"),
-          SAtom("atom")
-        )
-      )
+          SAtom("atom"),
+        ),
+      ),
     )
 
   test("wf1 toString"):
@@ -135,7 +135,7 @@ class WellformedTests extends munit.FunSuite:
         |      forja.wf.WellformedTests.tok3
         |      forja.wf.WellformedTests.tok3))
         |  (forja.wf.WellformedTests.tok3
-        |    atom))""".stripMargin.ensureLf
+        |    atom))""".stripMargin.ensureLf,
     )
 
   test("fields: correct"):
@@ -143,8 +143,8 @@ class WellformedTests extends munit.FunSuite:
       Node.Top(
         tok2(
           tok3(),
-          tok3()
-        )
+          tok3(),
+        ),
       )
 
   test("fields: no fields"):
@@ -158,16 +158,16 @@ class WellformedTests extends munit.FunSuite:
       Node.Top(
         tok3(
           tok2(),
-          tok2()
-        )
+          tok2(),
+        ),
       )
   test("fields: one is not an atom"):
     expectErrors(wf1):
       Node.Top(
         tok2(
           tok3(tok3()),
-          tok3()
-        )
+          tok3(),
+        ),
       )
 
 object WellformedTests:

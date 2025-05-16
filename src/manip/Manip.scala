@@ -36,9 +36,8 @@ import scala.reflect.ClassTag
   *   - [[forja.manip.Manip.monoidK]] enables cats utilities that rely on
   *     "choice" and "empty" operations
   *
-  * The specific subclasses are an implementation detail. See
-  * [[forja.dsl]] for instructions on how to construct instances of this
-  * class.
+  * The specific subclasses are an implementation detail. See [[forja.dsl]] for
+  * instructions on how to construct instances of this class.
   */
 sealed abstract class Manip[+T]:
   private inline given DebugInfo = DebugInfo.poison
@@ -55,7 +54,7 @@ sealed abstract class Manip[+T]:
       while performResult ne null do
         assert(
           state.result == null,
-          s"result ${state.result} should have been null"
+          s"result ${state.result} should have been null",
         )
         performResult = performResult.performImpl(state)
         if performResult eq null
@@ -76,9 +75,9 @@ object Manip:
 
   final case class UnrecoveredBacktrackException(
       rootInfo: DebugInfo,
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ) extends RuntimeException(
-        s"unrecovered backtrack caught in ($rootInfo), initiated at $debugInfo"
+        s"unrecovered backtrack caught in ($rootInfo), initiated at $debugInfo",
       )
 
   private val useReferenceTracer =
@@ -120,7 +119,7 @@ object Manip:
         ref: Ref[T],
         value: T | Null,
         oldSavedDepth: Int = -2,
-        isCommit: Boolean = false
+        isCommit: Boolean = false,
     ): Unit =
       // if we have an old depth that "predates" what's in safeMap,
       // restore to that. This will catch the first RestoreRef during commit, if
@@ -176,23 +175,23 @@ object Manip:
 
     sealed trait StackRec:
       private[manip] def performPop(
-          state: Manip.PerformState
+          state: Manip.PerformState,
       ): Manip.PerformResult
       private[manip] def performBacktrack(
           state: Manip.PerformState,
-          posInfo: DebugInfo
+          posInfo: DebugInfo,
       ): Manip.PerformResult
       private[manip] def performCommit(state: Manip.PerformState): Unit
 
     sealed trait NopBacktrack extends StackRec:
       def performBacktrack(
           state: PerformState,
-          posInfo: DebugInfo
+          posInfo: DebugInfo,
       ): PerformResult = null
 
     sealed trait PopPop extends StackRec:
       def performPop(
-          state: Manip.PerformState
+          state: Manip.PerformState,
       ): Manip.PerformResult = null
 
     sealed trait PushCommit extends StackRec:
@@ -208,7 +207,7 @@ object Manip:
         else state.refMap(ref) = value.nn
       def performBacktrack(
           state: PerformState,
-          posInfo: DebugInfo
+          posInfo: DebugInfo,
       ): PerformResult =
         restore(state)
         null
@@ -247,13 +246,13 @@ object Manip:
     def performPop(state: PerformState): PerformResult =
       state.leftDec()
       state.speculateStack.push(
-        PerformState.MapFn(state.result.asInstanceOf[T => U])
+        PerformState.MapFn(state.result.asInstanceOf[T => U]),
       )
       state.result = null
       fa
     def performBacktrack(
         state: PerformState,
-        posInfo: DebugInfo
+        posInfo: DebugInfo,
     ): PerformResult =
       state.leftDec()
       null
@@ -286,7 +285,7 @@ object Manip:
       next
     def performBacktrack(
         state: PerformState,
-        posInfo: DebugInfo
+        posInfo: DebugInfo,
     ): PerformResult =
       state.leftDec()
       null
@@ -297,7 +296,7 @@ object Manip:
   final case class Restrict[T, U](
       manip: Manip[T],
       restriction: PartialFunction[T, U],
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ) extends Manip[U],
         NopBacktrack,
         PushCommit:
@@ -330,7 +329,7 @@ object Manip:
       null
     def performBacktrack(
         state: PerformState,
-        posInfo: DebugInfo
+        posInfo: DebugInfo,
     ): PerformResult =
       fn()
       null
@@ -350,7 +349,7 @@ object Manip:
       right
     def performBacktrack(
         state: PerformState,
-        posInfo: DebugInfo
+        posInfo: DebugInfo,
     ): PerformResult =
       state.leftDec()
       null
@@ -371,7 +370,7 @@ object Manip:
       right
     def performBacktrack(
         state: PerformState,
-        posInfo: DebugInfo
+        posInfo: DebugInfo,
     ): PerformResult =
       state.leftDec()
       null
@@ -392,7 +391,7 @@ object Manip:
       ref: Manip.Ref[T],
       initFn: () => T,
       manip: Manip[U],
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ) extends Manip[U]:
     def performImpl(state: PerformState): PerformResult =
       state.refMap.get(ref) match
@@ -408,7 +407,7 @@ object Manip:
   final case class RefReset[T, U](
       ref: Manip.Ref[T],
       manip: Manip[U],
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ) extends Manip[U]:
     def performImpl(state: PerformState): PerformResult =
       state.refMap.get(ref) match
@@ -435,7 +434,7 @@ object Manip:
       ref: Manip.Ref[T],
       fn: T => T,
       manip: Manip[U],
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ) extends Manip[U]:
     def performImpl(state: PerformState): PerformResult =
       state.refMap.get(ref) match
@@ -456,7 +455,7 @@ object Manip:
   final case class Disjunction[T](
       first: Manip[T],
       second: Manip[T],
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ) extends Manip[T],
         StackRec:
     def performImpl(state: PerformState): PerformResult =
@@ -469,7 +468,7 @@ object Manip:
       null
     def performBacktrack(
         state: PerformState,
-        posInfo: DebugInfo
+        posInfo: DebugInfo,
     ): PerformResult =
       state.leftDec()
       second
@@ -493,7 +492,7 @@ object Manip:
   final case class RestrictHandle[T](
       fn: PartialFunction[Handle, Handle],
       manip: Manip[T],
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ) extends Manip[T]:
     def performImpl(state: PerformState): PerformResult =
       state.refMap.get(Handle.ref) match
@@ -517,9 +516,9 @@ object Manip:
     final def get(using DebugInfo): Manip[T] =
       Manip.RefGet(this, summon[DebugInfo])
     final def updated[U](using
-        DebugInfo
+        DebugInfo,
     )(fn: T => T)(
-        manip: Manip[U]
+        manip: Manip[U],
     ): Manip[U] = Manip.RefUpdated(this, fn, manip, summon[DebugInfo])
     final def doEffect[U](using DebugInfo)(fn: T => U): Manip[U] =
       get.lookahead.flatMap: v =>

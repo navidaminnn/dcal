@@ -21,7 +21,7 @@ object Builtin:
     def apply(msg: String, ast: Node.Child): Node =
       Error(
         Error.Message().at(msg),
-        Error.AST(ast)
+        Error.AST(ast),
       )
 
     object Message extends Token:

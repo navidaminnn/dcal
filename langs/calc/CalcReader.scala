@@ -41,7 +41,7 @@ object CalcReader extends Reader:
     DivOp ::= Atom
 
     Expression ::= fields(
-      Number
+      Number,
     )
 
   private val digit: Set[Char] = ('0' to '9').toSet
@@ -93,8 +93,8 @@ object CalcReader extends Reader:
               case Some(value) =>
                 addChild(
                   Expression(
-                    Number(m)
-                  )
+                    Number(m),
+                  ),
                 )
                   *> rules
               case None =>

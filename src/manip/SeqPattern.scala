@@ -28,7 +28,7 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]]):
     SeqPattern(manip.combineK(other.manip))
 
   def productAtRightSibling[U](using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(other: SeqPattern[U]): SeqPattern[(T, U)] =
     SeqPattern:
       manip.lookahead.flatMap:
@@ -39,7 +39,7 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]]):
           atIdx(idx + 1)(other.map((t, _)).manip)
 
   def restrict[U](using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(fn: PartialFunction[T, U]): SeqPattern[U] =
     SeqPattern:
       manip.restrict:
@@ -55,11 +55,11 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]]):
 
   @scala.annotation.targetName("fieldsConcat")
   def ~[Tpl1 <: Tuple, Tpl2 <: Tuple](using
-      T <:< Fields[Tpl1]
+      T <:< Fields[Tpl1],
   )(using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(
-      other: SeqPattern[Fields[Tpl2]]
+      other: SeqPattern[Fields[Tpl2]],
   ): SeqPattern[Fields[Tuple.Concat[Tpl1, Tpl2]]] =
     this
       .productAtRightSibling(other)
@@ -68,19 +68,19 @@ final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]]):
 
   @scala.annotation.targetName("fieldsEnd")
   def ~[Tpl <: Tuple, T2](using
-      T <:< Fields[Tpl]
+      T <:< Fields[Tpl],
   )(using
-      maybeStrip: Fields.MaybeStripTuple1[Tpl, T2]
+      maybeStrip: Fields.MaybeStripTuple1[Tpl, T2],
   )(using DebugInfo.Ctx)(other: eof.type): SeqPattern[T2] =
     this.productAtRightSibling(atEnd).map(flds => maybeStrip(flds._1.fields))
 
   @scala.annotation.targetName("fieldsTrailing")
   def ~[Tpl <: Tuple, T2](using
-      T <:< Fields[Tpl]
+      T <:< Fields[Tpl],
   )(using
-      maybeStrip: Fields.MaybeStripTuple1[Tpl, T2]
+      maybeStrip: Fields.MaybeStripTuple1[Tpl, T2],
   )(
-      other: trailing.type
+      other: trailing.type,
   ): SeqPattern[T2] =
     this.map(flds => maybeStrip(flds.fields))
 
@@ -151,7 +151,7 @@ object SeqPattern:
           Top(top1, result)
         case (Top(_, _), _) | (_, Top(_, _)) =>
           throw NodeError(
-            "one part of the same pattern matched top while the other did not"
+            "one part of the same pattern matched top while the other did not",
           )
         case (lhs: (Look[T] | Match[T]), rhs: (Look[U] | Match[U])) =>
           assert(rhs.parent eq rhs.parent)
@@ -201,7 +201,7 @@ object SeqPattern:
       def apply(tpl: Tuple1[T]): T = tpl._1
 
     given notTuple1[Tpl <: Tuple](using
-        scala.util.NotGiven[Tpl <:< Tuple1[?]]
+        scala.util.NotGiven[Tpl <:< Tuple1[?]],
     ): MaybeStripTuple1[Tpl, Tpl] with
       def apply(tpl: Tpl): Tpl = tpl
 

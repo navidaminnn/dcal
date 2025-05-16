@@ -23,12 +23,12 @@ import scala.collection.mutable
 final class SourceRange(
     val source: Source,
     val offset: Int,
-    val length: Int
+    val length: Int,
 ) extends IndexedSeq[Byte],
       geny.Writable:
   require(
     0 <= offset && 0 <= length && offset + length <= source.byteBuffer.limit(),
-    s"invalid offset = $offset, length = $length into source with limit ${source.byteBuffer.limit()}"
+    s"invalid offset = $offset, length = $length into source with limit ${source.byteBuffer.limit()}",
   )
 
   override def toString(): String =
@@ -75,7 +75,7 @@ final class SourceRange(
   override def slice(from: Int, until: Int): SourceRange =
     require(
       0 <= from && from <= until && until <= length,
-      s"[$from, $until) is outside the range [$offset,${offset + length})"
+      s"[$from, $until) is outside the range [$offset,${offset + length})",
     )
     SourceRange(source, offset + from, until - from)
 
@@ -224,7 +224,7 @@ object SourceRange:
     def clear(): Unit = arrayBuilder.clear()
     def result(): SourceRange =
       SourceRange.entire(
-        Source.fromByteBuffer(ByteBuffer.wrap(arrayBuilder.result()))
+        Source.fromByteBuffer(ByteBuffer.wrap(arrayBuilder.result())),
       )
 
   def newBuilder: Builder = Builder()

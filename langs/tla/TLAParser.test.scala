@@ -30,7 +30,7 @@ class TLAParserTests extends munit.FunSuite, test.WithTLACorpus:
     assume(!top.hasErrors, top)
 
     TLAParser(
-      top
+      top,
       // tracer = DebugAdapter(
       //   "localhost",
       //   4711

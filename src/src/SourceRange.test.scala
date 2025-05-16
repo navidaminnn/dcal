@@ -62,7 +62,7 @@ class SourceRangeTests extends munit.FunSuite:
       extension (str: String)
         def stripMargin: String =
           StringOps(
-            str
+            str,
           ).stripMargin.ensureLf // output is standardized to use \n only
     mkTests("[crlf]", ipsum.ensureCrLf)
 
@@ -87,32 +87,32 @@ class SourceRangeTests extends munit.FunSuite:
     val ipsumSrc = SourceRange.entire(Source.fromString(ipsum))
 
     def assertHexEquals(expectedStr: String, actualStr: String)(using
-        munit.Location
+        munit.Location,
     ): Unit =
       assertEquals(
         s"$expectedStr\n\n${expectedStr.toHexView}",
-        s"$actualStr\n\n${actualStr.toHexView}"
+        s"$actualStr\n\n${actualStr.toHexView}",
       )
 
     test(s"highlight entire first line $mode"):
       assertHexEquals(
         ipsumSrc.takeLine.showInSource,
         """Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
+          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin,
       )
 
     test(s"highlight entire second line $mode"):
       assertHexEquals(
         ipsumSrc.dropLine.takeLine.showInSource,
         """incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
-          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
+          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin,
       )
 
     test(s"highlight last line $mode"):
       assertHexEquals(
         ipsumSrc.lastLine.showInSource,
         """anim id est laborum.
-          |^^^^^^^^^^^^^^^^^^^^""".stripMargin
+          |^^^^^^^^^^^^^^^^^^^^""".stripMargin,
       )
 
     test(s"highlight second 2 lines $mode"):
@@ -121,7 +121,7 @@ class SourceRangeTests extends munit.FunSuite:
         """vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
           |incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
           |exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure
-          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
+          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin,
       )
 
     test(s"highlight second 3 lines $mode"):
@@ -131,7 +131,7 @@ class SourceRangeTests extends munit.FunSuite:
           |incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
           |...
           |dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
-          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
+          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin,
       )
 
     test(s"highlight all but 1st line $mode"):
@@ -141,7 +141,7 @@ class SourceRangeTests extends munit.FunSuite:
           |incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
           |...
           |anim id est laborum.
-          |^^^^^^^^^^^^^^^^^^^^""".stripMargin
+          |^^^^^^^^^^^^^^^^^^^^""".stripMargin,
       )
 
     test(s"highlight amet to nisi $mode"):
@@ -151,13 +151,13 @@ class SourceRangeTests extends munit.FunSuite:
           |Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
           |...
           |exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure
-          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin
+          |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^""".stripMargin,
       )
 
     test(s"highlight just nisi $mode"):
       assertHexEquals(
         ipsumSrc.startingFrom("nisi").take("nisi".size).showInSource,
         """exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure
-          |                             ^^^^""".stripMargin
+          |                             ^^^^""".stripMargin,
       )
   end mkTests

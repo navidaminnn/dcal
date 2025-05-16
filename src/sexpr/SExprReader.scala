@@ -43,7 +43,7 @@ object SExprReader extends Reader:
     src.nonEmpty
       && (alpha(src.head.toChar) || pseudoAlpha(src.head.toChar))
       && src.tail.forall(b =>
-        alpha(b.toChar) || pseudoAlpha(b.toChar) || digit(b.toChar)
+        alpha(b.toChar) || pseudoAlpha(b.toChar) || digit(b.toChar),
       )
 
   protected lazy val rules: Manip[SourceRange] =
@@ -88,8 +88,8 @@ object SExprReader extends Reader:
               addChild(
                 Error(
                   "length doesn't fit in a machine int",
-                  SourceMarker(m)
-                )
+                  SourceMarker(m),
+                ),
               )
                 *> rules
             case Some(lengthPrefix) =>
@@ -106,16 +106,16 @@ object SExprReader extends Reader:
                     addChild(
                       Error(
                         "unexpected EOF before end of raw atom",
-                        SourceMarker(srcEnd)
-                      )
+                        SourceMarker(srcEnd),
+                      ),
                     )
                       *> Manip.pure(srcEnd)
                 .fallback:
                   addChild(
                     Error(
                       "expected : after length prefix",
-                      SourceMarker(m)
-                    )
+                      SourceMarker(m),
+                    ),
                   )
                     *> rules
 
@@ -173,8 +173,8 @@ object SExprReader extends Reader:
                 addChild(
                   Error(
                     s"invalid escape sequence ${mark.decodeString()}",
-                    Builtin.SourceMarker(mark)
-                  )
+                    Builtin.SourceMarker(mark),
+                  ),
                 )
                   *> addByte('?')
           .fallback:

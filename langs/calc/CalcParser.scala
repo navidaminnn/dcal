@@ -31,22 +31,22 @@ object CalcParser extends PassSeq:
     CalcReader.wellformed.makeDerived:
       Add ::= fields(
         Expression,
-        Expression
+        Expression,
       )
 
       Sub ::= fields(
         Expression,
-        Expression
+        Expression,
       )
 
       Mul ::= fields(
         Expression,
-        Expression
+        Expression,
       )
 
       Div ::= fields(
         Expression,
-        Expression
+        Expression,
       )
 
       Expression ::=! choice(
@@ -54,7 +54,7 @@ object CalcParser extends PassSeq:
         Add,
         Sub,
         Mul,
-        Div
+        Div,
       )
 
   private val mulDivPass = passDef:
@@ -67,29 +67,29 @@ object CalcParser extends PassSeq:
           field(tok(Expression))
             ~ skip(tok(MulOp))
             ~ field(tok(Expression))
-            ~ trailing
+            ~ trailing,
         ).rewrite: (left, right) =>
           splice(
             Expression(
               Mul(
                 left.unparent(),
-                right.unparent()
-              )
-            )
+                right.unparent(),
+              ),
+            ),
           )
         | on(
           field(tok(Expression))
             ~ skip(tok(DivOp))
             ~ field(tok(Expression))
-            ~ trailing
+            ~ trailing,
         ).rewrite: (left, right) =>
           splice(
             Expression(
               Div(
                 left.unparent(),
-                right.unparent()
-              )
-            )
+                right.unparent(),
+              ),
+            ),
           )
 
   private val addSubPass = passDef:
@@ -102,27 +102,27 @@ object CalcParser extends PassSeq:
           field(tok(Expression))
             ~ skip(tok(AddOp))
             ~ field(tok(Expression))
-            ~ trailing
+            ~ trailing,
         ).rewrite: (left, right) =>
           splice(
             Expression(
               Add(
                 left.unparent(),
-                right.unparent()
-              )
-            )
+                right.unparent(),
+              ),
+            ),
           )
         | on(
           field(tok(Expression))
             ~ skip(tok(SubOp))
             ~ field(tok(Expression))
-            ~ trailing
+            ~ trailing,
         ).rewrite: (left, right) =>
           splice(
             Expression(
               Sub(
                 left.unparent(),
-                right.unparent()
-              )
-            )
+                right.unparent(),
+              ),
+            ),
           )

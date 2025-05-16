@@ -25,7 +25,7 @@ trait Token extends Named, TokenMapFactory.Mapped:
   final override def equals(that: Any): Boolean =
     that match
       case tok: Token => sym == tok.sym
-      case _ => false
+      case _          => false
 
   final override def hashCode(): Int = sym.hashCode()
 
@@ -47,23 +47,27 @@ end Token
 
 object Token:
   private final class TokenSym private (val nameSegments: List[String]):
-    override def equals(that: Any): Boolean = this `eq` that.asInstanceOf[AnyRef]
+    override def equals(that: Any): Boolean =
+      this `eq` that.asInstanceOf[AnyRef]
     override def hashCode(): Int = nameSegments.hashCode()
   end TokenSym
 
   private object TokenSym:
-    private final class TokenSymRef(val nameSegments: List[String], sym: TokenSym) extends WeakReference[TokenSym](sym, canonicalRefQueue)
+    private final class TokenSymRef(
+        val nameSegments: List[String],
+        sym: TokenSym,
+    ) extends WeakReference[TokenSym](sym, canonicalRefQueue)
 
     private val canonicalRefQueue = ReferenceQueue[TokenSym]()
-    private val canonicalMap = scala.collection.concurrent.TrieMap[List[String], TokenSymRef]()
+    private val canonicalMap =
+      scala.collection.concurrent.TrieMap[List[String], TokenSymRef]()
 
     private def cleanQueue(): Unit =
       var ref: TokenSymRef | Null = null
       while
         ref = canonicalRefQueue.poll().asInstanceOf[TokenSymRef | Null]
         ref ne null
-      do
-        canonicalMap.remove(ref.nameSegments)
+      do canonicalMap.remove(ref.nameSegments)
       end while
 
     def apply(nameSegments: List[String]): TokenSym =
@@ -72,7 +76,10 @@ object Token:
       lazy val freshSym = new TokenSym(nameSegments)
       while sym eq null do
         cleanQueue()
-        val ref = canonicalMap.getOrElseUpdate(nameSegments, TokenSymRef(nameSegments, freshSym))
+        val ref = canonicalMap.getOrElseUpdate(
+          nameSegments,
+          TokenSymRef(nameSegments, freshSym),
+        )
         // we might have just barely sniped a ref that cleanQueue missed. if sym is null, go around again.
         sym = ref.get()
       end while

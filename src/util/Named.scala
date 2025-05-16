@@ -40,7 +40,7 @@ object Named:
         else report.errorAndAbort(s"${symTermRef.show} is not a singleton")
       else
         report.errorAndAbort(
-          s"${sym.fullName} is not a class/object, or has no companion object"
+          s"${sym.fullName} is not a class/object, or has no companion object",
         )
 
     def getNameSegments(sym: Symbol): List[String] =

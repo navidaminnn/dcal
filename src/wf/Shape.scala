@@ -32,7 +32,7 @@ enum Shape:
           case embed: EmbedMeta[?] => sexpr.lang.Atom(embed.canonicalName)
       case Choice(choices) =>
         val result = sexpr.lang.List(
-          sexpr.lang.Atom("choice")
+          sexpr.lang.Atom("choice"),
         )
         result.children.addAll:
           choices.iterator
@@ -47,12 +47,12 @@ enum Shape:
           choice.asNode,
           sexpr.lang.List(
             sexpr.lang.Atom("minCount"),
-            sexpr.lang.Atom(minCount.toString())
-          )
+            sexpr.lang.Atom(minCount.toString()),
+          ),
         )
       case Fields(fields) =>
         val result = sexpr.lang.List(
-          sexpr.lang.Atom("fields")
+          sexpr.lang.Atom("fields"),
         )
         result.children.addAll(fields.iterator.map(_.asNode))
         result

@@ -59,7 +59,7 @@ object ManipFuzzCompareTests:
 
     def generate(
         random: SourceOfRandomness,
-        status: GenerationStatus
+        status: GenerationStatus,
     ): Manip[Any] =
       require(min >= 0 && max >= min, s"failed 0 <= $min <= $max")
       val treeSize = random.nextInt(min, max)
@@ -81,7 +81,7 @@ object ManipFuzzCompareTests:
 
     final class Ctx(
         val random: SourceOfRandomness,
-        val requireFn: Boolean = false
+        val requireFn: Boolean = false,
     ):
       def withRequireFn: Ctx =
         Ctx(random, requireFn = true)
@@ -165,7 +165,7 @@ object ManipFuzzCompareTests:
             case _: (? => ?) => result2
             case _: RefMap   => result1
             case _: Tracer   => result2
-          }
+          },
         )
 
     given ManipGenImpl[Restrict[Any, Any]] with
@@ -181,7 +181,7 @@ object ManipFuzzCompareTests:
             case tracer: Tracer if keepFn => tracer
             case refMap: RefMap if keepFn => refMap
           },
-          DebugInfo()
+          DebugInfo(),
         )
 
     given ManipGenImpl[Effect[Any]] with
@@ -202,7 +202,7 @@ object ManipFuzzCompareTests:
       def generate(treeSize: Int)(using ctx: Ctx): Finally[Any] =
         Finally(
           generateAny(treeSize - 1),
-          () => ()
+          () => (),
         )
 
     given ManipGenImpl[KeepLeft[Any]] with
@@ -211,7 +211,7 @@ object ManipFuzzCompareTests:
         val (subTreeSizeL, subTreeSizeR) = splitSubTreeSize(treeSize - 1)
         KeepLeft(
           generateAny(subTreeSizeL),
-          generateAny(subTreeSizeR)(using ctx.withoutRequireFn)
+          generateAny(subTreeSizeR)(using ctx.withoutRequireFn),
         )
 
     given ManipGenImpl[KeepRight[Any]] with
@@ -220,7 +220,7 @@ object ManipFuzzCompareTests:
         val (subTreeSizeL, subTreeSizeR) = splitSubTreeSize(treeSize - 1)
         KeepRight(
           generateAny(subTreeSizeL)(using ctx.withoutRequireFn),
-          generateAny(subTreeSizeR)
+          generateAny(subTreeSizeR),
         )
 
     given ManipGenImpl[Commit[Any]] with
@@ -236,7 +236,7 @@ object ManipFuzzCompareTests:
           SimRefs.pickOne,
           () => v,
           generateAny(treeSize - 1),
-          DebugInfo()
+          DebugInfo(),
         )
 
     given ManipGenImpl[RefGet[Any]] with
@@ -261,7 +261,7 @@ object ManipFuzzCompareTests:
           SimRefs.pickOne,
           (_ => v),
           generateAny(treeSize - 1),
-          DebugInfo()
+          DebugInfo(),
         )
 
     given ManipGenImpl[GetTracer.type] with
@@ -278,7 +278,7 @@ object ManipFuzzCompareTests:
         Disjunction(
           generateAny(subTreeSizeL),
           generateAny(subTreeSizeR),
-          DebugInfo()
+          DebugInfo(),
         )
 
     given ManipGenImpl[Deferred[Any]] with
@@ -299,7 +299,7 @@ object ManipFuzzCompareTests:
       def generate(treeSize: Int)(using ctx: Ctx): RestrictHandle[Any] = ???
 
     private inline def findGenOptions(using
-        mirror: Mirror.Of[Manip[Any]]
+        mirror: Mirror.Of[Manip[Any]],
     ): Array[ManipGenImpl[Manip[Any]]] =
       summonAll[Tuple.Map[mirror.MirroredElemTypes, ManipGenImpl]].toArray
         .map(_.asInstanceOf[ManipGenImpl[Manip[Any]]])

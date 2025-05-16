@@ -27,7 +27,7 @@ import forja.util.toShortString
 final case class NodeError(msg: String) extends RuntimeException(msg)
 
 final class Node(val token: Token)(
-    childrenInit: IterableOnce[Node.Child] @constructorOnly = Nil
+    childrenInit: IterableOnce[Node.Child] @constructorOnly = Nil,
 ) extends Node.Child,
       Node.Parent,
       Node.Traversable:
@@ -148,7 +148,7 @@ final class Node(val token: Token)(
             + (if token == Builtin.Error then 1 else 0)
         assert(
           countErrors == _errorRefCount,
-          s"mismatched error counts, $countErrors != $_errorRefCount"
+          s"mismatched error counts, $countErrors != $_errorRefCount",
         )
 
   override def hasErrors: Boolean =
@@ -388,7 +388,7 @@ object Node:
 
       require(
         results.size == 1,
-        s"token(s) not found ${(tok +: toks).map(_.name).mkString(", ")}"
+        s"token(s) not found ${(tok +: toks).map(_.name).mkString(", ")}",
       )
       results.head
 
@@ -584,7 +584,7 @@ object Node:
 
   final class Children private[Node] (
       val parent: Node.Parent,
-      childrenInit: IterableOnce[Node.Child] @constructorOnly
+      childrenInit: IterableOnce[Node.Child] @constructorOnly,
   ) extends mutable.IndexedBuffer[Node.Child]:
     private val _children = mutable.ArrayBuffer.from(childrenInit)
     _children.iterator.zipWithIndex.foreach: (child, idx) =>

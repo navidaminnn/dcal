@@ -26,22 +26,24 @@ abstract class SymbolicMapFactory:
           Mapped.refKeepAlive.remove(ref)
           ref.mapIdx
         case null => Mapped.nextIdx.incrementAndGet()
-      
+
       Mapped.refKeepAlive(Mapped.MappedRef(this, idx)) = ()
       idx
     end mapIdx
   end Mapped
 
   object Mapped:
-    private final class MappedRef(mapped: Mapped, val mapIdx: Int) extends WeakReference[Mapped](mapped, refQueue)
+    private final class MappedRef(mapped: Mapped, val mapIdx: Int)
+        extends WeakReference[Mapped](mapped, refQueue)
     private val refQueue = ReferenceQueue[Mapped]()
-    private val refKeepAlive = scala.collection.concurrent.TrieMap[MappedRef, Unit]()
+    private val refKeepAlive =
+      scala.collection.concurrent.TrieMap[MappedRef, Unit]()
     private var nextIdx = AtomicInteger()
   end Mapped
 
   final class Map[@specialized T] private (
       private var array: Array[T],
-      default: => T
+      default: => T,
   )(using val classTag: ClassTag[T]):
     private def defaultFn: T = default
 

@@ -44,7 +44,7 @@ transparent trait WithClonedCorpus:
     test("sanity") {
       assert(
         foundAnything,
-        s"must find at least one test file in $checkoutFolder"
+        s"must find at least one test file in $checkoutFolder",
       )
     }
   end testWithCorpusFile

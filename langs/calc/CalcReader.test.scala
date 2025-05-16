@@ -21,7 +21,8 @@ import Builtin.{Error, SourceMarker}
 class CalcReaderTests extends munit.FunSuite:
   extension (str: String)
     def read: Node.Top =
-      forja.langs.calc.read.fromSourceRange(SourceRange.entire(Source.fromString(str)))
+      forja.langs.calc.read
+        .fromSourceRange(SourceRange.entire(Source.fromString(str)))
 
     def parse: Node.Top =
       val top = read
@@ -65,9 +66,9 @@ class CalcReaderTests extends munit.FunSuite:
       "5".read,
       Node.Top(
         lang.Expression(
-          lang.Number("5")
-        )
-      )
+          lang.Number("5"),
+        ),
+      ),
     )
 
   test("read basic addition"):
@@ -75,13 +76,13 @@ class CalcReaderTests extends munit.FunSuite:
       "5 + 11".read,
       Node.Top(
         lang.Expression(
-          lang.Number("5")
+          lang.Number("5"),
         ),
         CalcReader.AddOp(),
         lang.Expression(
-          lang.Number("11")
-        )
-      )
+          lang.Number("11"),
+        ),
+      ),
     )
 
   test("read basic multiplication"):
@@ -89,13 +90,13 @@ class CalcReaderTests extends munit.FunSuite:
       "5 * 11".read,
       Node.Top(
         lang.Expression(
-          lang.Number("5")
+          lang.Number("5"),
         ),
         CalcReader.MulOp(),
         lang.Expression(
-          lang.Number("11")
-        )
-      )
+          lang.Number("11"),
+        ),
+      ),
     )
 
   test("read full calculation"):
@@ -103,17 +104,17 @@ class CalcReaderTests extends munit.FunSuite:
       "5 + 11 * 4".read,
       Node.Top(
         lang.Expression(
-          lang.Number("5")
+          lang.Number("5"),
         ),
         CalcReader.AddOp(),
         lang.Expression(
-          lang.Number("11")
+          lang.Number("11"),
         ),
         CalcReader.MulOp(),
         lang.Expression(
-          lang.Number("4")
-        )
-      )
+          lang.Number("4"),
+        ),
+      ),
     )
 
   test("simple addition parse"):
@@ -125,16 +126,16 @@ class CalcReaderTests extends munit.FunSuite:
             lang
               .Add(
                 lang.Expression(
-                  lang.Number("5")
+                  lang.Number("5"),
                 ),
                 lang.Expression(
-                  lang.Number("11")
-                )
+                  lang.Number("11"),
+                ),
               )
-              .at("5 + 11")
+              .at("5 + 11"),
           )
-          .at("5 + 11")
-      )
+          .at("5 + 11"),
+      ),
     )
 
   test("simple multiplication parse"):
@@ -146,16 +147,16 @@ class CalcReaderTests extends munit.FunSuite:
             lang
               .Mul(
                 lang.Expression(
-                  lang.Number("5")
+                  lang.Number("5"),
                 ),
                 lang.Expression(
-                  lang.Number("11")
-                )
+                  lang.Number("11"),
+                ),
               )
-              .at("5 * 11")
+              .at("5 * 11"),
           )
-          .at("5 * 11")
-      )
+          .at("5 * 11"),
+      ),
     )
 
   test("full calculation parse"):
@@ -167,27 +168,27 @@ class CalcReaderTests extends munit.FunSuite:
             lang
               .Add(
                 lang.Expression(
-                  lang.Number("5")
+                  lang.Number("5"),
                 ),
                 lang
                   .Expression(
                     lang
                       .Mul(
                         lang.Expression(
-                          lang.Number("11")
+                          lang.Number("11"),
                         ),
                         lang.Expression(
-                          lang.Number("4")
-                        )
+                          lang.Number("4"),
+                        ),
                       )
-                      .at("11 * 4")
+                      .at("11 * 4"),
                   )
-                  .at("11 * 4")
+                  .at("11 * 4"),
               )
-              .at("5 + 11 * 4")
+              .at("5 + 11 * 4"),
           )
-          .at("5 + 11 * 4")
-      )
+          .at("5 + 11 * 4"),
+      ),
     )
 
   test("full calculation 4 parse"):
@@ -207,13 +208,13 @@ class CalcReaderTests extends munit.FunSuite:
                             lang
                               .Mul(
                                 lang.Expression(
-                                  lang.Number("5")
+                                  lang.Number("5"),
                                 ),
                                 lang.Expression(
-                                  lang.Number("4")
-                                )
+                                  lang.Number("4"),
+                                ),
                               )
-                              .at("5 * 4")
+                              .at("5 * 4"),
                           )
                           .at("5 * 4"),
                         lang
@@ -221,17 +222,17 @@ class CalcReaderTests extends munit.FunSuite:
                             lang
                               .Div(
                                 lang.Expression(
-                                  lang.Number("4")
+                                  lang.Number("4"),
                                 ),
                                 lang.Expression(
-                                  lang.Number("2")
-                                )
+                                  lang.Number("2"),
+                                ),
                               )
-                              .at("4 / 2")
+                              .at("4 / 2"),
                           )
-                          .at("4 / 2")
+                          .at("4 / 2"),
                       )
-                      .at("5 * 4 + 4 / 2")
+                      .at("5 * 4 + 4 / 2"),
                   )
                   .at("5 * 4 + 4 / 2"),
                 lang
@@ -239,66 +240,66 @@ class CalcReaderTests extends munit.FunSuite:
                     lang
                       .Mul(
                         lang.Expression(
-                          lang.Number("6")
+                          lang.Number("6"),
                         ),
                         lang.Expression(
-                          lang.Number("2")
-                        )
+                          lang.Number("2"),
+                        ),
                       )
-                      .at("6 * 2")
+                      .at("6 * 2"),
                   )
-                  .at("6 * 2")
+                  .at("6 * 2"),
               )
-              .at("5 * 4 + 4 / 2 - 6 * 2")
+              .at("5 * 4 + 4 / 2 - 6 * 2"),
           )
-          .at("5 * 4 + 4 / 2 - 6 * 2")
-      )
+          .at("5 * 4 + 4 / 2 - 6 * 2"),
+      ),
     )
 
   test("addition calculation"):
     assertEquals(
       "5 + 11".evaluate,
       Node.Top(
-        lang.Number("16")
-      )
+        lang.Number("16"),
+      ),
     )
 
   test("multiplication calculation"):
     assertEquals(
       "5 * 11".evaluate,
       Node.Top(
-        lang.Number("55")
-      )
+        lang.Number("55"),
+      ),
     )
 
   test("full calculation"):
     assertEquals(
       "5 + 11 * 4".evaluate,
       Node.Top(
-        lang.Number("49")
-      )
+        lang.Number("49"),
+      ),
     )
 
   test("full calculation 2"):
     assertEquals(
       "5 * 4 + 4 / 2".evaluate,
       Node.Top(
-        lang.Number("22")
-      )
+        lang.Number("22"),
+      ),
     )
 
   test("full calculation 3"):
     assertEquals(
       "5 * 4 + 4 / 2 - 6".evaluate,
       Node.Top(
-        lang.Number("16")
-      )
+        lang.Number("16"),
+      ),
     )
 
   test("full calculation 4"):
     assertEquals(
       "5 * 4 + 4 / 2 - 6 * 2".evaluate,
       Node.Top(
-        lang.Number("10")
-      )
+        lang.Number("10"),
+      ),
     )

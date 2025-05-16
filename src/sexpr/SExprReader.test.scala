@@ -38,8 +38,8 @@ class SExprReaderTests extends munit.FunSuite:
       "\"\\^\"".parse,
       Node.Top(
         Error("invalid escape sequence \\^", Builtin.SourceMarker("\\^")),
-        Atom("?")
-      )
+        Atom("?"),
+      ),
     )
 
   test("empty string"):
@@ -63,7 +63,7 @@ class SExprReaderTests extends munit.FunSuite:
   test("list of two atoms"):
     assertEquals(
       "(3:foo 3:bar)".parse,
-      Node.Top(lang.List(Atom("foo"), Atom("bar")))
+      Node.Top(lang.List(Atom("foo"), Atom("bar"))),
     )
   test("list of three lists"):
     assertEquals(
@@ -72,15 +72,15 @@ class SExprReaderTests extends munit.FunSuite:
         lang.List(
           lang.List(Atom("foo")),
           lang.List(Atom("bar")),
-          lang.List()
-        )
-      )
+          lang.List(),
+        ),
+      ),
     )
 
   test("error: stray list close"):
     assertEquals(
       ")".parse,
-      Node.Top(Error("unexpected end of list", SourceMarker(")")))
+      Node.Top(Error("unexpected end of list", SourceMarker(")"))),
     )
 
   test("error: stray list close, recovery"):
@@ -88,16 +88,16 @@ class SExprReaderTests extends munit.FunSuite:
       ") 3:foo".parse,
       Node.Top(
         Error("unexpected end of list", SourceMarker(")")),
-        Atom("foo")
-      )
+        Atom("foo"),
+      ),
     )
 
   test("error: missing list terminator"):
     assertEquals(
       "(4: foo".parse,
       Node.Top(
-        lang.List(Atom(" foo"), Error("unexpected EOF", SourceMarker()))
-      )
+        lang.List(Atom(" foo"), Error("unexpected EOF", SourceMarker())),
+      ),
     )
 
   test("empty string literal"):
@@ -109,8 +109,8 @@ class SExprReaderTests extends munit.FunSuite:
       Node.Top(
         lang.Atom(""),
         lang.List(lang.Atom("")),
-        lang.Atom("")
-      )
+        lang.Atom(""),
+      ),
     )
 
   test("list of 3 string literals"):
@@ -120,15 +120,15 @@ class SExprReaderTests extends munit.FunSuite:
         lang.List(
           lang.Atom("foo"),
           lang.Atom("bar"),
-          lang.Atom(" ")
-        )
-      )
+          lang.Atom(" "),
+        ),
+      ),
     )
 
   test("string with escapes"):
     assertEquals(
       raw""" "\tfoo\\bar" """.parse,
-      Node.Top(lang.Atom("\tfoo\\bar"))
+      Node.Top(lang.Atom("\tfoo\\bar")),
     )
 
   test("misc token atoms"):
@@ -139,6 +139,6 @@ class SExprReaderTests extends munit.FunSuite:
         Atom("bar"),
         Atom("=ping="),
         Atom(":this"),
-        Atom("/42a")
-      )
+        Atom("/42a"),
+      ),
     )

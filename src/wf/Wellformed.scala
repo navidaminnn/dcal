@@ -25,7 +25,7 @@ import forja.util.TailCallsUtils.*
 
 final class Wellformed private (
     val assigns: Map[Token, Shape],
-    val topShape: Shape
+    val topShape: Shape,
 ):
   locally:
     val reached = mutable.HashSet.empty[Token]
@@ -37,14 +37,14 @@ final class Wellformed private (
             reached += token
             require(
               assigns.contains(token),
-              s"token $token must be assigned a shape"
+              s"token $token must be assigned a shape",
             )
             tailcall(assertReachableFromShapeOrEmbed(assigns(token)))
           else done(())
         case _: EmbedMeta[?] => done(())
 
     def assertReachableFromShapeOrEmbed(
-        shape: Shape | EmbedMeta[?]
+        shape: Shape | EmbedMeta[?],
     ): TailRec[Unit] =
       shape match
         case _: EmbedMeta[?] => done(())
@@ -72,7 +72,7 @@ final class Wellformed private (
           implForShape(choice)
 
     def implForTokenOrEmbed(
-        tokenOrEmbed: Token | EmbedMeta[?]
+        tokenOrEmbed: Token | EmbedMeta[?],
     ): Option[(SourceRange, EmbedMeta[?])] =
       tokenOrEmbed match
         case token: Token => None
@@ -112,7 +112,7 @@ final class Wellformed private (
             then
               assert(
                 didntGrowCount == 0,
-                s"duplicate name $nameTooShort in group ${toks.iterator.map(_.name).mkString(", ")}"
+                s"duplicate name $nameTooShort in group ${toks.iterator.map(_.name).mkString(", ")}",
               )
               didntGrowCount += 1
 
@@ -131,7 +131,7 @@ final class Wellformed private (
         else true
       .map: (parts, unitList) =>
         unitList.head -> SourceRange.entire(
-          Source.fromString(parts.mkString("."))
+          Source.fromString(parts.mkString(".")),
         )
       .toMap
 
@@ -150,7 +150,7 @@ final class Wellformed private (
     def implShape(
         desc: String,
         parent: Node.Parent,
-        shape: Shape
+        shape: Shape,
     ): TailRec[Unit] =
       shape match
         case Shape.AnyShape => done(())
@@ -166,10 +166,10 @@ final class Wellformed private (
               parent.children = List(
                 Node(Builtin.Error)(
                   Builtin.Error.Message(
-                    s"$desc should have exactly ${fields.size} children, but it had $wrongSize instead"
+                    s"$desc should have exactly ${fields.size} children, but it had $wrongSize instead",
                   ),
-                  Builtin.Error.AST(parent.unparentedChildren)
-                )
+                  Builtin.Error.AST(parent.unparentedChildren),
+                ),
               )
           else
             parent.children.iterator
@@ -185,7 +185,7 @@ final class Wellformed private (
                       node.replaceThis:
                         Builtin.Error(
                           s"in $desc, found token ${node.token}, but expected ${choice.choices.mkString(" or ")}",
-                          child.unparent()
+                          child.unparent(),
                         )
                       done(())
                   case embed: Node.Embed[?] =>
@@ -195,7 +195,7 @@ final class Wellformed private (
                       embed.replaceThis:
                         Builtin.Error(
                           s"in $desc, found embed ${embed.meta.canonicalName}, but expected ${choice.choices.mkString(" or ")}",
-                          embed.unparent()
+                          embed.unparent(),
                         )
                       done(())
         case Shape.Repeat(choice, minCount) =>
@@ -206,10 +206,10 @@ final class Wellformed private (
               parent.children = List(
                 Node(Builtin.Error)(
                   Builtin.Error.Message(
-                    s"$desc should have at least $minCount children, but it had $wrongSize instead"
+                    s"$desc should have at least $minCount children, but it had $wrongSize instead",
                   ),
-                  Builtin.Error.AST(parent.unparentedChildren)
-                )
+                  Builtin.Error.AST(parent.unparentedChildren),
+                ),
               )
           else
             parent.children.iterator
@@ -223,7 +223,7 @@ final class Wellformed private (
                     node.replaceThis:
                       Builtin.Error(
                         s"in $desc, found token ${node.token}, but expected ${choice.choices.mkString(" or ")}",
-                        node.unparent()
+                        node.unparent(),
                       )
                     done(())
                 case _: Node.Embed[?] => ???
@@ -251,7 +251,7 @@ final class Wellformed private (
 
     extension [P <: Node.Parent](parent: P)
       def addSerializedChildren(
-          children: IterableOnce[Node.Child]
+          children: IterableOnce[Node.Child],
       ): TailRec[P] =
         children.iterator
           .traverse: child =>
@@ -262,7 +262,7 @@ final class Wellformed private (
       def shortName =
         shortNameByToken.getOrElse(
           token,
-          SourceRange.entire(Source.fromString(token.name))
+          SourceRange.entire(Source.fromString(token.name)),
         )
 
     def impl(tree: Node.All): TailRec[tree.This] =
@@ -281,7 +281,7 @@ final class Wellformed private (
               result.children.addOne:
                 SList(
                   Atom(txt),
-                  Atom(srcRange)
+                  Atom(srcRange),
                 )
               srcRange.source.origin match
                 case None =>
@@ -291,7 +291,7 @@ final class Wellformed private (
                       Atom(src),
                       Atom(origin.toString),
                       Atom(srcRange.offset.toString()),
-                      Atom(srcRange.length.toString())
+                      Atom(srcRange.length.toString()),
                     )
 
             result.addSerializedChildren(node.children)
@@ -302,7 +302,7 @@ final class Wellformed private (
               SList(
                 Atom(shortNameByToken(Node.EmbedT)),
                 Atom(embed.meta.canonicalName),
-                Atom(SourceRange.entire(bytes))
+                Atom(SourceRange.entire(bytes)),
               )
 
       result.asInstanceOf[TailRec[tree.This]]
@@ -322,7 +322,7 @@ final class Wellformed private (
         tok(Atom)
           .map(_.sourceRange)
           .restrict(tokenByShortName)
-          <* refine(atFirstChild(on(atEnd).check))
+          <* refine(atFirstChild(on(atEnd).check)),
       ).value.map: token =>
         done(token())
       | on(
@@ -330,7 +330,7 @@ final class Wellformed private (
           skip(tok(Atom).src(shortNameByToken(Node.EmbedT)))
             ~ field(tok(Atom).map(_.sourceRange).restrict(knownMetasByName))
             ~ field(tok(Atom).map(_.sourceRange))
-            ~ eof
+            ~ eof,
       ).value.map: (meta, src) =>
         done(Node.Embed(meta.deserialize(src))(using meta))
       | on(
@@ -354,7 +354,7 @@ final class Wellformed private (
                   ~ field(tok(Atom))
                   ~ field(tok(Atom))
                   ~ eof
-          ~ trailing
+          ~ trailing,
       ).value.map: (node, token, txtOpt, srcOpt) =>
         val result = token()
         srcOpt match
@@ -381,18 +381,18 @@ final class Wellformed private (
             .addDeserializedChildren(node.children.iterator.drop(skipCount))
             .map(_ => result)
       | on(
-        anyNode
+        anyNode,
       ).value.map: badNode =>
         done(
           Builtin.Error(
             "could not parse node",
-            badNode.clone()
-          )
+            badNode.clone(),
+          ),
         )
 
     extension [P <: Node.Parent](parent: P)
       def addDeserializedChildren(
-          children: IterableOnce[Node.Child]
+          children: IterableOnce[Node.Child],
       ): TailRec[P] =
         children.iterator
           .traverse: child =>
@@ -419,8 +419,8 @@ final class Wellformed private (
       forja.sexpr.lang.Atom("wellformed"),
       forja.sexpr.lang.List(
         sexpr.lang.Atom("top"),
-        topShape.asNode
-      )
+        topShape.asNode,
+      ),
     )
     result.children.addAll:
       assigns.toArray
@@ -429,7 +429,7 @@ final class Wellformed private (
         .map: (tok, shape) =>
           sexpr.lang.List(
             sexpr.lang.Atom(tok.name),
-            shape.asNode
+            shape.asNode,
           )
     result
 
@@ -448,7 +448,7 @@ object Wellformed:
 
   final class Builder private[forja] (
       assigns: mutable.HashMap[Token, Shape],
-      private var topShapeOpt: Option[Shape]
+      private var topShapeOpt: Option[Shape],
   ):
     extension (token: Token | Node.Top.type)
       def ::=(shape: Shape): Unit =
@@ -485,7 +485,7 @@ object Wellformed:
           case Shape.Repeat(choices, _) => choices.choices
           case shape: (Shape.Fields | Shape.Atom.type | Shape.AnyShape.type) =>
             throw IllegalArgumentException(
-              s"$token's shape doesn't have cases ($shape)"
+              s"$token's shape doesn't have cases ($shape)",
             )
 
       def removeCases(cases: (Token | EmbedMeta[?])*): Unit =
@@ -495,11 +495,11 @@ object Wellformed:
           case Shape.Repeat(choices, minCount) =>
             token ::=! Shape.Repeat(
               Shape.Choice(choices.choices -- cases),
-              minCount
+              minCount,
             )
           case Shape.Fields(fields) =>
             token ::=! Shape.Fields(
-              fields.map(choice => Shape.Choice(choice.choices -- cases))
+              fields.map(choice => Shape.Choice(choice.choices -- cases)),
             )
           case Shape.AnyShape | Shape.Atom =>
           // maybe it helps to assert something here, but it is technically correct to just do nothing
@@ -511,11 +511,11 @@ object Wellformed:
           case Shape.Repeat(choice, minCount) =>
             token ::=! Shape.Repeat(
               Shape.Choice(choice.choices ++ cases),
-              minCount
+              minCount,
             )
           case shape: (Shape.Fields | Shape.Atom.type | Shape.AnyShape.type) =>
             throw IllegalArgumentException(
-              s"$token's shape is not appropriate for adding cases ($shape)"
+              s"$token's shape is not appropriate for adding cases ($shape)",
             )
 
       def importFrom(wf2: Wellformed): Unit =

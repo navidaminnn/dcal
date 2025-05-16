@@ -116,7 +116,7 @@ class ManipTests extends munit.FunSuite:
       .rules:
         on(nodeSpanMatchedBy(repeated1(tok2).void)).rewrite: span =>
           splice(
-            span.map(node => tok1(node.asInstanceOf[Node].unparentedChildren))
+            span.map(node => tok1(node.asInstanceOf[Node].unparentedChildren)),
           )
 
   test("treePairs unifyColors5"):
@@ -130,7 +130,7 @@ class ManipTests extends munit.FunSuite:
         on(nodeSpanMatchedBy(repeated1(anyChild <* not(tok1)).void)).rewrite:
           span =>
             splice(
-              span.map(node => tok1(node.asInstanceOf[Node].unparentedChildren))
+              span.map(node => tok1(node.asInstanceOf[Node].unparentedChildren)),
             )
 
   test("treePairs unifyColors6"):
@@ -144,7 +144,7 @@ class ManipTests extends munit.FunSuite:
         on(nodeSpanMatchedBy(repeated1(anyChild <* not(repeated1(tok1))).void))
           .rewrite: span =>
             splice(
-              span.map(node => tok1(node.asInstanceOf[Node].unparentedChildren))
+              span.map(node => tok1(node.asInstanceOf[Node].unparentedChildren)),
             )
 
   test("treePairs unifyColors7"):
@@ -167,12 +167,12 @@ class ManipTests extends munit.FunSuite:
     val example = Node.Top:
       tok2(
         tok2(tok1()),
-        tok1(Builtin.Error("???", tok2()))
+        tok1(Builtin.Error("???", tok2())),
       )
     val expected = Node.Top:
       tok1(
         tok1(tok1()),
-        tok1(Builtin.Error("???", tok2()))
+        tok1(Builtin.Error("???", tok2())),
       )
 
     // topDown

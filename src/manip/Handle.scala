@@ -43,13 +43,13 @@ enum Handle:
         then () // ok
         else
           throw NodeError(
-            s"mismatch: idx $idx in ${parent.toShortString()} and ptr -> ${child.toShortString()}"
+            s"mismatch: idx $idx in ${parent.toShortString()} and ptr -> ${child.toShortString()}",
           )
       case Sentinel(parent, idx) =>
         if parent.children.length != idx
         then
           throw NodeError(
-            s"mismatch: sentinel at $idx does not point to end ${parent.children.length} of ${parent.toShortString()}"
+            s"mismatch: sentinel at $idx does not point to end ${parent.children.length} of ${parent.toShortString()}",
           )
 
   def rightSibling: Option[Handle] =

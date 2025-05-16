@@ -35,7 +35,7 @@ trait SeqPatternOps:
     pattern.map(t => Fields(Tuple1(t)))
 
   def fields[Tpl <: Tuple](
-      pattern: SeqPattern[Tpl]
+      pattern: SeqPattern[Tpl],
   ): SeqPattern[Fields[Tpl]] =
     pattern.map(Fields(_))
 
@@ -76,9 +76,9 @@ trait SeqPatternOps:
           Result.Look(parent, 0, ())
 
   def nodeSpanMatchedBy(using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(
-      pattern: SeqPattern[?]
+      pattern: SeqPattern[?],
   ): SeqPattern[IndexedSeqView[Node.Child]] =
     SeqPattern:
       getHandle
@@ -89,7 +89,7 @@ trait SeqPatternOps:
         .restrict:
           case (
                 (parent, startIdx),
-                patResult: (Result.Look[Unit] | Result.Match[Unit])
+                patResult: (Result.Look[Unit] | Result.Match[Unit]),
               ) =>
             assert(patResult.parent eq parent)
             patResult.withValue:
@@ -101,7 +101,7 @@ trait SeqPatternOps:
                   // Otherwise, default is fine.
                   if patResult.isMatch
                   then patResult.idx + 1
-                  else patResult.idx
+                  else patResult.idx,
               )
 
   export SeqPattern.{FieldsEndMarker as eof, FieldsTrailingMarker as trailing}
@@ -114,16 +114,16 @@ trait SeqPatternOps:
       *> SeqPattern.unit.manip
 
   def optional[T](using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(
-      pattern: SeqPattern[T]
+      pattern: SeqPattern[T],
   ): SeqPattern[Option[T]] =
     pattern.map(Some(_)) | pure(None)
 
   def repeated[T](using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(
-      pattern: SeqPattern[T]
+      pattern: SeqPattern[T],
   ): SeqPattern[List[T]] =
     lazy val impl: SeqPattern[List[T]] =
       (field(pattern) ~ field(defer(impl)) ~ trailing)
@@ -133,24 +133,24 @@ trait SeqPatternOps:
     impl
 
   def repeated1[T](using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(
-      pattern: SeqPattern[T]
+      pattern: SeqPattern[T],
   ): SeqPattern[List[T]] =
     (field(pattern) ~ field(repeated(pattern)) ~ trailing).map(_ :: _)
 
   def repeatedSepBy1[T](using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(sep: SeqPattern[?])(pattern: SeqPattern[T]): SeqPattern[List[T]] =
     (field(pattern) ~ field(
-      repeated(skip(sep) ~ field(pattern) ~ trailing)
+      repeated(skip(sep) ~ field(pattern) ~ trailing),
     ) ~ trailing)
       .map(_ :: _)
 
   def repeatedSepBy[T](using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(sep: SeqPattern[?])(
-      pattern: SeqPattern[T]
+      pattern: SeqPattern[T],
   ): SeqPattern[List[T]] =
     repeatedSepBy1(sep)(pattern)
       | pure(Nil)
@@ -184,9 +184,9 @@ trait SeqPatternOps:
 
   extension [P <: Node.Parent](parentPattern: SeqPattern[P])
     def withChildren[T](using
-        DebugInfo
+        DebugInfo,
     )(
-        pattern: SeqPattern[T]
+        pattern: SeqPattern[T],
     ): SeqPattern[T] =
       SeqPattern:
         parentPattern.manip.lookahead.flatMap: result =>

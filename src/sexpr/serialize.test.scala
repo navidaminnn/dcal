@@ -41,11 +41,11 @@ class serializeTests extends munit.FunSuite:
     assertEquals(
       eg1.serializePretty,
       """(foo
-        |  bar)""".stripMargin.ensureLf
+        |  bar)""".stripMargin.ensureLf,
     )
 
   val eg2 = Node.Top(
-    lang.List(lang.List(), lang.List(), lang.List(lang.List()))
+    lang.List(lang.List(), lang.List(), lang.List(lang.List())),
   )
 
   test("nested lists compact"):
@@ -57,5 +57,5 @@ class serializeTests extends munit.FunSuite:
       """(
         |  ()
         |  ()
-        |  (()))""".stripMargin.ensureLf
+        |  (()))""".stripMargin.ensureLf,
     )

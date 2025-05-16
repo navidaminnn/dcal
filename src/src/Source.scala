@@ -85,5 +85,5 @@ object Source:
 
   final class ByteBufferSource(
       val origin: Option[os.Path],
-      override val byteBuffer: ByteBuffer
+      override val byteBuffer: ByteBuffer,
   ) extends Source

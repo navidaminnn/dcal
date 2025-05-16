@@ -20,7 +20,7 @@ final case class DebugInfo(
     file: String,
     fileName: String,
     line: Int,
-    outerOpt: Option[DebugInfo] = None
+    outerOpt: Option[DebugInfo] = None,
 ) extends DebugInfo.Ctx:
   override def toString(): String =
     outerOpt match
@@ -37,7 +37,7 @@ object DebugInfo:
   inline given instance(using
       file: File,
       fileName: FileName,
-      line: Line
+      line: Line,
   ): DebugInfo =
     summonFrom:
       case ctx: Ctx =>
@@ -46,7 +46,7 @@ object DebugInfo:
               if (file.value, fileName.value, line.value) != (
                 ctx.file,
                 ctx.fileName,
-                ctx.line
+                ctx.line,
               ) =>
             DebugInfo(file.value, fileName.value, line.value, Some(ctx))
           case ctx: DebugInfo => ctx
@@ -67,5 +67,5 @@ object DebugInfo:
     instance(using
       file = summonInline[File],
       fileName = summonInline[FileName],
-      line = summonInline[Line]
+      line = summonInline[Line],
     )

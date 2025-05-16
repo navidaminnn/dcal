@@ -30,7 +30,7 @@ trait Tracer extends java.io.Closeable:
       manip: Manip[?],
       ref: Ref[?],
       value: Any,
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ): Unit
   def onAssign(manip: Manip[?], ref: Ref[?], value: Any): Unit
   def onDel(manip: Manip[?], ref: Ref[?], debugInfo: DebugInfo): Unit
@@ -42,13 +42,13 @@ trait Tracer extends java.io.Closeable:
       debugInfo: DebugInfo,
       parent: Node.Parent,
       idx: Int,
-      matchedCount: Int
+      matchedCount: Int,
   ): Unit
   def onRewriteComplete(
       debugInfo: DebugInfo,
       parent: Node.Parent,
       idx: Int,
-      resultCount: Int
+      resultCount: Int,
   ): Unit
 
 abstract class AbstractNopTracer extends Tracer:
@@ -58,7 +58,7 @@ abstract class AbstractNopTracer extends Tracer:
       manip: Manip[?],
       ref: Ref[?],
       value: Any,
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ): Unit = ()
   def onAssign(manip: Manip[?], ref: Ref[?], value: Any): Unit =
     ()
@@ -73,13 +73,13 @@ abstract class AbstractNopTracer extends Tracer:
       debugInfo: DebugInfo,
       parent: Node.Parent,
       idx: Int,
-      matchedCount: Int
+      matchedCount: Int,
   ): Unit = ()
   def onRewriteComplete(
       debugInfo: DebugInfo,
       parent: Node.Parent,
       idx: Int,
-      resultCount: Int
+      resultCount: Int,
   ): Unit = ()
   def close(): Unit = ()
 
@@ -126,7 +126,7 @@ final class LogTracer(out: java.io.OutputStream, limit: Int = -1)
       manip: Manip[?],
       ref: Ref[?],
       value: Any,
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ): Unit =
     value match
       case value: AnyVal =>
@@ -160,24 +160,23 @@ final class LogTracer(out: java.io.OutputStream, limit: Int = -1)
       debugInfo: DebugInfo,
       parent: Node.Parent,
       idx: Int,
-      matchedCount: Int
+      matchedCount: Int,
   ): Unit =
     logln(
-      s"rw match $debugInfo, from $idx, $matchedCount nodes in parent $parent"
+      s"rw match $debugInfo, from $idx, $matchedCount nodes in parent $parent",
     )
 
   def onRewriteComplete(
       debugInfo: DebugInfo,
       parent: Node.Parent,
       idx: Int,
-      resultCount: Int
+      resultCount: Int,
   ): Unit =
     logln(
-      s"rw done $debugInfo, from $idx, $resultCount nodes in parent $parent"
+      s"rw done $debugInfo, from $idx, $resultCount nodes in parent $parent",
     )
 
-final class RewriteDebugTracer(debugFolder: os.Path)
-    extends AbstractNopTracer:
+final class RewriteDebugTracer(debugFolder: os.Path) extends AbstractNopTracer:
   os.remove.all(debugFolder) // no confusing left-over files!
   os.makeDir.all(debugFolder)
   private var passCounter = 0
@@ -197,7 +196,7 @@ final class RewriteDebugTracer(debugFolder: os.Path)
   private def pathAt(
       passIdx: Int,
       rewriteIdx: Int,
-      isDiff: Boolean = false
+      isDiff: Boolean = false,
   ): os.Path =
     val ext = if isDiff then ".diff" else ".txt"
     debugFolder / f"$passIdx%03d" / f"$rewriteIdx%03d$ext%s"
@@ -215,7 +214,7 @@ final class RewriteDebugTracer(debugFolder: os.Path)
     os.write(
       target = currPath,
       data = (s"//! $debugInfo\n": geny.Writable) ++ treeDesc ++ "\n",
-      createFolders = true
+      createFolders = true,
     )
 
   private def takeDiff(): Unit =
@@ -227,12 +226,12 @@ final class RewriteDebugTracer(debugFolder: os.Path)
       currPath.toString(),
       prevLines,
       patch,
-      3
+      3,
     )
 
     os.write.over(
       diffPath,
-      unifiedDiff.asScala.mkString("\n")
+      unifiedDiff.asScala.mkString("\n"),
     )
 
   override def onAssign(manip: Manip[?], ref: Ref[?], value: Any): Unit =
@@ -242,7 +241,7 @@ final class RewriteDebugTracer(debugFolder: os.Path)
   override def onDel(
       manip: Manip[?],
       ref: Ref[?],
-      debugInfo: DebugInfo
+      debugInfo: DebugInfo,
   ): Unit =
     if ref == Handle.ref
     then currHandle = None
@@ -260,7 +259,7 @@ final class RewriteDebugTracer(debugFolder: os.Path)
       debugInfo: DebugInfo,
       parent: Node.Parent,
       idx: Int,
-      resultCount: Int
+      resultCount: Int,
   ): Unit =
     rewriteCounter += 1
     takeSnapshot(debugInfo)

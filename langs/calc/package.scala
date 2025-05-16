@@ -30,8 +30,8 @@ object lang extends WellformedDef:
           Add,
           Sub,
           Mul,
-          Div
-        )
+          Div,
+        ),
       )
 
   object Number extends t(Atom), Token.ShowSource
@@ -40,32 +40,32 @@ object lang extends WellformedDef:
       extends t(
         fields(
           Expression,
-          Expression
-        )
+          Expression,
+        ),
       ),
         Token.ShowSource
   object Sub
       extends t(
         fields(
           Expression,
-          Expression
-        )
+          Expression,
+        ),
       ),
         Token.ShowSource
   object Mul
       extends t(
         fields(
           Expression,
-          Expression
-        )
+          Expression,
+        ),
       ),
         Token.ShowSource
   object Div
       extends t(
         fields(
           Expression,
-          Expression
-        )
+          Expression,
+        ),
       ),
         Token.ShowSource
 

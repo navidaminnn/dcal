@@ -25,7 +25,7 @@ trait ManipOps:
   def instrumentWithTracer[T](tracer: Tracer)(fn: => T): T =
     require(
       tracerVar.get() eq null,
-      s"tried to set over existing tracer ${tracerVar.get()}"
+      s"tried to set over existing tracer ${tracerVar.get()}",
     )
     tracerVar.set(tracer)
     try fn
@@ -33,12 +33,12 @@ trait ManipOps:
       tracer.close()
       assert(
         tracerVar.get() eq tracer,
-        s"tracer $tracer was replaced by ${tracerVar.get()} during execution"
+        s"tracer $tracer was replaced by ${tracerVar.get()} during execution",
       )
       tracerVar.remove()
 
   def instrumentWithTracerReentrant[T, Tr <: Tracer: ClassTag](tracer: Tr)(
-      fn: => T
+      fn: => T,
   ): T =
     tracerVar.get() match
       case null => instrumentWithTracer(tracer)(fn)
@@ -48,7 +48,7 @@ trait ManipOps:
         finally tracerVar.set(existingTracer)
       case existingTracer: Tracer =>
         throw IllegalArgumentException(
-          s"re-entrant tracer $tracer is not of the same type as existing tracer $existingTracer"
+          s"re-entrant tracer $tracer is not of the same type as existing tracer $existingTracer",
         )
 
   def defer[T](manip: => Manip[T]): Manip[T] =
@@ -65,12 +65,12 @@ trait ManipOps:
     Manip.Backtrack(summon[DebugInfo])
 
   def initNode[T](using
-      DebugInfo
+      DebugInfo,
   )(node: Node.All)(manip: Manip[T]): Manip[T] =
     initHandle(Handle.fromNode(node))(manip)
 
   def initHandle[T](using
-      DebugInfo
+      DebugInfo,
   )(handle: Handle)(manip: Manip[T]): Manip[T] =
     Handle.ref.init(handle)(manip)
 
@@ -78,7 +78,7 @@ trait ManipOps:
     atHandle(Handle.fromNode(node))(manip)
 
   def atHandle[T](using
-      DebugInfo
+      DebugInfo,
   )(handle: Handle)(manip: Manip[T]): Manip[T] =
     restrictHandle(manip)(_ => Some(handle))
 
@@ -89,12 +89,12 @@ trait ManipOps:
     Manip.GetTracer
 
   def restrictHandle[T](using
-      DebugInfo
+      DebugInfo,
   )(manip: Manip[T])(fn: PartialFunction[Handle, Handle]): Manip[T] =
     Manip.RestrictHandle(fn, manip, summon[DebugInfo])
 
   def restrictHandle[T](using
-      DebugInfo
+      DebugInfo,
   )(manip: Manip[T])(fn: Handle => Option[Handle]): Manip[T] =
     Manip.RestrictHandle(fn.unlift, manip, summon[DebugInfo])
 
@@ -121,7 +121,7 @@ trait ManipOps:
     restrictHandle(manip)(_.atIdx(idx))
 
   def atIdxFromRight[T](using
-      DebugInfo
+      DebugInfo,
   )(idx: Int)(manip: Manip[T]): Manip[T] =
     restrictHandle(manip)(_.atIdxFromRight(idx))
 
@@ -147,7 +147,7 @@ trait ManipOps:
     atParent(impl)
 
   def addChild[T](using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(child: => Node.Child): Manip[Node.Child] =
     getNode.lookahead.flatMap:
       case thisParent: Node.Parent =>
@@ -168,9 +168,9 @@ trait ManipOps:
       raw.void
 
     def rewrite(using
-        DebugInfo.Ctx
+        DebugInfo.Ctx,
     )(
-        action: on.Ctx ?=> T => Rules
+        action: on.Ctx ?=> T => Rules,
     ): Rules =
       (raw, getHandle, getTracer).tupled
         .flatMap: (patResult, handle, tracer) =>
@@ -180,7 +180,7 @@ trait ManipOps:
             handle match
               case Handle.AtTop(top) =>
                 throw NodeError(
-                  s"tried to rewrite top ${top.toShortString()}"
+                  s"tried to rewrite top ${top.toShortString()}",
                 )
               case Handle.AtChild(parent, idx, _) => (parent, idx)
               case Handle.Sentinel(parent, idx)   => (parent, idx)
@@ -188,7 +188,7 @@ trait ManipOps:
             patResult match
               case SeqPattern.Result.Top(top, _) =>
                 throw NodeError(
-                  s"ended pattern at top ${top.toShortString()}"
+                  s"ended pattern at top ${top.toShortString()}",
                 )
               case patResult: (SeqPattern.Result.Look[T] |
                     SeqPattern.Result.Match[T]) =>
@@ -199,13 +199,13 @@ trait ManipOps:
 
           assert(
             matchedCount >= 1,
-            "can't rewrite based on a pattern that matched nothing"
+            "can't rewrite based on a pattern that matched nothing",
           )
           tracer.onRewriteMatch(
             summon[DebugInfo],
             parent,
             startIdx,
-            matchedCount
+            matchedCount,
           )
           action(using on.Ctx(matchedCount))(value)
 
@@ -213,13 +213,13 @@ trait ManipOps:
     final case class Ctx(matchedCount: Int)
 
   def spliceThen(using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(using
-      onCtx: on.Ctx
+      onCtx: on.Ctx,
   )(
-      nodes: Iterable[Node.Child]
+      nodes: Iterable[Node.Child],
   )(
-      manip: on.Ctx ?=> Rules
+      manip: on.Ctx ?=> Rules,
   ): Rules =
     // Preparation for the rewrite may have reparented the node we were "on"
     // When you immediately call splice, this pretty much always means "stay at that index and put something there",
@@ -240,37 +240,37 @@ trait ManipOps:
             summon[DebugInfo],
             parent,
             idx,
-            nodes.size
+            nodes.size,
           )
       *> keepHandleIdx(
         pass.resultRef.updated(_ => RulesResult.Progress)(
-          manip(using on.Ctx(nodes.size))
-        )
+          manip(using on.Ctx(nodes.size)),
+        ),
       )
 
   def spliceThen(using
       DebugInfo,
-      on.Ctx
+      on.Ctx,
   )(nodes: Node.Child*)(
-      manip: on.Ctx ?=> Rules
+      manip: on.Ctx ?=> Rules,
   ): Rules =
     spliceThen(nodes)(manip)
 
   def spliceThen(using
       DebugInfo,
-      on.Ctx
+      on.Ctx,
   )(nodes: IterableOnce[Node.Child])(
-      manip: on.Ctx ?=> Rules
+      manip: on.Ctx ?=> Rules,
   ): Rules =
     spliceThen(nodes.iterator.toArray)(manip)
 
   def splice(using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(using
       onCtx: on.Ctx,
-      passCtx: pass.Ctx
+      passCtx: pass.Ctx,
   )(
-      nodes: Iterable[Node.Child]
+      nodes: Iterable[Node.Child],
   ): Rules =
     spliceThen(nodes):
       // If we _now_ have a match count of 0, it means the splice deleted our match.
@@ -286,9 +286,9 @@ trait ManipOps:
   def splice(using
       DebugInfo,
       on.Ctx,
-      pass.Ctx
+      pass.Ctx,
   )(
-      nodes: IterableOnce[Node.Child]
+      nodes: IterableOnce[Node.Child],
   ): Rules =
     splice(nodes.iterator.toArray)
 
@@ -299,7 +299,7 @@ trait ManipOps:
     atNextNode(continuePass)
 
   def atNextNode(using
-      DebugInfo
+      DebugInfo,
   )(using passCtx: pass.Ctx)(manip: Rules): Rules =
     passCtx.strategy.atNext(manip)
 
@@ -307,11 +307,11 @@ trait ManipOps:
     pass.resultRef.get
 
   def skipMatch(using
-      DebugInfo.Ctx
+      DebugInfo.Ctx,
   )(using onCtx: on.Ctx, passCtx: pass.Ctx): Rules =
     require(
       onCtx.matchedCount > 0,
-      s"must have matched at least one node to skip. Matched ${onCtx.matchedCount}"
+      s"must have matched at least one node to skip. Matched ${onCtx.matchedCount}",
     )
     getHandle.lookahead.flatMap: handle =>
       handle.assertCoherence()
@@ -352,7 +352,7 @@ trait ManipOps:
   final class pass(
       strategy: pass.TraversalStrategy = pass.topDown,
       once: Boolean = false,
-      wrapFn: Manip[Unit] => Manip[Unit] = identity
+      wrapFn: Manip[Unit] => Manip[Unit] = identity,
   ):
     def rules(using DebugInfo.Ctx)(rules: pass.Ctx ?=> Rules): Manip[Unit] =
       val before = getTracer
@@ -387,7 +387,7 @@ trait ManipOps:
       pass(
         strategy = strategy,
         once = once,
-        wrapFn = manip => ref.init(init)(defer(wrapFn(manip)))
+        wrapFn = manip => ref.init(init)(defer(wrapFn(manip))),
       )
   end pass
 
@@ -396,26 +396,26 @@ trait ManipOps:
 
     final case class Ctx(
         strategy: TraversalStrategy,
-        loop: Manip[RulesResult]
+        loop: Manip[RulesResult],
     )(using DebugInfo.Ctx):
       lazy val loopAtNext: Manip[RulesResult] =
         strategy.atNext(loop)
 
     trait TraversalStrategy:
       def atInit(manip: Manip[RulesResult])(using
-          DebugInfo.Ctx
+          DebugInfo.Ctx,
       ): Manip[RulesResult]
       def atNext(manip: Manip[RulesResult])(using
-          DebugInfo.Ctx
+          DebugInfo.Ctx,
       ): Manip[RulesResult]
 
     object topDown extends TraversalStrategy:
       def atInit(manip: Manip[RulesResult])(using
-          DebugInfo.Ctx
+          DebugInfo.Ctx,
       ): Manip[RulesResult] = manip
 
       def atNext(manip: Manip[RulesResult])(using
-          DebugInfo.Ctx
+          DebugInfo.Ctx,
       ): Manip[RulesResult] =
         val next = commit(manip)
         commit:
@@ -426,13 +426,13 @@ trait ManipOps:
                 commit(
                   // going right finds either real sibling or sentinel, unless at top
                   atRightSibling(next)
-                    | on(theTop).check *> endPass
-                )
+                    | on(theTop).check *> endPass,
+                ),
               ))
 
     object bottomUp extends TraversalStrategy:
       def atInit(manip: Manip[RulesResult])(using
-          DebugInfo.Ctx
+          DebugInfo.Ctx,
       ): Manip[RulesResult] =
         lazy val impl: Manip[RulesResult] =
           commit:
@@ -442,7 +442,7 @@ trait ManipOps:
         impl
 
       def atNext(manip: Manip[RulesResult])(using
-          DebugInfo.Ctx
+          DebugInfo.Ctx,
       ): Manip[RulesResult] =
         val next = commit(manip)
         def atNextCousin[T](manip: Manip[T]): Manip[T] =

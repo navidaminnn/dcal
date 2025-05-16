@@ -30,18 +30,18 @@ trait FuzzTestSuite extends munit.FunSuite:
   def fuzzTimeout: Duration = Duration("10s")
 
   protected inline def fuzzTestMethod(inline method: Any)(using
-      loc: munit.Location
+      loc: munit.Location,
   ): Unit =
     ${ FuzzTestSuite.fuzzTestMethodImpl('this, 'method, 'loc) }
 
   protected final def doFuzzTest(className: String, methodName: String)(using
-      munit.Location
+      munit.Location,
   ): Unit =
     val buildProc = os.proc(
       "scala-cli",
       "compile",
       "--test",
-      "."
+      ".",
     )
     // println(s"$$ ${buildProc.commandChunks.mkString(" ")}")
     buildProc.call(cwd = os.pwd, mergeErrIntoOut = true)
@@ -65,14 +65,14 @@ trait FuzzTestSuite extends munit.FunSuite:
       "--timeout",
       fuzzTimeout.toMillis,
       trialLimit.fold[List[os.Shellable]](Nil)(limit =>
-        List("--trial-limit", limit)
-      )
+        List("--trial-limit", limit),
+      ),
     )
     // println(s"$$ ${runProc.commandChunks.mkString(" ")}")
     val result = runProc.call(
       cwd = os.pwd,
       check = false,
-      mergeErrIntoOut = true
+      mergeErrIntoOut = true,
       // stdin = os.Inherit,
       // stdout = os.Inherit,
       // stderr = os.Inherit,
@@ -85,7 +85,7 @@ object FuzzTestSuite:
   def fuzzTestMethodImpl[Self <: FuzzTestSuite: Type](
       selfRef: Expr[Self],
       methodRef: Expr[Any],
-      sourceLoc: Expr[munit.Location]
+      sourceLoc: Expr[munit.Location],
   )(using q: Quotes): Expr[Unit] =
     import q.reflect.*
 
@@ -112,7 +112,7 @@ object FuzzTestSuite:
         Expr.betaReduce('{ $fn(???, ???, ???, ???, ???, ???) }).asTerm
       case _ =>
         report.errorAndAbort(
-          s"could not identify lambda ${methodRef.show} (note: we only support up to arity 6)"
+          s"could not identify lambda ${methodRef.show} (note: we only support up to arity 6)",
         )
 
     object StripIrrelevant:
@@ -127,7 +127,7 @@ object FuzzTestSuite:
         classExpr.tpe.classSymbol match
           case None =>
             report.errorAndAbort(
-              s"can't get the class type of ${classExpr.show}"
+              s"can't get the class type of ${classExpr.show}",
             )
           case Some(classSym) =>
             val className = classSym.fullName
@@ -138,7 +138,7 @@ object FuzzTestSuite:
             }
       case _ =>
         report.errorAndAbort(
-          s"could not find method call in ${methodCallTerm.show}"
+          s"could not find method call in ${methodCallTerm.show}",
         )
   end fuzzTestMethodImpl
 end FuzzTestSuite
@@ -179,7 +179,7 @@ object FuzzTestSuiteMain:
         timeout,
         trialLimit, // Trial limit (missing if null)
         outputDir.toIO, // Output directory for results
-        new Random() // Random number generator
+        new Random(), // Random number generator
       )
       println(s"fuzzing $className#$methodName")
 
@@ -188,7 +188,7 @@ object FuzzTestSuiteMain:
         methodName,
         Thread.currentThread().getContextClassLoader(),
         guidance,
-        System.out
+        System.out,
       )
 
       if !result.wasSuccessful()
