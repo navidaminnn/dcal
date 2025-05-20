@@ -18,6 +18,7 @@ import java.io.ByteArrayOutputStream
 import forja.test.newlineUtils.*
 
 import forja.*
+import forja.sexpr.lang.{SAtom, SList}
 
 class serializeTests extends munit.FunSuite:
   extension (writable: geny.Writable)
@@ -32,7 +33,7 @@ class serializeTests extends munit.FunSuite:
     def serializePretty: String =
       serialize.toPrettyWritable(top).writeToString
 
-  val eg1 = Node.Top(lang.List(lang.Atom("foo"), lang.Atom("bar")))
+  val eg1 = Node.Top(SList(SAtom("foo"), SAtom("bar")))
 
   test("eg1 compact"):
     assertEquals(eg1.serializeCompact, "(3:foo3:bar)")
@@ -45,7 +46,7 @@ class serializeTests extends munit.FunSuite:
     )
 
   val eg2 = Node.Top(
-    lang.List(lang.List(), lang.List(), lang.List(lang.List())),
+    SList(SList(), SList(), SList(SList())),
   )
 
   test("nested lists compact"):

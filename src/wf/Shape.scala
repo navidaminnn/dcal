@@ -15,6 +15,7 @@
 package forja.wf
 
 import forja.*
+import forja.sexpr.lang.{SAtom, SList}
 
 enum Shape:
   case Atom, AnyShape
@@ -24,35 +25,35 @@ enum Shape:
 
   def asNode: Node =
     this match
-      case Atom     => sexpr.lang.Atom("atom")
-      case AnyShape => sexpr.lang.Atom("anyShape")
+      case Atom     => SAtom("atom")
+      case AnyShape => SAtom("anyShape")
       case Choice(choices) if choices.sizeIs == 1 =>
         choices.head match
-          case token: Token        => sexpr.lang.Atom(token.name)
-          case embed: EmbedMeta[?] => sexpr.lang.Atom(embed.canonicalName)
+          case token: Token        => SAtom(token.name)
+          case embed: EmbedMeta[?] => SAtom(embed.canonicalName)
       case Choice(choices) =>
-        val result = sexpr.lang.List(
-          sexpr.lang.Atom("choice"),
+        val result = SList(
+          SAtom("choice"),
         )
         result.children.addAll:
           choices.iterator
             .map:
-              case token: Token => sexpr.lang.Atom(token.name)
+              case token: Token => SAtom(token.name)
               case embed: EmbedMeta[?] =>
-                sexpr.lang.Atom(embed.canonicalName)
+                SAtom(embed.canonicalName)
         result
       case Repeat(choice, minCount) =>
-        sexpr.lang.List(
-          sexpr.lang.Atom("repeat"),
+        SList(
+          SAtom("repeat"),
           choice.asNode,
-          sexpr.lang.List(
-            sexpr.lang.Atom("minCount"),
-            sexpr.lang.Atom(minCount.toString()),
+          SList(
+            SAtom("minCount"),
+            SAtom(minCount.toString()),
           ),
         )
       case Fields(fields) =>
-        val result = sexpr.lang.List(
-          sexpr.lang.Atom("fields"),
+        val result = SList(
+          SAtom("fields"),
         )
         result.children.addAll(fields.iterator.map(_.asNode))
         result

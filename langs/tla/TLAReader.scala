@@ -90,9 +90,6 @@ object TLAReader extends Reader:
 
   import Reader.*
 
-  // override protected def tracePathOpt: Option[os.Path] = Some(os.pwd / "tlareader.log")
-  // override protected def traceLimit: Int = 200
-
   object StringLiteral extends Token.ShowSource
   object NumberLiteral extends Token.ShowSource
 
@@ -263,16 +260,16 @@ object TLAReader extends Reader:
                 | moduleSearchNeverMind
         .installAlphas(onAlpha)
         .onOneOf(digits):
-          // This case handles enough of the number -> alpha promotion that we can parse
-          // the module name if it starts with one or more digits.
+          /* This case handles enough of the number -> alpha promotion that we
+           * can parse the module name if it starts with one or more digits. */
           bytes.selectManyLike(digits):
             bytes
               .selecting[SourceRange]
               .installAlphas(onAlpha)
               .fallback:
                 on(theTop).check
-                // Saw digits (?) at top level. We didn't even make a node, so just drop the match and go back to
-                // business as usual.
+                /* Saw digits (?) at top level. We didn't even make a node, so
+                 * just drop the match and go back to business as usual. */
                   *> dropMatch(moduleSearch)
                   | moduleSearchNeverMind // Or we saw an integer in the middle of module pattern, in which case drop this match.
         .fallback:
@@ -550,9 +547,9 @@ object TLAReader extends Reader:
             finishStepMarkerWithIdx(m1, StepMarker.Num(m1.drop(1).dropRight(1)))
         .fallback:
           Reader.matchedRef.get.flatMap: m =>
-            // throw away the leading <, then pretend it was a num all along
-            // note: this may in fact be `<5x__`  which should lex as op `<`, id `5x__`
-            //       (num lexer already handles this)
+            /* Throw away the leading <, then pretend it was a num all along.
+             * Note: this may in fact be `<5x__` which should lex as op `<`, id
+             * `5x__` (num lexer already handles this) */
             addChild(defns.`<`(m.take(1)))
             *> Reader.matchedRef.updated(_ => m.drop(1)):
               numberLiteral

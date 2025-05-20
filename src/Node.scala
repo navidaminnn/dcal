@@ -205,8 +205,9 @@ object Node:
           var curr = self
           def extraConditions: Boolean =
             curr.parent.nonEmpty
-            // .rightSibling looks at the parent node. If we're looking at thisTraversable,
-            // then that means we should stop or we'll be traversing our parent's siblings.
+            /* .rightSibling looks at the parent node. If we're looking at
+             * thisTraversable, then that means we should stop or we'll be
+             * traversing our parent's siblings. */
               && (curr ne thisTraversable)
               && !curr.parent.get.isInstanceOf[Node.Top]
 
@@ -504,8 +505,9 @@ object Node:
       val oldParent = _parent
       if _parent eq parent
       then
-        // reparenting within the same parent shouldn't really do anything,
-        // so don't make a fuss if it happens. The seq ops on Children might do this.
+        /* Reparenting within the same parent shouldn't really do anything, so
+         * don't make a fuss if it happens. The seq ops on Children might do
+         * this. */
         _idxInParent = idxInParent
         this
       else if _parent eq null
@@ -632,7 +634,8 @@ object Node:
     override def insertAll(idx: Int, elems: IterableOnce[Node.Child]): Unit =
       elems match
         case elems: Iterable[Node.Child] =>
-          // Keeping this separate allows ensureParent to fail without corrupting the structure.
+          /* Keeping this separate allows ensureParent to fail without
+           * corrupting the structure. */
           elems.iterator.zipWithIndex
             .foreach: (child, childIdx) =>
               child.ensureParent(parent, idx + childIdx)

@@ -242,7 +242,8 @@ object ReferenceTracer:
       def flatMap[A, B](fa: Result[A])(f: A => Result[B]): Result[B] =
         fa.flatMap(f)
 
-  // FIXME: allow yielding actions without constructing a giant object tree, then we'll be acceptably efficient
+  /* FIXME: allow yielding actions without constructing a giant object tree,
+   * then we'll be acceptably efficient */
 
   private def referenceEval(
       manip: Manip[?],

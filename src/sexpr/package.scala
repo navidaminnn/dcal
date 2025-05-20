@@ -21,9 +21,9 @@ import forja.dsl.*
 import forja.src.{Source, SourceRange}
 
 object lang extends WellformedDef:
-  lazy val topShape: Shape = repeated(choice(Atom, List))
-  object List extends t(topShape)
-  object Atom extends t(Shape.Atom), Token.ShowSource
+  lazy val topShape: Shape = repeated(choice(SAtom, SList))
+  object SList extends t(topShape)
+  object SAtom extends t(Atom), Token.ShowSource
 
 object parse:
   def fromFile(path: os.Path): Node.Top =
@@ -34,9 +34,9 @@ object parse:
     SExprReader(sourceRange)
 
 object serialize:
-  // using TailCalls rather than cats.Eval because we are mixing imperative
-  // and lazy code, and I ran into a bug where cats.Eval (reasonably for its normal use but not here)
-  // silently memoized an effectful computation
+  /* Using TailCalls here rather than cats.Eval because we are mixing imperative
+   * and lazy code, and I ran into a bug where cats.Eval (reasonably for its
+   * normal use but not here) silently memoized an effectful computation. */
   import scala.util.control.TailCalls.*
   import forja.util.TailCallsUtils.*
 
@@ -54,13 +54,13 @@ object serialize:
               top.children.iterator
                 .map(impl)
                 .traverse(identity)
-            case atom @ lang.Atom() =>
+            case atom @ lang.SAtom() =>
               val sourceRange = atom.sourceRange
               out.write(sourceRange.length.toString().getBytes())
               out.write(':')
               sourceRange.writeBytesTo(out)
               done(())
-            case list @ lang.List(_*) =>
+            case list @ lang.SList(_*) =>
               for
                 () <- done(out.write('('))
                 () <- list.children.iterator
@@ -97,27 +97,27 @@ object serialize:
                 .map(impl)
                 .intercalate(nl)
                 .traverse(identity)
-            case atom @ lang.Atom()
+            case atom @ lang.SAtom()
                 if SExprReader.canBeEncodedAsToken(atom.sourceRange) =>
               atom.sourceRange.writeBytesTo(out)
               done(())
-            case atom @ lang.Atom() =>
+            case atom @ lang.SAtom() =>
               val sourceRange = atom.sourceRange
               out.write(sourceRange.length.toString().getBytes())
               out.write(':')
               sourceRange.writeBytesTo(out)
               done(())
-            case lang.List() =>
+            case lang.SList() =>
               out.write('(')
               out.write(')')
               done(())
-            case lang.List(child) =>
+            case lang.SList(child) =>
               for
                 () <- done(out.write('('))
                 () <- impl(child)
                 () <- done(out.write(')'))
               yield ()
-            case list @ lang.List(_*) =>
+            case list @ lang.SList(_*) =>
               def writeChildren(iter: Iterator[Node.Child]): TailRec[Unit] =
                 iter
                   .map(impl)
@@ -128,7 +128,7 @@ object serialize:
               for
                 () <- withIndent:
                   list.children.head match
-                    case atom @ lang.Atom() =>
+                    case atom @ lang.SAtom() =>
                       for
                         () <- impl(atom)
                         () <- nl

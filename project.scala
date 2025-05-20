@@ -18,7 +18,7 @@
 //> using dep com.lihaoyi::sourcecode:0.4.2
 //> using dep org.typelevel::cats-core:2.13.0
 //> using dep dev.zio::izumi-reflect:3.0.2
-//> using dep com.lihaoyi::ujson::4.1.0
+//> using dep com.lihaoyi::ujson::4.2.1
 //> using dep io.github.java-diff-utils:java-diff-utils:4.15
 
 //> using dep com.lihaoyi::pprint:0.9.0

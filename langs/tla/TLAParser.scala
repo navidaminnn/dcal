@@ -294,7 +294,8 @@ object TLAParser extends PassSeq:
           tok(ModuleGroup) *> onlyChild(lang.Module),
         ).rewrite: mod =>
           splice(mod.unparent())
-        // Any module that doesn't have what looks like an unparsed nested module in it.
+        /* Any module that doesn't have what looks like an unparsed nested
+         * module in it. */
         | on(
           skip(DashSeq)
             ~ skip(defns.MODULE)
@@ -765,7 +766,8 @@ object TLAParser extends PassSeq:
   //       | on(
   //         tok(TLAReader.ParenthesesGroup) *> onlyChild(lang.Expr)
   //       ).rewrite: expr =>
-  //         // mark this group as an expression, but leave evidence that it is a group (for operator precedence handling)
+  /* // mark this group as an expression, but leave evidence that it is a group
+   * (for operator precedence handling) */
   //         splice(lang.Expr(lang.TmpGroupExpr(expr.unparent())))
   //       | on(
   //         tok(TLAReader.TupleGroup).product(children(

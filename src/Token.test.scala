@@ -14,6 +14,8 @@
 
 package forja
 
+import forja.util.Named
+
 final class TokenTests extends munit.FunSuite:
   import TokenTests.*
 
@@ -24,6 +26,18 @@ final class TokenTests extends munit.FunSuite:
   test("tokens !="):
     assert(t1 != t2)
     assert(t2 != t1)
+
+  class Tok(name: String) extends Token, Named(using Named.OwnName(List(name)))
+
+  test("GC churn"):
+    /* I manually tested that this actually triggers GC quite often on my
+     * machine. Not sure how to enforce this, though. */
+    (0 until 100).foreach: _ =>
+      (0 until 100).foreach: _ =>
+        assertEquals(Tok("foo"), Tok("foo"))
+      System.gc()
+      Thread.sleep(100)
+end TokenTests
 
 object TokenTests:
   object t1 extends Token

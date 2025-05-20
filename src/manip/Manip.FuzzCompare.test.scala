@@ -293,7 +293,8 @@ object ManipFuzzCompareTests:
 
     given ManipGenImpl[RestrictHandle[Any]] with
       // explicit handle manipulation, simulating that is TODO
-      // (idea: keep a couple of token handles, allow RefInit to set it, and then update it here)
+      /* (idea: keep a couple of token handles, allow RefInit to set it, and
+       * then update it here) */
       override val shouldSkip = true
       val minTreeSize = 2
       def generate(treeSize: Int)(using ctx: Ctx): RestrictHandle[Any] = ???

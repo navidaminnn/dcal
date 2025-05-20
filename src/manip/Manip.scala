@@ -121,11 +121,11 @@ object Manip:
         oldSavedDepth: Int = -2,
         isCommit: Boolean = false,
     ): Unit =
-      // if we have an old depth that "predates" what's in safeMap,
-      // restore to that. This will catch the first RestoreRef during commit, if
-      // the safeMap entry has advanced since then.
-      // There's a theorem here about how we cannot speculate with leftDepth less than
-      // what we've committed.
+      /* If we have an old depth that "predates" what's in safeMap, restore to
+       * that. This will catch the first RestoreRef during commit, if the
+       * safeMap entry has advanced since then.
+       * There's a theorem here about how we cannot speculate with leftDepth
+       * less than what we've committed. */
       if oldSavedDepth != -2 && oldSavedDepth < safeMap(ref)
       then safeMap(ref) = oldSavedDepth
 

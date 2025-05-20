@@ -53,7 +53,7 @@ object SExprReader extends Reader:
         .onOneOf(whitespace):
           extendThisNodeWithMatch(rules)
         .on('('):
-          addChild(lang.List())
+          addChild(lang.SList())
             .here(extendThisNodeWithMatch(rules))
         .on(')'):
           extendThisNodeWithMatch:
@@ -99,7 +99,7 @@ object SExprReader extends Reader:
                   dropMatch:
                     bytes.selectCount(lengthPrefix):
                       consumeMatch: m =>
-                        addChild(lang.Atom(m))
+                        addChild(lang.SAtom(m))
                           *> rules
                   | bytes.getSrc.flatMap: src =>
                     val srcEnd = src.drop(src.length)
@@ -128,7 +128,7 @@ object SExprReader extends Reader:
         .onOneOf(digit)(tokenMode)
         .fallback:
           consumeMatch: m =>
-            addChild(lang.Atom(m))
+            addChild(lang.SAtom(m))
               *> rules
 
   private lazy val stringMode: Manip[SourceRange] =
@@ -149,7 +149,7 @@ object SExprReader extends Reader:
       dropMatch:
         builderRef.get.flatMap: builder =>
           val stringContents = builder.result()
-          addChild(lang.Atom(stringContents))
+          addChild(lang.SAtom(stringContents))
             *> rest
 
     lazy val impl: Manip[SourceRange] =
@@ -178,7 +178,8 @@ object SExprReader extends Reader:
                 )
                   *> addByte('?')
           .fallback:
-            // everything else goes in the literal, except EOF in which case we bail to default rules
+            /* everything else goes in the literal, except EOF in which case we
+             * bail to default rules */
             bytes.selectOne:
               consumeMatch: m =>
                 assert(m.length == 1)

@@ -27,8 +27,10 @@ class CalcReaderTests extends munit.FunSuite:
     def parse: Node.Top =
       val top = read
 
+      // format: off
       // instrumentWithTracer(Manip.RewriteDebugTracer(os.pwd / "dbg_calc_parser_passes")):
       CalcParser(top)
+      // format: on
 
       // os.write.over(
       //   os.pwd / "dbg_calc_parser" / "test_output.dbg",
@@ -41,8 +43,10 @@ class CalcReaderTests extends munit.FunSuite:
     def evaluate: Node.Top =
       val top = parse
 
+      // format: off
       // instrumentWithTracer(Manip.RewriteDebugTracer(os.pwd / "dbg_calc_evaluator_passes")):
       CalcEvaluator(top)
+      // format: on
 
       // os.write.over(
       //   os.pwd / "dbg_calc_evaluator" / "test_output.dbg",

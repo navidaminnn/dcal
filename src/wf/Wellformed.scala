@@ -20,7 +20,7 @@ import scala.util.control.TailCalls.*
 import forja.*
 import forja.dsl.*
 import forja.src.{Source, SourceRange}
-import forja.sexpr.lang.{Atom, List as SList}
+import forja.sexpr.lang.{SAtom, SList}
 import forja.util.TailCallsUtils.*
 
 final class Wellformed private (
@@ -272,26 +272,26 @@ final class Wellformed private (
             val result = Node.Top()
             result.addSerializedChildren(top.children)
           case nd @ Node(token) if !token.showSource =>
-            done(Atom(token.shortName))
+            done(SAtom(token.shortName))
           case node: Node =>
-            val result = SList(Atom(node.token.shortName))
+            val result = SList(SAtom(node.token.shortName))
             if node.token.showSource
             then
               val srcRange = node.sourceRange
               result.children.addOne:
                 SList(
-                  Atom(txt),
-                  Atom(srcRange),
+                  SAtom(txt),
+                  SAtom(srcRange),
                 )
               srcRange.source.origin match
                 case None =>
                 case Some(origin) =>
                   result.children.addOne:
                     SList(
-                      Atom(src),
-                      Atom(origin.toString),
-                      Atom(srcRange.offset.toString()),
-                      Atom(srcRange.length.toString()),
+                      SAtom(src),
+                      SAtom(origin.toString),
+                      SAtom(srcRange.offset.toString()),
+                      SAtom(srcRange.length.toString()),
                     )
 
             result.addSerializedChildren(node.children)
@@ -300,9 +300,9 @@ final class Wellformed private (
               Source.fromWritable(embed.meta.serialize(embed.value))
             done:
               SList(
-                Atom(shortNameByToken(Node.EmbedT)),
-                Atom(embed.meta.canonicalName),
-                Atom(SourceRange.entire(bytes)),
+                SAtom(shortNameByToken(Node.EmbedT)),
+                SAtom(embed.meta.canonicalName),
+                SAtom(SourceRange.entire(bytes)),
               )
 
       result.asInstanceOf[TailRec[tree.This]]
@@ -311,15 +311,13 @@ final class Wellformed private (
   end serializeTree
 
   def deserializeTree(tree: Node.All): Node.All =
-    import sexpr.lang.{Atom, List as SList}
-
     val src = SourceRange.entire(Source.fromString(":src"))
     val txt = SourceRange.entire(Source.fromString(":txt"))
     val srcMap = mutable.HashMap.empty[os.Path, Source]
 
     lazy val nodeManip: Manip[TailRec[Node.All]] =
       on(
-        tok(Atom)
+        tok(SAtom)
           .map(_.sourceRange)
           .restrict(tokenByShortName)
           <* refine(atFirstChild(on(atEnd).check)),
@@ -327,9 +325,9 @@ final class Wellformed private (
         done(token())
       | on(
         tok(SList).withChildren:
-          skip(tok(Atom).src(shortNameByToken(Node.EmbedT)))
-            ~ field(tok(Atom).map(_.sourceRange).restrict(knownMetasByName))
-            ~ field(tok(Atom).map(_.sourceRange))
+          skip(tok(SAtom).src(shortNameByToken(Node.EmbedT)))
+            ~ field(tok(SAtom).map(_.sourceRange).restrict(knownMetasByName))
+            ~ field(tok(SAtom).map(_.sourceRange))
             ~ eof,
       ).value.map: (meta, src) =>
         done(Node.Embed(meta.deserialize(src))(using meta))
@@ -337,22 +335,22 @@ final class Wellformed private (
         anyNode
         *: tok(SList).withChildren:
           field:
-            tok(Atom)
+            tok(SAtom)
               .map(_.sourceRange)
               .restrict(tokenByShortName)
           ~ field:
             optional:
               tok(SList).withChildren:
-                skip(tok(Atom).src(txt))
-                  ~ field(tok(Atom).map(_.sourceRange))
+                skip(tok(SAtom).src(txt))
+                  ~ field(tok(SAtom).map(_.sourceRange))
                   ~ eof
           ~ field:
             optional:
               tok(SList).withChildren:
-                skip(tok(Atom).src(src))
-                  ~ field(tok(Atom))
-                  ~ field(tok(Atom))
-                  ~ field(tok(Atom))
+                skip(tok(SAtom).src(src))
+                  ~ field(tok(SAtom))
+                  ~ field(tok(SAtom))
+                  ~ field(tok(SAtom))
                   ~ eof
           ~ trailing,
       ).value.map: (node, token, txtOpt, srcOpt) =>
@@ -415,10 +413,10 @@ final class Wellformed private (
   end deserializeTree
 
   def asNode: Node =
-    val result = forja.sexpr.lang.List(
-      forja.sexpr.lang.Atom("wellformed"),
-      forja.sexpr.lang.List(
-        sexpr.lang.Atom("top"),
+    val result = SList(
+      SAtom("wellformed"),
+      SList(
+        SAtom("top"),
         topShape.asNode,
       ),
     )
@@ -427,8 +425,8 @@ final class Wellformed private (
         .sortInPlaceBy(_._1.name)
         .iterator
         .map: (tok, shape) =>
-          sexpr.lang.List(
-            sexpr.lang.Atom(tok.name),
+          SList(
+            SAtom(tok.name),
             shape.asNode,
           )
     result
@@ -451,6 +449,18 @@ object Wellformed:
       private var topShapeOpt: Option[Shape],
   ):
     extension (token: Token | Node.Top.type)
+      def undef(): Unit =
+        token match
+          case token: Token =>
+            require(
+              assigns.contains(token),
+              s"cannot undef undefined token $token",
+            )
+            assigns.remove(token)
+          case Node.Top =>
+            require(topShapeOpt.nonEmpty, s"top is undefined, cannot undef")
+            topShapeOpt = None
+
       def ::=(shape: Shape): Unit =
         token match
           case token: Token =>
@@ -502,7 +512,8 @@ object Wellformed:
               fields.map(choice => Shape.Choice(choice.choices -- cases)),
             )
           case Shape.AnyShape | Shape.Atom =>
-          // maybe it helps to assert something here, but it is technically correct to just do nothing
+          /* maybe it helps to assert something here, but it is technically
+           * correct to just do nothing */
 
       def addCases(cases: Token*): Unit =
         existingShape match

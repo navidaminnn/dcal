@@ -72,7 +72,8 @@ object Token:
 
     def apply(nameSegments: List[String]): TokenSym =
       var sym: TokenSym | Null = null
-      // if invoked, forms a GC root for our new sym so it won't be reclaimed immediately after construction
+      /* If invoked, forms a GC root for our new sym so it won't be reclaimed
+       * immediately after construction. */
       lazy val freshSym = new TokenSym(nameSegments)
       while sym eq null do
         cleanQueue()
@@ -80,7 +81,8 @@ object Token:
           nameSegments,
           TokenSymRef(nameSegments, freshSym),
         )
-        // we might have just barely sniped a ref that cleanQueue missed. if sym is null, go around again.
+        /* We might have just barely sniped a ref that cleanQueue missed. If sym
+         * is null, go around again. */
         sym = ref.get()
       end while
       sym.nn

@@ -221,10 +221,11 @@ trait ManipOps:
   )(
       manip: on.Ctx ?=> Rules,
   ): Rules =
-    // Preparation for the rewrite may have reparented the node we were "on"
-    // When you immediately call splice, this pretty much always means "stay at that index and put something there",
-    // so that's what we do.
-    // Much easier than forcing the end user to understand such a confusing edge case.
+    /* Preparation for the rewrite may have reparented the node we were "on"
+     * When you immediately call splice, this pretty much always means "stay at
+     * that index and put something there", so that's what we do.
+     * Much easier than forcing the end user to understand such a confusing edge
+     * case. */
     keepHandleIdx:
       (getHandle, getTracer).tupled
         .tapEffect: (handle, tracer) =>
@@ -273,9 +274,10 @@ trait ManipOps:
       nodes: Iterable[Node.Child],
   ): Rules =
     spliceThen(nodes):
-      // If we _now_ have a match count of 0, it means the splice deleted our match.
-      // In that case, it's safe to retry at same position because we changed something.
-      // Normally that's bad, because it means we matched nothing and will retry in same position.
+      /* If we _now_ have a match count of 0, it means the splice deleted our
+       * match. In that case, it's safe to retry at same position because we
+       * changed something. Normally that's bad, because it means we matched
+       * nothing and will retry in same position. */
       if summon[on.Ctx].matchedCount == 0
       then continuePass
       else skipMatch
@@ -424,7 +426,8 @@ trait ManipOps:
             | (on(atEnd).check
               *> atParent(
                 commit(
-                  // going right finds either real sibling or sentinel, unless at top
+                  /* going right finds either real sibling or sentinel, unless
+                   * at top */
                   atRightSibling(next)
                     | on(theTop).check *> endPass,
                 ),
@@ -453,11 +456,13 @@ trait ManipOps:
           atParent(atRightSibling(impl))
 
         commit:
-          // same layer, same parent (next case ensures we already processed any children)
+          /* same layer, same parent (next case ensures we already processed any
+           * children) */
           atRightSibling(next)
           // go all the way into next subtree on the right
             | atNextCousin(atInit(next))
-            // up one layer, far left, knowing we looked at all reachable children
+            /* up one layer, far left, knowing we looked at all reachable
+             * children */
             | atParent(atFirstSibling(next))
             // special case: parent is top
             | atParent(on(theTop).check *> next)

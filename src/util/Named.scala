@@ -46,9 +46,9 @@ object Named:
     def getNameSegments(sym: Symbol): List[String] =
       if sym == defn.RootClass
       then Nil
-      // Not sure about stripSuffix, but it seems to work well, I guess until a package
-      // has non-alphanumeric chars in its name.
-      // Not sure how else I might try to access the name without the $.
+      /* Not sure about stripSuffix, but it seems to work well, I guess until a
+       * package has non-alphanumeric chars in its name.
+       * Not sure how else I might try to access the name without the $. */
       else sym.name.stripSuffix("$") :: getNameSegments(sym.owner)
 
     val theType = stripMacroConstructorStuff(Symbol.spliceOwner)

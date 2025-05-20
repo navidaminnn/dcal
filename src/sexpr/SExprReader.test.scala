@@ -16,29 +16,29 @@ package forja.sexpr
 
 import forja.*
 import forja.src.{Source, SourceRange}
-import Builtin.{Error, SourceMarker}
+import forja.sexpr.lang.{SAtom, SList}
+import forja.Builtin.{Error, SourceMarker}
 
 class SExprReaderTests extends munit.FunSuite:
-  import lang.Atom
   extension (str: String)
     def parse: Node.Top =
       sexpr.parse.fromSourceRange(SourceRange.entire(Source.fromString(str)))
 
   test("foo string literal"):
-    assertEquals("\"foo\"".parse, Node.Top(Atom("foo")))
+    assertEquals("\"foo\"".parse, Node.Top(SAtom("foo")))
 
   test("escape tab char"):
-    assertEquals("\"\\t\"".parse, Node.Top(Atom("\t")))
+    assertEquals("\"\\t\"".parse, Node.Top(SAtom("\t")))
 
   test("ignore crlf"):
-    assertEquals("\"\\\r\n\"".parse, Node.Top(Atom("")))
+    assertEquals("\"\\\r\n\"".parse, Node.Top(SAtom("")))
 
   test("error: invalid string escape"):
     assertEquals(
       "\"\\^\"".parse,
       Node.Top(
         Error("invalid escape sequence \\^", Builtin.SourceMarker("\\^")),
-        Atom("?"),
+        SAtom("?"),
       ),
     )
 
@@ -49,30 +49,30 @@ class SExprReaderTests extends munit.FunSuite:
   test("all misc whitespace"):
     assertEquals(" \n\n \t\r\n".parse, Node.Top())
   test("one atom"):
-    assertEquals("8:deadbeef".parse, Node.Top(Atom("deadbeef")))
+    assertEquals("8:deadbeef".parse, Node.Top(SAtom("deadbeef")))
   test("two atoms"):
-    assertEquals("3:foo 3:bar".parse, Node.Top(Atom("foo"), Atom("bar")))
+    assertEquals("3:foo 3:bar".parse, Node.Top(SAtom("foo"), SAtom("bar")))
   test("atom with weird chars"):
-    assertEquals("9:(foo bar)".parse, Node.Top(Atom("(foo bar)")))
+    assertEquals("9:(foo bar)".parse, Node.Top(SAtom("(foo bar)")))
 
   test("empty atom"):
-    assertEquals("0:".parse, Node.Top(Atom("")))
+    assertEquals("0:".parse, Node.Top(SAtom("")))
   test("empty list"):
-    assertEquals("()".parse, Node.Top(lang.List()))
+    assertEquals("()".parse, Node.Top(SList()))
 
   test("list of two atoms"):
     assertEquals(
       "(3:foo 3:bar)".parse,
-      Node.Top(lang.List(Atom("foo"), Atom("bar"))),
+      Node.Top(SList(SAtom("foo"), SAtom("bar"))),
     )
   test("list of three lists"):
     assertEquals(
       "((3:foo) (3:bar) ())".parse,
       Node.Top(
-        lang.List(
-          lang.List(Atom("foo")),
-          lang.List(Atom("bar")),
-          lang.List(),
+        SList(
+          SList(SAtom("foo")),
+          SList(SAtom("bar")),
+          SList(),
         ),
       ),
     )
@@ -88,7 +88,7 @@ class SExprReaderTests extends munit.FunSuite:
       ") 3:foo".parse,
       Node.Top(
         Error("unexpected end of list", SourceMarker(")")),
-        Atom("foo"),
+        SAtom("foo"),
       ),
     )
 
@@ -96,20 +96,20 @@ class SExprReaderTests extends munit.FunSuite:
     assertEquals(
       "(4: foo".parse,
       Node.Top(
-        lang.List(Atom(" foo"), Error("unexpected EOF", SourceMarker())),
+        SList(SAtom(" foo"), Error("unexpected EOF", SourceMarker())),
       ),
     )
 
   test("empty string literal"):
-    assertEquals("\"\"".parse, Node.Top(lang.Atom("")))
+    assertEquals("\"\"".parse, Node.Top(SAtom("")))
 
   test("3 empty string literals with a list"):
     assertEquals(
       "\"\" (\"\" ) \"\"".parse,
       Node.Top(
-        lang.Atom(""),
-        lang.List(lang.Atom("")),
-        lang.Atom(""),
+        SAtom(""),
+        SList(SAtom("")),
+        SAtom(""),
       ),
     )
 
@@ -117,10 +117,10 @@ class SExprReaderTests extends munit.FunSuite:
     assertEquals(
       raw"""("foo" "bar" " ")""".parse,
       Node.Top(
-        lang.List(
-          lang.Atom("foo"),
-          lang.Atom("bar"),
-          lang.Atom(" "),
+        SList(
+          SAtom("foo"),
+          SAtom("bar"),
+          SAtom(" "),
         ),
       ),
     )
@@ -128,17 +128,17 @@ class SExprReaderTests extends munit.FunSuite:
   test("string with escapes"):
     assertEquals(
       raw""" "\tfoo\\bar" """.parse,
-      Node.Top(lang.Atom("\tfoo\\bar")),
+      Node.Top(SAtom("\tfoo\\bar")),
     )
 
   test("misc token atoms"):
     assertEquals(
       "foo bar =ping= :this /42a".parse,
       Node.Top(
-        Atom("foo"),
-        Atom("bar"),
-        Atom("=ping="),
-        Atom(":this"),
-        Atom("/42a"),
+        SAtom("foo"),
+        SAtom("bar"),
+        SAtom("=ping="),
+        SAtom(":this"),
+        SAtom("/42a"),
       ),
     )
