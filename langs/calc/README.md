@@ -5,7 +5,7 @@ A parser and evaluator for arithmetic expressions given in string inputs; suppor
 
 
 ## Motivation
-The calculator exists as a practical example demonstrating how DCal can be leveraged to parse languages and manipulate ASTs, with many of DCal's core features such as ```Wellformed```, ```PassSeq```, and ```SeqPattern``` being heavily used.
+The calculator exists as a practical example demonstrating how Forja can be leveraged to parse languages and manipulate ASTs, with many of Forja's core features such as ```Wellformed```, ```PassSeq```, and ```SeqPattern``` being used.
 
 
 ## Components
