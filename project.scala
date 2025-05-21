@@ -16,4 +16,3 @@
 
 // Test
 //> using test.dependency org.scalameta::munit:1.1.1
-
