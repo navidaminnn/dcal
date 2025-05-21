@@ -30,7 +30,7 @@ final case class DebugInfo(
         s"$file:$line in $outer"
 
 object DebugInfo:
-  import scala.compiletime.{summonInline, summonFrom}
+  import scala.compiletime.{summonFrom, summonInline}
 
   sealed abstract class Ctx
 

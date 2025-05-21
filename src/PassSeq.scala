@@ -14,10 +14,12 @@
 
 package forja
 
-import scala.collection.mutable
 import cats.syntax.all.given
+
 import forja.dsl.*
 import forja.wf.Wellformed
+
+import scala.collection.mutable
 
 transparent trait PassSeq:
   def inputWellformed: Wellformed

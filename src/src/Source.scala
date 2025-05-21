@@ -14,12 +14,12 @@
 
 package forja.src
 
-import scala.util.Using
-
 import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
 import java.nio.channels.FileChannel
 import java.nio.channels.FileChannel.MapMode
+import java.nio.charset.StandardCharsets
+
+import scala.util.Using
 
 trait Source:
   def origin: Option[os.Path]

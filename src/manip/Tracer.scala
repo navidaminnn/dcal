@@ -14,12 +14,12 @@
 
 package forja.manip
 
+import forja.*
+import forja.util.{++, toShortString}
+import forja.wf.Wellformed
+
 import com.github.difflib.{DiffUtils, UnifiedDiffUtils}
 import scala.jdk.CollectionConverters.*
-
-import forja.*
-import forja.wf.Wellformed
-import forja.util.{toShortString, ++}
 
 import Manip.Ref
 

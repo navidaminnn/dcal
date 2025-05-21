@@ -15,7 +15,8 @@
 package forja.langs.calc
 
 import forja.*
-import forja.src.{SourceRange, Source}
+import forja.src.{Source, SourceRange}
+
 import Builtin.{Error, SourceMarker}
 
 class CalcReaderTests extends munit.FunSuite:

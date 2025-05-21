@@ -17,9 +17,9 @@ package forja.langs.calc
 import cats.syntax.all.given
 
 import forja.*
-import forja.wf.Wellformed
 import forja.dsl.*
 import forja.src.Reader
+import forja.wf.Wellformed
 
 import lang.*
 

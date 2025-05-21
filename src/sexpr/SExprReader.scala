@@ -17,8 +17,8 @@ package forja.sexpr
 import cats.syntax.all.given
 
 import forja.*
-import forja.wf.Wellformed
 import forja.src.{Reader, SourceRange}
+import forja.wf.Wellformed
 
 object SExprReader extends Reader:
   import forja.dsl.*

@@ -15,6 +15,7 @@
 package forja.langs.tla
 
 import cats.syntax.all.given
+
 import forja.*
 import forja.dsl.*
 import forja.wf.WellformedDef

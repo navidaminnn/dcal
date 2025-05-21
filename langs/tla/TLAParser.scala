@@ -15,10 +15,12 @@
 package forja.langs.tla
 
 import cats.syntax.all.given
+
 import forja.*
 import forja.dsl.*
-import forja.src.{SourceRange, Source}
+import forja.src.{Source, SourceRange}
 import forja.wf.Wellformed
+
 import scala.collection.IndexedSeqView
 
 object TLAParser extends PassSeq:

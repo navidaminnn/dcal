@@ -14,22 +14,24 @@
 
 package forja.manip
 
-import java.nio.channels.ServerSocketChannel
-import java.net.InetSocketAddress
-import java.nio.channels.SocketChannel
-import java.nio.channels.ClosedChannelException
-import java.nio.channels.AsynchronousCloseException
-
-import scala.collection.mutable
-import java.nio.charset.StandardCharsets
-import java.nio.channels.Channels
 import java.io.Closeable
+import java.net.InetSocketAddress
+import java.nio.channels.{
+  AsynchronousCloseException,
+  Channels,
+  ClosedChannelException,
+  ServerSocketChannel,
+  SocketChannel,
+}
+import java.nio.charset.StandardCharsets
 
 import forja.*
 import forja.util.ById
 
+import scala.collection.mutable
+
 final class DebugAdapter(host: String, port: Int) extends Tracer:
-  import DebugAdapter.{EvalState, EvalTag, StackEntry, SourceRecord}
+  import DebugAdapter.{EvalState, EvalTag, SourceRecord, StackEntry}
   private val io = DebugAdapter.IO(host, port)
 
   @scala.annotation.tailrec

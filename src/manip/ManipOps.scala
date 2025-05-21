@@ -15,11 +15,14 @@
 package forja.manip
 
 import cats.syntax.all.given
+
 import forja.*
 import forja.dsl.*
 import forja.util.toShortString
-import Manip.*
+
 import scala.reflect.ClassTag
+
+import Manip.*
 
 trait ManipOps:
   def instrumentWithTracer[T](tracer: Tracer)(fn: => T): T =

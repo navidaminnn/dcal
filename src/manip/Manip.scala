@@ -15,11 +15,13 @@
 package forja.manip
 
 import cats.syntax.all.given
+
 import forja.*
 import forja.dsl.*
 import forja.util.SymbolicMapFactory
-import scala.util.NotGiven
+
 import scala.reflect.ClassTag
+import scala.util.NotGiven
 
 /** The core DSL class, whose [[forja.manip.Manip.perform]] method causes the
   * represented instructions to run. It has instances of [[cats]] typeclasses,

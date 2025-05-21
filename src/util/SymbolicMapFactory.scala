@@ -14,9 +14,10 @@
 
 package forja.util
 
-import scala.reflect.ClassTag
 import java.lang.ref.{ReferenceQueue, WeakReference}
 import java.util.concurrent.atomic.AtomicInteger
+
+import scala.reflect.ClassTag
 
 abstract class SymbolicMapFactory:
   trait Mapped:

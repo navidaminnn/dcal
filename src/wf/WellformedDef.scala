@@ -14,9 +14,10 @@
 
 package forja.wf
 
-import scala.collection.mutable
 import forja.dsl.*
 import forja.util.Named
+
+import scala.collection.mutable
 import scala.util.control.NonFatal
 
 trait WellformedDef:

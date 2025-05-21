@@ -16,7 +16,8 @@ package forja.src
 
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
-import java.nio.charset.{StandardCharsets, Charset}
+import java.nio.charset.{Charset, StandardCharsets}
+
 import scala.collection.immutable.IndexedSeq
 import scala.collection.mutable
 

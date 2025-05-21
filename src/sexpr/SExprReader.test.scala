@@ -15,9 +15,9 @@
 package forja.sexpr
 
 import forja.*
-import forja.src.{Source, SourceRange}
-import forja.sexpr.lang.{SAtom, SList}
 import forja.Builtin.{Error, SourceMarker}
+import forja.sexpr.lang.{SAtom, SList}
+import forja.src.{Source, SourceRange}
 
 class SExprReaderTests extends munit.FunSuite:
   extension (str: String)

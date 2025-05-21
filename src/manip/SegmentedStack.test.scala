@@ -14,8 +14,8 @@
 
 package forja.manip
 
-import munit.diff.DiffOptions
 import munit.Location
+import munit.diff.DiffOptions
 
 class SegmentedStackTests extends munit.FunSuite:
   given munit.Compare[Integer | Null, Int] with

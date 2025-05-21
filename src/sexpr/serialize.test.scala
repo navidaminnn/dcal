@@ -15,10 +15,10 @@
 package forja.sexpr
 
 import java.io.ByteArrayOutputStream
-import forja.test.newlineUtils.*
 
 import forja.*
 import forja.sexpr.lang.{SAtom, SList}
+import forja.test.newlineUtils.*
 
 class serializeTests extends munit.FunSuite:
   extension (writable: geny.Writable)

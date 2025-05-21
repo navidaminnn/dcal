@@ -14,13 +14,16 @@
 
 package forja.src
 
+import java.nio.CharBuffer
+import java.nio.charset.{Charset, StandardCharsets}
+
 import cats.syntax.all.given
+
 import forja.*
 import forja.dsl.*
 import forja.wf.Wellformed
+
 import scala.annotation.targetName
-import java.nio.charset.{StandardCharsets, Charset}
-import java.nio.CharBuffer
 
 trait Reader:
   def wellformed: Wellformed

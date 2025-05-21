@@ -17,8 +17,8 @@ package forja.langs.calc
 import cats.syntax.all.given
 
 import forja.*
-import forja.dsl.*
 import forja.Builtin.{Error, SourceMarker}
+import forja.dsl.*
 import forja.src.{Reader, SourceRange}
 import forja.wf.Wellformed
 

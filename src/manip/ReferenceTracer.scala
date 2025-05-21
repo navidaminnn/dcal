@@ -14,13 +14,14 @@
 
 package forja.manip
 
+import java.io.{ByteArrayOutputStream, PrintStream}
+
+import cats.StackSafeMonad
+
 import forja.*
 import forja.dsl.*
-import scala.collection.mutable
 
-import java.io.PrintStream
-import java.io.ByteArrayOutputStream
-import cats.StackSafeMonad
+import scala.collection.mutable
 
 final class ReferenceTracer(manip: Manip[?])(using
     baseDebugInfo: DebugInfo,

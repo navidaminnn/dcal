@@ -23,4 +23,4 @@ object dsl extends ManipOps, SeqPatternOps, Shape.Ops:
   export forja.src.SourceRange.src
   export Manip.Rules
   export forja.wf.Shape
-  export Shape.{Atom, AnyShape}
+  export Shape.{AnyShape, Atom}

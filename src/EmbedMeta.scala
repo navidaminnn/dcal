@@ -14,10 +14,12 @@
 
 package forja
 
-import izumi.reflect.Tag
-import geny.Writable
 import java.io.OutputStream
-import forja.src.{SourceRange, Source}
+
+import forja.src.{Source, SourceRange}
+
+import geny.Writable
+import izumi.reflect.Tag
 
 trait EmbedMeta[T](using val tag: Tag[T]):
   def doClone(self: T): T = self

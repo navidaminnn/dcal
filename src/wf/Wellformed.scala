@@ -15,13 +15,15 @@
 package forja.wf
 
 import cats.syntax.all.given
-import scala.collection.mutable
-import scala.util.control.TailCalls.*
+
 import forja.*
 import forja.dsl.*
-import forja.src.{Source, SourceRange}
 import forja.sexpr.lang.{SAtom, SList}
+import forja.src.{Source, SourceRange}
 import forja.util.TailCallsUtils.*
+
+import scala.collection.mutable
+import scala.util.control.TailCalls.*
 
 final class Wellformed private (
     val assigns: Map[Token, Shape],

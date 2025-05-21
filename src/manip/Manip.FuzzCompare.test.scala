@@ -14,20 +14,19 @@
 
 package forja.manip
 
-import forja.dsl.*
 import forja.*
+import forja.dsl.*
 import forja.util.FuzzTestSuite
 
-import com.pholser.junit.quickcheck.generator.Generator
-import com.pholser.junit.quickcheck.generator.GenerationStatus
-import com.pholser.junit.quickcheck.random.SourceOfRandomness
-import com.pholser.junit.quickcheck.generator.InRange
 import com.pholser.junit.quickcheck.From
-
+import com.pholser.junit.quickcheck.generator.{
+  GenerationStatus,
+  Generator,
+  InRange,
+}
+import com.pholser.junit.quickcheck.random.SourceOfRandomness
+import edu.berkeley.cs.jqf.fuzz.{Fuzz, JQF}
 import org.junit.runner.RunWith
-import edu.berkeley.cs.jqf.fuzz.JQF
-import edu.berkeley.cs.jqf.fuzz.Fuzz
-
 import scala.util.Using
 
 @RunWith(classOf[JQF])

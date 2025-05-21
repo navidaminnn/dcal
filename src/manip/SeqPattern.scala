@@ -15,8 +15,10 @@
 package forja.manip
 
 import cats.syntax.all.given
+
 import forja.*
 import forja.dsl.*
+
 import scala.util.NotGiven
 
 final class SeqPattern[+T](val manip: Manip[SeqPattern.Result[T]]):

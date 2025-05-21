@@ -15,11 +15,13 @@
 package forja.manip
 
 import cats.syntax.all.given
-import scala.collection.IndexedSeqView
 
 import forja.*
 import forja.dsl.*
-import forja.src.{SourceRange, Source}
+import forja.src.{Source, SourceRange}
+
+import scala.collection.IndexedSeqView
+
 import SeqPattern.*
 
 trait SeqPatternOps:

@@ -14,9 +14,11 @@
 
 package forja.src
 
-import scala.collection.StringOps
 import java.nio.charset.StandardCharsets
+
 import forja.test.newlineUtils.*
+
+import scala.collection.StringOps
 
 class SourceRangeTests extends munit.FunSuite:
   val ipsum =

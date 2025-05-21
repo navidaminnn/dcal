@@ -14,9 +14,11 @@
 
 package forja.manip
 
-import forja.*
 import cats.syntax.all.given
+
+import forja.*
 import forja.dsl.*
+
 import scala.concurrent.duration.{Duration, MINUTES}
 
 class ManipTests extends munit.FunSuite:

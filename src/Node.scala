@@ -17,12 +17,14 @@ package forja
 import cats.Eval
 import cats.data.Chain
 import cats.syntax.all.given
-import scala.collection.mutable
-import scala.annotation.constructorOnly
-import forja.src.{SourceRange, Source}
-import forja.wf.Wellformed
+
 import forja.dsl.*
+import forja.src.{Source, SourceRange}
 import forja.util.toShortString
+import forja.wf.Wellformed
+
+import scala.annotation.constructorOnly
+import scala.collection.mutable
 
 final case class NodeError(msg: String) extends RuntimeException(msg)
 
@@ -591,7 +593,7 @@ object Node:
     private val _children = mutable.ArrayBuffer.from(childrenInit)
     _children.iterator.zipWithIndex.foreach: (child, idx) =>
       child.ensureParent(parent, idx)
-    export _children.{length, apply}
+    export _children.{apply, length}
 
     private def reIdxFromIdx(idx: Int): this.type =
       var curr = idx

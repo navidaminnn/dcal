@@ -15,6 +15,7 @@
 package forja.manip
 
 import cats.syntax.all.given
+
 import forja.dsl.*
 
 class SeqPatternTests extends munit.FunSuite:

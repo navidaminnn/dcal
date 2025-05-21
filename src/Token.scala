@@ -14,10 +14,11 @@
 
 package forja
 
-import forja.util.{TokenMapFactory, Named}
+import java.lang.ref.{ReferenceQueue, WeakReference}
+
 import forja.dsl.*
 import forja.src.SourceRange
-import java.lang.ref.{WeakReference, ReferenceQueue}
+import forja.util.{Named, TokenMapFactory}
 
 trait Token extends Named, TokenMapFactory.Mapped:
   private val sym = Token.TokenSym(nameSegments)

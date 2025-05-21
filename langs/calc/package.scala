@@ -15,10 +15,11 @@
 package forja.langs.calc
 
 import cats.syntax.all.given
+
 import forja.*
 import forja.dsl.*
-import forja.wf.WellformedDef
 import forja.src.SourceRange
+import forja.wf.WellformedDef
 
 object lang extends WellformedDef:
   lazy val topShape: Shape = repeated(Expression)

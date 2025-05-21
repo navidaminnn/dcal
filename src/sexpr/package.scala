@@ -15,10 +15,11 @@
 package forja.sexpr
 
 import cats.syntax.all.given
+
 import forja.*
-import forja.wf.WellformedDef
 import forja.dsl.*
 import forja.src.{Source, SourceRange}
+import forja.wf.WellformedDef
 
 object lang extends WellformedDef:
   lazy val topShape: Shape = repeated(choice(SAtom, SList))

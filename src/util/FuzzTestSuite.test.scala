@@ -14,14 +14,13 @@
 
 package forja.util
 
-import scala.quoted.Expr
-import scala.quoted.Quotes
-import scala.quoted.Type
-import edu.berkeley.cs.jqf.fuzz.ei.ZestGuidance
 import java.util.Random
+
+import edu.berkeley.cs.jqf.fuzz.ei.ZestGuidance
 import edu.berkeley.cs.jqf.fuzz.junit.GuidedFuzzing
-import scala.jdk.CollectionConverters.given
 import scala.concurrent.duration.Duration
+import scala.jdk.CollectionConverters.given
+import scala.quoted.{Expr, Quotes, Type}
 
 trait FuzzTestSuite extends munit.FunSuite:
   override def munitTimeout: Duration = Duration("5m")
