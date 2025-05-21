@@ -18,7 +18,7 @@ import cats.syntax.all.given
 
 import forja.*
 import forja.dsl.*
-import forja.src.{Reader, SourceRange}
+import forja.source.{Reader, SourceRange}
 import forja.wf.Wellformed
 
 object TLAReader extends Reader:

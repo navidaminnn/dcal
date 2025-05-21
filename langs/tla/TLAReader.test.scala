@@ -15,7 +15,7 @@
 package forja.langs.tla
 
 import forja.*
-import forja.src.{Source, SourceRange}
+import forja.source.{Source, SourceRange}
 
 class TLAReaderTests extends munit.FunSuite, test.WithTLACorpus:
   self => // funny parser ambiguity: try deleting this line

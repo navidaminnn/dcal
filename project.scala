@@ -1,12 +1,6 @@
 // Main
 //> using scala 3
-
-//> using options -Werror
-//> using options -Wunused:strict-no-implicit-warn
-//> using options -Yexplicit-nulls
-//> using options -deprecation
-//> using options -feature
-
+//> using options -Werror -Wunused:strict-no-implicit-warn -Yexplicit-nulls -deprecation -feature
 //> using javaProperty distcompiler.Node.assertErrorRefCorrectness=no
 
 //> using dependency com.github.scopt::scopt:4.1.0
@@ -22,3 +16,4 @@
 
 // Test
 //> using test.dependency org.scalameta::munit:1.1.1
+

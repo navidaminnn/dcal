@@ -16,7 +16,7 @@ package forja
 
 import java.io.OutputStream
 
-import forja.src.{Source, SourceRange}
+import forja.source.{Source, SourceRange}
 
 import geny.Writable
 import izumi.reflect.Tag

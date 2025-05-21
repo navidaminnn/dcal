@@ -20,7 +20,7 @@ import forja.wf.Shape
 object dsl extends ManipOps, SeqPatternOps, Shape.Ops:
   export forja.{Node, Token}
   export forja.manip.{Manip, SeqPattern}
-  export forja.src.SourceRange.src
+  export forja.source.SourceRange.src
   export Manip.Rules
   export forja.wf.Shape
   export Shape.{AnyShape, Atom}

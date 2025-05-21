@@ -18,7 +18,7 @@ import cats.syntax.all.given
 
 import forja.*
 import forja.dsl.*
-import forja.src.{Source, SourceRange}
+import forja.source.{Source, SourceRange}
 import forja.wf.Wellformed
 
 import scala.collection.IndexedSeqView

@@ -18,7 +18,7 @@ import cats.syntax.all.given
 
 import forja.*
 import forja.dsl.*
-import forja.src.SourceRange
+import forja.source.SourceRange
 import forja.wf.WellformedDef
 
 object lang extends WellformedDef:

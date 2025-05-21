@@ -19,7 +19,7 @@ import cats.syntax.all.given
 import forja.*
 import forja.dsl.*
 import forja.sexpr.lang.{SAtom, SList}
-import forja.src.{Source, SourceRange}
+import forja.source.{Source, SourceRange}
 import forja.util.TailCallsUtils.*
 
 import scala.collection.mutable

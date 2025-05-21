@@ -16,7 +16,7 @@ package forja.wf
 
 import forja.dsl.*
 import forja.sexpr.lang.{SAtom, SList}
-import forja.src.{Source, SourceRange}
+import forja.source.{Source, SourceRange}
 import forja.test.newlineUtils.ensureLf
 
 class WellformedTests extends munit.FunSuite:

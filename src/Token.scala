@@ -17,7 +17,7 @@ package forja
 import java.lang.ref.{ReferenceQueue, WeakReference}
 
 import forja.dsl.*
-import forja.src.SourceRange
+import forja.source.SourceRange
 import forja.util.{Named, TokenMapFactory}
 
 trait Token extends Named, TokenMapFactory.Mapped:

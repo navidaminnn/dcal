@@ -15,7 +15,7 @@
 package forja.langs.tla
 
 import forja.*
-import forja.src.{Source, SourceRange}
+import forja.source.{Source, SourceRange}
 
 class TLAParserTests extends munit.FunSuite, test.WithTLACorpus:
   self =>

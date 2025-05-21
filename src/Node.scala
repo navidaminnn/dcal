@@ -19,7 +19,7 @@ import cats.data.Chain
 import cats.syntax.all.given
 
 import forja.dsl.*
-import forja.src.{Source, SourceRange}
+import forja.source.{Source, SourceRange}
 import forja.util.toShortString
 import forja.wf.Wellformed
 

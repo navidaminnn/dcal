@@ -15,7 +15,7 @@
 package forja.langs.calc
 
 import forja.*
-import forja.src.{Source, SourceRange}
+import forja.source.{Source, SourceRange}
 
 import Builtin.{Error, SourceMarker}
 

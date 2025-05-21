@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package forja.src
+package forja.source
 
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
