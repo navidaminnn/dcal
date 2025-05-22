@@ -30,6 +30,7 @@ transparent trait WithClonedCorpus:
       os.makeDir.all(clonesDir)
       os.proc("git", "clone", "--recurse-submodules", repoURL, checkoutFolder)
         .call()
+    else os.proc("git", "pull").call(cwd = checkoutFolder)
 
     var foundAnything = false
 
